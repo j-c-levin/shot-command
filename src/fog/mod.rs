@@ -1,145 +1,45 @@
 use bevy::prelude::*;
-use bevy::asset::RenderAssetUsages;
-use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::game::{GameState, Detected, Team};
-use crate::map::{Asteroid, AsteroidSize, MapBounds};
+use crate::game::{Detected, EnemyVisibility, GameState, Team};
+use crate::map::{Asteroid, AsteroidSize};
 use crate::ship::{Ship, ShipStats, ship_xz_position};
 
 pub struct FogPlugin;
 
 impl Plugin for FogPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, init_fog)
-            .add_systems(
-                Update,
-                (
-                    update_fog_grid,
-                    sync_entity_visibility,
-                    update_ship_rendering,
-                    update_fog_overlay,
-                )
-                    .chain()
-                    .run_if(in_state(GameState::Playing)),
-            );
+        app.add_systems(
+            Update,
+            (detect_enemies, fade_enemies)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
-const GRID_RESOLUTION: usize = 100;
+const FADE_DURATION: f32 = 0.5;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CellVisibility {
-    Hidden,
-    Explored,
-    Visible,
+/// Pure function: checks if `target` is within `vision_range` of `observer`
+/// and not blocked by any asteroid.
+pub fn is_in_los(observer: Vec2, target: Vec2, vision_range: f32, asteroids: &[(Vec2, f32)]) -> bool {
+    let dist = (target - observer).length();
+    if dist > vision_range {
+        return false;
+    }
+    !ray_blocked_by_asteroid(observer, target, asteroids)
 }
 
-#[derive(Resource)]
-pub struct VisibilityGrid {
-    pub cells: Vec<Vec<CellVisibility>>,
-    pub cell_size: Vec2,
-    pub grid_size: usize,
-    pub origin: Vec2,
-}
-
-impl VisibilityGrid {
-    pub fn new(bounds: &MapBounds) -> Self {
-        let grid_size = GRID_RESOLUTION;
-        let cell_size = bounds.size() / grid_size as f32;
-        let origin = -bounds.half_extents;
-
-        Self {
-            cells: vec![vec![CellVisibility::Hidden; grid_size]; grid_size],
-            cell_size,
-            grid_size,
-            origin,
-        }
+/// Pure function: moves opacity toward target at constant rate over fade_duration.
+pub fn fade_opacity(current: f32, target: f32, dt: f32, fade_duration: f32) -> f32 {
+    if fade_duration <= 0.0 {
+        return target;
     }
-
-    pub fn world_to_grid(&self, world_pos: Vec2) -> Option<(usize, usize)> {
-        let local = world_pos - self.origin;
-        let gx = (local.x / self.cell_size.x) as i32;
-        let gy = (local.y / self.cell_size.y) as i32;
-
-        if gx >= 0 && gy >= 0 && (gx as usize) < self.grid_size && (gy as usize) < self.grid_size
-        {
-            Some((gx as usize, gy as usize))
-        } else {
-            None
-        }
+    let rate = 1.0 / fade_duration;
+    if current < target {
+        (current + rate * dt).min(target)
+    } else {
+        (current - rate * dt).max(target)
     }
-
-    pub fn grid_to_world(&self, gx: usize, gy: usize) -> Vec2 {
-        self.origin
-            + Vec2::new(
-                (gx as f32 + 0.5) * self.cell_size.x,
-                (gy as f32 + 0.5) * self.cell_size.y,
-            )
-    }
-
-    pub fn clear_visible(&mut self) {
-        for row in &mut self.cells {
-            for cell in row.iter_mut() {
-                if *cell == CellVisibility::Visible {
-                    *cell = CellVisibility::Explored;
-                }
-            }
-        }
-    }
-
-    pub fn mark_visible(&mut self, gx: usize, gy: usize) {
-        if gx < self.grid_size && gy < self.grid_size {
-            self.cells[gx][gy] = CellVisibility::Visible;
-        }
-    }
-}
-
-#[derive(Component)]
-struct FogOverlay;
-
-#[derive(Resource)]
-struct FogTextureHandle(Handle<Image>);
-
-#[derive(Resource)]
-struct FogMaterialHandle(Handle<StandardMaterial>);
-
-fn init_fog(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-    mut images: ResMut<Assets<Image>>,
-    bounds: Res<MapBounds>,
-) {
-    let grid = VisibilityGrid::new(&bounds);
-
-    let size = Extent3d {
-        width: GRID_RESOLUTION as u32,
-        height: GRID_RESOLUTION as u32,
-        depth_or_array_layers: 1,
-    };
-    let mut image = Image::new_fill(size, TextureDimension::D2, &[0, 0, 0, 200], TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD);
-    image.sampler = bevy::image::ImageSampler::nearest();
-    let image_handle = images.add(image);
-
-    let fog_material = materials.add(StandardMaterial {
-        base_color_texture: Some(image_handle.clone()),
-        alpha_mode: AlphaMode::Blend,
-        unlit: true,
-        ..default()
-    });
-
-    let map_size = bounds.size();
-    commands.spawn((
-        FogOverlay,
-        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(map_size.x / 2.0, map_size.y / 2.0)))),
-        MeshMaterial3d(fog_material.clone()),
-        Transform::from_xyz(0.0, 15.0, 0.0),
-        Pickable::IGNORE,
-    ));
-
-    commands.insert_resource(FogTextureHandle(image_handle));
-    commands.insert_resource(FogMaterialHandle(fog_material));
-    commands.insert_resource(grid);
 }
 
 /// Checks if a ray from `start` to `end` (both in world XZ space) is blocked by any asteroid.
@@ -173,126 +73,67 @@ pub fn ray_blocked_by_asteroid(
     false
 }
 
-fn update_fog_grid(
-    mut grid: ResMut<VisibilityGrid>,
+fn detect_enemies(
+    mut commands: Commands,
     player_ships: Query<(&Transform, &ShipStats, &Team), With<Ship>>,
+    enemy_query: Query<(Entity, &Transform, &Team, Option<&Detected>), With<Ship>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
-    grid.clear_visible();
-
     let asteroids: Vec<(Vec2, f32)> = asteroid_query
         .iter()
         .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
         .collect();
 
-    for (transform, stats, team) in &player_ships {
-        if *team != Team::PLAYER {
+    for (enemy_entity, enemy_transform, enemy_team, maybe_detected) in &enemy_query {
+        if *enemy_team == Team::PLAYER {
             continue;
         }
 
-        let ship_pos = ship_xz_position(transform);
-        let vision = stats.vision_range;
+        let enemy_pos = ship_xz_position(enemy_transform);
+        let mut seen = false;
 
-        for gx in 0..grid.grid_size {
-            for gy in 0..grid.grid_size {
-                let cell_pos = grid.grid_to_world(gx, gy);
-                let dist = (cell_pos - ship_pos).length();
-
-                if dist > vision {
-                    continue;
-                }
-
-                if !ray_blocked_by_asteroid(ship_pos, cell_pos, &asteroids) {
-                    grid.mark_visible(gx, gy);
-                }
+        for (player_transform, stats, player_team) in &player_ships {
+            if *player_team != Team::PLAYER {
+                continue;
             }
+            let player_pos = ship_xz_position(player_transform);
+            if is_in_los(player_pos, enemy_pos, stats.vision_range, &asteroids) {
+                seen = true;
+                break;
+            }
+        }
+
+        // Only insert/remove when state changes to avoid unnecessary commands
+        if seen && maybe_detected.is_none() {
+            commands.entity(enemy_entity).insert(Detected);
+        } else if !seen && maybe_detected.is_some() {
+            commands.entity(enemy_entity).remove::<Detected>();
         }
     }
 }
 
-fn sync_entity_visibility(
-    mut commands: Commands,
-    grid: Res<VisibilityGrid>,
-    enemy_query: Query<(Entity, &Transform, &Team), (With<Ship>, Without<Detected>)>,
-    revealed_query: Query<(Entity, &Transform, &Team), (With<Ship>, With<Detected>)>,
+fn fade_enemies(
+    time: Res<Time>,
+    mut query: Query<
+        (&mut EnemyVisibility, &mut Visibility, &MeshMaterial3d<StandardMaterial>, Option<&Detected>),
+        With<Ship>,
+    >,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    // Add Detected to enemies in visible cells
-    for (entity, transform, team) in &enemy_query {
-        if *team == Team::PLAYER {
-            continue;
-        }
-        let pos = ship_xz_position(transform);
-        if let Some((gx, gy)) = grid.world_to_grid(pos) {
-            if grid.cells[gx][gy] == CellVisibility::Visible {
-                commands.entity(entity).insert(Detected);
-            }
-        }
-    }
+    for (mut ev, mut visibility, mat_handle, detected) in &mut query {
+        let target = if detected.is_some() { 1.0 } else { 0.0 };
+        ev.opacity = fade_opacity(ev.opacity, target, time.delta_secs(), FADE_DURATION);
 
-    // Remove Detected from enemies no longer in visible cells
-    for (entity, transform, team) in &revealed_query {
-        if *team == Team::PLAYER {
-            continue;
-        }
-        let pos = ship_xz_position(transform);
-        if let Some((gx, gy)) = grid.world_to_grid(pos) {
-            if grid.cells[gx][gy] != CellVisibility::Visible {
-                commands.entity(entity).remove::<Detected>();
-            }
-        }
-    }
-}
-
-fn update_ship_rendering(
-    mut query: Query<(Entity, &Team, &mut Visibility), With<Ship>>,
-    revealed_query: Query<(), With<Detected>>,
-) {
-    for (entity, team, mut visibility) in &mut query {
-        if *team == Team::PLAYER {
-            continue;
-        }
-        if revealed_query.get(entity).is_ok() {
+        if ev.opacity > 0.0 {
             *visibility = Visibility::Visible;
+            // Update material alpha for smooth fade
+            if let Some(material) = materials.get_mut(mat_handle) {
+                material.base_color = material.base_color.with_alpha(ev.opacity);
+            }
         } else {
             *visibility = Visibility::Hidden;
         }
     }
-}
-
-fn update_fog_overlay(
-    grid: Res<VisibilityGrid>,
-    fog_handle: Res<FogTextureHandle>,
-    fog_mat_handle: Res<FogMaterialHandle>,
-    mut images: ResMut<Assets<Image>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    let Some(image) = images.get_mut(&fog_handle.0) else {
-        return;
-    };
-
-    // Build new pixel data each frame — Bevy's render pipeline takes ownership
-    // of image.data via take(), so we must provide a fresh Vec each frame.
-    let pixel_count = grid.grid_size * grid.grid_size;
-    let mut data = Vec::with_capacity(pixel_count * 4);
-
-    for gy in 0..grid.grid_size {
-        for gx in 0..grid.grid_size {
-            let alpha = match grid.cells[gx][gy] {
-                CellVisibility::Hidden => 200,
-                CellVisibility::Explored => 140,
-                CellVisibility::Visible => 0,
-            };
-            data.push(0);
-            data.push(0);
-            data.push(0);
-            data.push(alpha);
-        }
-    }
-
-    image.data = Some(data);
-
-    // Touch the material to force bind group recreation with the updated texture
-    materials.get_mut(&fog_mat_handle.0);
 }
 
 #[cfg(test)]
@@ -300,102 +141,65 @@ mod tests {
     use super::*;
 
     #[test]
-    fn grid_world_roundtrip() {
-        let bounds = MapBounds {
-            half_extents: Vec2::splat(500.0),
-        };
-        let grid = VisibilityGrid::new(&bounds);
-
-        // Center of grid should map to world origin area
-        let center = grid.grid_to_world(50, 50);
-        assert!(center.x.abs() < grid.cell_size.x);
-        assert!(center.y.abs() < grid.cell_size.y);
-    }
-
-    #[test]
-    fn grid_world_to_grid_in_bounds() {
-        let bounds = MapBounds {
-            half_extents: Vec2::splat(500.0),
-        };
-        let grid = VisibilityGrid::new(&bounds);
-
-        assert!(grid.world_to_grid(Vec2::ZERO).is_some());
-        assert!(grid.world_to_grid(Vec2::new(499.0, 499.0)).is_some());
-    }
-
-    #[test]
-    fn grid_world_to_grid_out_of_bounds() {
-        let bounds = MapBounds {
-            half_extents: Vec2::splat(500.0),
-        };
-        let grid = VisibilityGrid::new(&bounds);
-
-        assert!(grid.world_to_grid(Vec2::new(-600.0, 0.0)).is_none());
-    }
-
-    #[test]
-    fn clear_visible_becomes_explored() {
-        let bounds = MapBounds {
-            half_extents: Vec2::splat(500.0),
-        };
-        let mut grid = VisibilityGrid::new(&bounds);
-
-        grid.mark_visible(10, 10);
-        assert_eq!(grid.cells[10][10], CellVisibility::Visible);
-
-        grid.clear_visible();
-        assert_eq!(grid.cells[10][10], CellVisibility::Explored);
-    }
-
-    #[test]
-    fn hidden_stays_hidden_after_clear() {
-        let bounds = MapBounds {
-            half_extents: Vec2::splat(500.0),
-        };
-        let mut grid = VisibilityGrid::new(&bounds);
-
-        assert_eq!(grid.cells[5][5], CellVisibility::Hidden);
-        grid.clear_visible();
-        assert_eq!(grid.cells[5][5], CellVisibility::Hidden);
-    }
-
-    #[test]
     fn ray_not_blocked_without_obstacles() {
         let asteroids: Vec<(Vec2, f32)> = vec![];
-        assert!(!ray_blocked_by_asteroid(
-            Vec2::ZERO,
-            Vec2::new(100.0, 0.0),
-            &asteroids
-        ));
+        assert!(!ray_blocked_by_asteroid(Vec2::ZERO, Vec2::new(100.0, 0.0), &asteroids));
     }
 
     #[test]
     fn ray_blocked_by_asteroid_in_path() {
         let asteroids = vec![(Vec2::new(50.0, 0.0), 10.0)];
-        assert!(ray_blocked_by_asteroid(
-            Vec2::ZERO,
-            Vec2::new(100.0, 0.0),
-            &asteroids
-        ));
+        assert!(ray_blocked_by_asteroid(Vec2::ZERO, Vec2::new(100.0, 0.0), &asteroids));
     }
 
     #[test]
     fn ray_not_blocked_by_asteroid_off_path() {
         let asteroids = vec![(Vec2::new(50.0, 50.0), 10.0)];
-        assert!(!ray_blocked_by_asteroid(
-            Vec2::ZERO,
-            Vec2::new(100.0, 0.0),
-            &asteroids
-        ));
+        assert!(!ray_blocked_by_asteroid(Vec2::ZERO, Vec2::new(100.0, 0.0), &asteroids));
     }
 
     #[test]
     fn ray_not_blocked_by_asteroid_behind_start() {
         let asteroids = vec![(Vec2::new(-50.0, 0.0), 10.0)];
-        assert!(!ray_blocked_by_asteroid(
-            Vec2::ZERO,
-            Vec2::new(100.0, 0.0),
-            &asteroids
-        ));
+        assert!(!ray_blocked_by_asteroid(Vec2::ZERO, Vec2::new(100.0, 0.0), &asteroids));
+    }
+
+    #[test]
+    fn in_range_and_unblocked_is_detected() {
+        assert!(is_in_los(Vec2::ZERO, Vec2::new(100.0, 0.0), 200.0, &[]));
+    }
+
+    #[test]
+    fn out_of_range_is_not_detected() {
+        assert!(!is_in_los(Vec2::ZERO, Vec2::new(300.0, 0.0), 200.0, &[]));
+    }
+
+    #[test]
+    fn blocked_by_asteroid_is_not_detected() {
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 10.0)];
+        assert!(!is_in_los(Vec2::ZERO, Vec2::new(100.0, 0.0), 200.0, &asteroids));
+    }
+
+    #[test]
+    fn same_position_is_in_los() {
+        assert!(is_in_los(Vec2::ZERO, Vec2::ZERO, 200.0, &[]));
+    }
+
+    #[test]
+    fn opacity_fades_toward_target() {
+        let result = fade_opacity(0.0, 1.0, 0.25, 0.5);
+        assert!((result - 0.5).abs() < 0.01);
+    }
+
+    #[test]
+    fn opacity_clamps_at_target() {
+        let result = fade_opacity(0.0, 1.0, 10.0, 0.5);
+        assert_eq!(result, 1.0);
+    }
+
+    #[test]
+    fn opacity_fades_out() {
+        let result = fade_opacity(1.0, 0.0, 0.5, 0.5);
+        assert_eq!(result, 0.0);
     }
 }
