@@ -1,18 +1,18 @@
 # fog/
 
-Fog of war via line-of-sight on a grid.
+Line-of-sight detection and enemy fade in/out.
 
 ## Files
 
-- `mod.rs` — VisibilityGrid resource (100x100 cells with Hidden/Explored/Visible states), FogOverlay entity with dynamic RGBA texture (Pickable::IGNORE), LOS raycasting from player ships blocked by asteroids, Revealed component sync on enemy entities, ship visibility toggling based on Revealed, fog texture update each frame
+- `mod.rs` — Distance+raycast LOS detection between player and enemy ships, enemy fade in/out via EnemyVisibility opacity and material alpha updates
 
 ## System chain (runs during Playing state)
 
-1. `update_fog_grid` — clear Visible→Explored, raycast from player ships to mark cells Visible
-2. `sync_entity_visibility` — add/remove Revealed on enemy ships based on grid cell state
-3. `update_ship_rendering` — toggle Visibility::Visible/Hidden on enemies based on Revealed
-4. `update_fog_overlay` — rewrite fog texture alpha per cell (Hidden=200, Explored=140, Visible=0)
+1. `detect_enemies` — for each enemy, check if any player ship has LOS (distance ≤ vision_range + unblocked by asteroids); insert/remove Detected marker on state change only
+2. `fade_enemies` — lerp EnemyVisibility.opacity toward 1.0 (detected) or 0.0 (not) over FADE_DURATION (0.5s); update Visibility and material base_color alpha
 
-## Key function
+## Key functions
 
-`ray_blocked_by_asteroid(start, end, asteroids)` — circle-line intersection test, returns true if any asteroid blocks the ray path
+- `is_in_los(observer, target, vision_range, asteroids)` — pure function combining range check + ray occlusion
+- `fade_opacity(current, target, dt, fade_duration)` — pure function for constant-rate fade with clamping
+- `ray_blocked_by_asteroid(start, end, asteroids)` — circle-line intersection test
