@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 
-use crate::game::Team;
+use crate::game::{EnemyVisibility, Health, Team};
 use crate::map::MapBounds;
 
 pub struct ShipPlugin;
@@ -108,30 +108,37 @@ pub fn spawn_ship(
         radius: 8.0,
         height: 20.0,
     });
+
+    let is_enemy = team != Team::PLAYER;
     let ship_material = materials.add(StandardMaterial {
-        base_color: color,
+        base_color: if is_enemy { color.with_alpha(0.0) } else { color },
         emissive: color.into(),
+        alpha_mode: if is_enemy { AlphaMode::Blend } else { AlphaMode::Opaque },
         ..default()
     });
 
-    let initial_visibility = if team == Team::PLAYER {
-        Visibility::Visible
-    } else {
+    let initial_visibility = if is_enemy {
         Visibility::Hidden
+    } else {
+        Visibility::Visible
     };
 
-    commands
-        .spawn((
-            Ship,
-            team,
-            ShipStats::default(),
-            Mesh3d(ship_mesh),
-            MeshMaterial3d(ship_material),
-            Transform::from_xyz(position.x, 5.0, position.y)
-                .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-            initial_visibility,
-        ))
-        .id()
+    let mut entity_commands = commands.spawn((
+        Ship,
+        team,
+        ShipStats::default(),
+        Mesh3d(ship_mesh),
+        MeshMaterial3d(ship_material),
+        Transform::from_xyz(position.x, 5.0, position.y)
+            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
+        initial_visibility,
+    ));
+
+    if is_enemy {
+        entity_commands.insert((EnemyVisibility::default(), Health { hp: 3 }));
+    }
+
+    entity_commands.id()
 }
 
 #[cfg(test)]
