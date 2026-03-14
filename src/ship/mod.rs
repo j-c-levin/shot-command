@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::{EnemyVisibility, Health, Team};
-use crate::map::MapBounds;
+use crate::map::{Asteroid, AsteroidSize, MapBounds};
 
 pub struct ShipPlugin;
 
@@ -18,6 +18,7 @@ pub struct Ship;
 pub struct ShipStats {
     pub speed: f32,
     pub vision_range: f32,
+    pub collision_radius: f32,
 }
 
 impl Default for ShipStats {
@@ -25,6 +26,7 @@ impl Default for ShipStats {
         Self {
             speed: 80.0,
             vision_range: 200.0,
+            collision_radius: 8.0,
         }
     }
 }
@@ -58,11 +60,28 @@ pub fn has_arrived(from: Vec2, to: Vec2, threshold: f32) -> bool {
     (to - from).length_squared() < threshold * threshold
 }
 
+/// Returns true if `pos` overlaps any asteroid (circle-circle test in XZ).
+pub fn collides_with_asteroid(pos: Vec2, ship_radius: f32, asteroids: &[(Vec2, f32)]) -> bool {
+    for &(center, radius) in asteroids {
+        let min_dist = ship_radius + radius;
+        if (pos - center).length_squared() < min_dist * min_dist {
+            return true;
+        }
+    }
+    false
+}
+
 fn move_ships(
     mut commands: Commands,
     time: Res<Time>,
     mut query: Query<(Entity, &mut Transform, &ShipStats, &MovementTarget), With<Ship>>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
+    let asteroids: Vec<(Vec2, f32)> = asteroid_query
+        .iter()
+        .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
+        .collect();
+
     for (entity, mut transform, stats, target) in &mut query {
         let current = ship_xz_position(&transform);
         let arrival_threshold = 5.0;
@@ -74,8 +93,16 @@ fn move_ships(
 
         if let Some(dir) = movement_direction(current, target.destination) {
             let movement = dir * stats.speed * time.delta_secs();
-            transform.translation.x += movement.x;
-            transform.translation.z += movement.y;
+            let new_pos = current + movement;
+
+            // Stop and cancel move if we'd collide with an asteroid
+            if collides_with_asteroid(new_pos, stats.collision_radius, &asteroids) {
+                commands.entity(entity).remove::<MovementTarget>();
+                continue;
+            }
+
+            transform.translation.x = new_pos.x;
+            transform.translation.z = new_pos.y;
 
             let look_target = Vec3::new(
                 transform.translation.x + dir.x,
@@ -123,15 +150,21 @@ pub fn spawn_ship(
         Visibility::Visible
     };
 
+    // Parent entity: Ship logic, transform, facing direction via look_at
+    // Child entity: Cone mesh with fixed rotation (tip points -Z = forward)
     let mut entity_commands = commands.spawn((
         Ship,
         team,
         ShipStats::default(),
+        Transform::from_xyz(position.x, 5.0, position.y),
+        initial_visibility,
+    ));
+
+    // Cone tip is +Y by default; rotate PI/2 around X to point tip along -Z (forward)
+    entity_commands.with_child((
         Mesh3d(ship_mesh),
         MeshMaterial3d(ship_material),
-        Transform::from_xyz(position.x, 5.0, position.y)
-            .with_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
-        initial_visibility,
+        Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
     ));
 
     if is_enemy {
@@ -190,5 +223,22 @@ mod tests {
             Vec2::new(200.0, 100.0),
             5.0
         ));
+    }
+
+    #[test]
+    fn collision_with_overlapping_asteroid() {
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 20.0)];
+        assert!(collides_with_asteroid(Vec2::new(40.0, 0.0), 8.0, &asteroids));
+    }
+
+    #[test]
+    fn no_collision_when_clear() {
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 20.0)];
+        assert!(!collides_with_asteroid(Vec2::ZERO, 8.0, &asteroids));
+    }
+
+    #[test]
+    fn no_collision_with_no_asteroids() {
+        assert!(!collides_with_asteroid(Vec2::ZERO, 8.0, &[]));
     }
 }

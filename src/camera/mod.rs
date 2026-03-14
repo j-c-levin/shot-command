@@ -71,10 +71,10 @@ fn camera_pan(
     let mut direction = Vec3::ZERO;
 
     if keys.pressed(KeyCode::KeyW) || keys.pressed(KeyCode::ArrowUp) {
-        direction.z -= 1.0;
+        direction.z += 1.0;
     }
     if keys.pressed(KeyCode::KeyS) || keys.pressed(KeyCode::ArrowDown) {
-        direction.z += 1.0;
+        direction.z -= 1.0;
     }
     if keys.pressed(KeyCode::KeyA) || keys.pressed(KeyCode::ArrowLeft) {
         direction.x -= 1.0;
@@ -111,7 +111,7 @@ fn camera_zoom(
         return;
     };
 
-    let zoom_amount = -scroll.delta.y * settings.zoom_speed;
+    let zoom_amount = scroll.delta.y * settings.zoom_speed;
     let forward = transform.forward().as_vec3();
     let new_pos = transform.translation + forward * zoom_amount;
 

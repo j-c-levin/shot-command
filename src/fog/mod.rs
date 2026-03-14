@@ -115,20 +115,25 @@ fn detect_enemies(
 fn fade_enemies(
     time: Res<Time>,
     mut query: Query<
-        (&mut EnemyVisibility, &mut Visibility, &MeshMaterial3d<StandardMaterial>, Option<&Detected>),
+        (&mut EnemyVisibility, &mut Visibility, &Children, Option<&Detected>),
         With<Ship>,
     >,
+    child_query: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (mut ev, mut visibility, mat_handle, detected) in &mut query {
+    for (mut ev, mut visibility, children, detected) in &mut query {
         let target = if detected.is_some() { 1.0 } else { 0.0 };
         ev.opacity = fade_opacity(ev.opacity, target, time.delta_secs(), FADE_DURATION);
 
         if ev.opacity > 0.0 {
             *visibility = Visibility::Visible;
-            // Update material alpha for smooth fade
-            if let Some(material) = materials.get_mut(mat_handle) {
-                material.base_color = material.base_color.with_alpha(ev.opacity);
+            // Update material alpha on the child mesh entity
+            for child in children.iter() {
+                if let Ok(mat_handle) = child_query.get(child) {
+                    if let Some(material) = materials.get_mut(mat_handle) {
+                        material.base_color = material.base_color.with_alpha(ev.opacity);
+                    }
+                }
             }
         } else {
             *visibility = Visibility::Hidden;

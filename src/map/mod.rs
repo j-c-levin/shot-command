@@ -108,7 +108,7 @@ fn spawn_asteroids(
             AsteroidSize { radius },
             Mesh3d(meshes.add(Sphere::new(radius))),
             MeshMaterial3d(asteroid_material.clone()),
-            Transform::from_xyz(pos.x, radius * 0.3, pos.y),
+            Transform::from_xyz(pos.x, 0.0, pos.y),
         ));
     }
 }
