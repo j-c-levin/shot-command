@@ -1,5 +1,7 @@
 use bevy::prelude::*;
 
+use crate::ship::Ship;
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
@@ -29,24 +31,40 @@ impl Team {
     pub const ENEMY: Self = Self(1);
 }
 
-#[derive(Component)]
-pub struct Revealed;
+/// Marker: this enemy is currently in line of sight of a player ship.
+#[derive(Component, Clone, Debug, Default)]
+pub struct Detected;
+
+/// Tracks fade opacity for enemy ships. Spawned on all enemies.
+#[derive(Component, Clone, Debug)]
+pub struct EnemyVisibility {
+    pub opacity: f32,
+}
+
+impl Default for EnemyVisibility {
+    fn default() -> Self {
+        Self { opacity: 0.0 }
+    }
+}
+
+#[derive(Component, Clone, Debug)]
+pub struct Health {
+    pub hp: u8,
+}
 
 fn check_victory(
-    query: Query<&Team, With<Revealed>>,
+    query: Query<&Team, With<Ship>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    for team in &query {
-        if *team == Team::ENEMY {
-            next_state.set(GameState::Victory);
-            return;
-        }
+    let any_enemy_alive = query.iter().any(|team| *team == Team::ENEMY);
+    if !any_enemy_alive {
+        next_state.set(GameState::Victory);
     }
 }
 
 fn spawn_victory_ui(mut commands: Commands) {
     commands.spawn((
-        Text::new("ENEMY LOCATED — VICTORY!"),
+        Text::new("ENEMY DESTROYED — VICTORY!"),
         TextFont {
             font_size: 60.0,
             ..default()
@@ -80,5 +98,24 @@ mod tests {
     #[test]
     fn default_game_state_is_setup() {
         assert_eq!(GameState::default(), GameState::Setup);
+    }
+
+    #[test]
+    fn enemy_visibility_defaults_to_zero_opacity() {
+        let ev = EnemyVisibility::default();
+        assert_eq!(ev.opacity, 0.0);
+    }
+
+    #[test]
+    fn health_takes_damage() {
+        let mut h = Health { hp: 3 };
+        h.hp -= 1;
+        assert_eq!(h.hp, 2);
+    }
+
+    #[test]
+    fn health_saturates_at_zero() {
+        let h = Health { hp: 0 };
+        assert_eq!(h.hp.saturating_sub(1), 0);
     }
 }

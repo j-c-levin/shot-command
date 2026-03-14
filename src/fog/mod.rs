@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy::asset::RenderAssetUsages;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::game::{GameState, Revealed, Team};
+use crate::game::{GameState, Detected, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::ship::{Ship, ShipStats, ship_xz_position};
 
@@ -100,6 +100,9 @@ struct FogOverlay;
 #[derive(Resource)]
 struct FogTextureHandle(Handle<Image>);
 
+#[derive(Resource)]
+struct FogMaterialHandle(Handle<StandardMaterial>);
+
 fn init_fog(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
@@ -129,12 +132,13 @@ fn init_fog(
     commands.spawn((
         FogOverlay,
         Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(map_size.x / 2.0, map_size.y / 2.0)))),
-        MeshMaterial3d(fog_material),
+        MeshMaterial3d(fog_material.clone()),
         Transform::from_xyz(0.0, 15.0, 0.0),
         Pickable::IGNORE,
     ));
 
     commands.insert_resource(FogTextureHandle(image_handle));
+    commands.insert_resource(FogMaterialHandle(fog_material));
     commands.insert_resource(grid);
 }
 
@@ -209,10 +213,10 @@ fn update_fog_grid(
 fn sync_entity_visibility(
     mut commands: Commands,
     grid: Res<VisibilityGrid>,
-    enemy_query: Query<(Entity, &Transform, &Team), (With<Ship>, Without<Revealed>)>,
-    revealed_query: Query<(Entity, &Transform, &Team), (With<Ship>, With<Revealed>)>,
+    enemy_query: Query<(Entity, &Transform, &Team), (With<Ship>, Without<Detected>)>,
+    revealed_query: Query<(Entity, &Transform, &Team), (With<Ship>, With<Detected>)>,
 ) {
-    // Add Revealed to enemies in visible cells
+    // Add Detected to enemies in visible cells
     for (entity, transform, team) in &enemy_query {
         if *team == Team::PLAYER {
             continue;
@@ -220,12 +224,12 @@ fn sync_entity_visibility(
         let pos = ship_xz_position(transform);
         if let Some((gx, gy)) = grid.world_to_grid(pos) {
             if grid.cells[gx][gy] == CellVisibility::Visible {
-                commands.entity(entity).insert(Revealed);
+                commands.entity(entity).insert(Detected);
             }
         }
     }
 
-    // Remove Revealed from enemies no longer in visible cells
+    // Remove Detected from enemies no longer in visible cells
     for (entity, transform, team) in &revealed_query {
         if *team == Team::PLAYER {
             continue;
@@ -233,7 +237,7 @@ fn sync_entity_visibility(
         let pos = ship_xz_position(transform);
         if let Some((gx, gy)) = grid.world_to_grid(pos) {
             if grid.cells[gx][gy] != CellVisibility::Visible {
-                commands.entity(entity).remove::<Revealed>();
+                commands.entity(entity).remove::<Detected>();
             }
         }
     }
@@ -241,7 +245,7 @@ fn sync_entity_visibility(
 
 fn update_ship_rendering(
     mut query: Query<(Entity, &Team, &mut Visibility), With<Ship>>,
-    revealed_query: Query<(), With<Revealed>>,
+    revealed_query: Query<(), With<Detected>>,
 ) {
     for (entity, team, mut visibility) in &mut query {
         if *team == Team::PLAYER {
@@ -258,30 +262,37 @@ fn update_ship_rendering(
 fn update_fog_overlay(
     grid: Res<VisibilityGrid>,
     fog_handle: Res<FogTextureHandle>,
+    fog_mat_handle: Res<FogMaterialHandle>,
     mut images: ResMut<Assets<Image>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
     let Some(image) = images.get_mut(&fog_handle.0) else {
         return;
     };
 
-    let Some(data) = &mut image.data else {
-        return;
-    };
+    // Build new pixel data each frame — Bevy's render pipeline takes ownership
+    // of image.data via take(), so we must provide a fresh Vec each frame.
+    let pixel_count = grid.grid_size * grid.grid_size;
+    let mut data = Vec::with_capacity(pixel_count * 4);
 
     for gy in 0..grid.grid_size {
         for gx in 0..grid.grid_size {
-            let idx = (gy * grid.grid_size + gx) * 4;
             let alpha = match grid.cells[gx][gy] {
                 CellVisibility::Hidden => 200,
                 CellVisibility::Explored => 140,
                 CellVisibility::Visible => 0,
             };
-            data[idx] = 0;
-            data[idx + 1] = 0;
-            data[idx + 2] = 0;
-            data[idx + 3] = alpha;
+            data.push(0);
+            data.push(0);
+            data.push(0);
+            data.push(alpha);
         }
     }
+
+    image.data = Some(data);
+
+    // Touch the material to force bind group recreation with the updated texture
+    materials.get_mut(&fog_mat_handle.0);
 }
 
 #[cfg(test)]
