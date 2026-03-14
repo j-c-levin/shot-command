@@ -164,7 +164,7 @@ pub fn spawn_ship(
     entity_commands.with_child((
         Mesh3d(ship_mesh),
         MeshMaterial3d(ship_material),
-        Transform::from_rotation(Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2)),
     ));
 
     if is_enemy {
