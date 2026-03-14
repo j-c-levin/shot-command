@@ -9,7 +9,6 @@ use input::{on_ground_clicked, on_ship_clicked};
 use ship::spawn_ship;
 
 mod camera;
-mod combat;
 mod fog;
 mod game;
 mod input;
@@ -66,7 +65,6 @@ fn main() {
         camera::CameraPlugin,
         input::InputPlugin,
         fog::FogPlugin,
-        combat::CombatPlugin,
     ));
 
     app.add_systems(OnEnter(GameState::Setup), setup_game);
@@ -96,7 +94,6 @@ fn setup_game(
     // Attach picking observers to player ship
     commands
         .entity(player)
-        .insert(combat::FireRate::default())
         .observe(on_ship_clicked);
 
     // Spawn enemy ship at opposite corner (stationary)
