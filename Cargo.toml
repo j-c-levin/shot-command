@@ -1,0 +1,64 @@
+[package]
+name = "nebulous_shot_command"
+edition = "2024"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+exclude = ["assets"]
+
+[dependencies.bevy]
+version = "0.18"
+default-features = false
+features = [
+    "default_app",
+    "default_platform",
+    "3d_api",
+    "3d_bevy_render",
+    "ui_api",
+    "ui_bevy_render",
+    "scene",
+    "picking",
+    "jpeg",
+    "serialize",
+    # "hotpatching",                 # Disabled: incompatible with Cranelift on macOS
+    # "reflect_auto_register",       # Disabled: inventory::submit! incompatible with Cranelift on macOS
+    "experimental_bevy_ui_widgets"
+]
+
+[dependencies]
+rand = "0.9"
+winit = { version = "0.30", default-features = false }
+tracing = { version = "0.1", features = ["max_level_debug", "release_max_level_warn"] }
+
+[features]
+default = ["dev_native"]
+native = ["enhanced"]
+dev = [
+    "bevy/bevy_dev_tools",
+    "bevy/bevy_ui_debug",
+    "bevy/track_location",
+]
+dev_native = [
+    "dev",
+    "native",
+    "bevy/dev",
+    "bevy/bevy_remote",
+    "bevy/dynamic_linking",
+    "bevy/embedded_watcher",
+]
+enhanced = [
+    "bevy/meshlet",
+    "bevy/meshlet_processor",
+    "bevy/pbr_light_textures",
+    "bevy/pbr_specular_textures",
+]
+debug = [
+    "bevy/trace_tracy",
+    "bevy/debug"
+]
+
+# LINT
+[lints.clippy]
+too_many_arguments = "allow"
+type_complexity = "allow"
+collapsible_if = "allow"
+nonstandard_macro_braces = "warn"
