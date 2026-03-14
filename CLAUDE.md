@@ -35,13 +35,13 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 34 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 37 tests:
 
 | Module | What's tested |
 |---|---|
 | `src/game/mod.rs` | Team constants, GameState default, EnemyVisibility default, Health damage/saturation |
 | `src/map/mod.rs` | MapBounds contains/clamp/size |
-| `src/ship/mod.rs` | XZ position extraction, movement direction, arrival detection |
+| `src/ship/mod.rs` | XZ position extraction, movement direction, arrival detection, asteroid collision |
 | `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
 | `src/combat/mod.rs` | Projectile direction normalization, hit detection within/outside/at radius |
 
@@ -51,7 +51,7 @@ Flat plugin structure, registered in `main.rs`:
 
 - `src/game/` — GameState enum (Setup→Playing→Victory), Team component, Detected marker, EnemyVisibility (opacity), Health, win condition (no enemies alive)
 - `src/map/` — MapBounds resource, asteroids, ground plane (pickable for move commands)
-- `src/ship/` — Ship entity, ShipStats, MovementTarget, movement system, bounds clamping, spawn_ship (enemies get EnemyVisibility + Health)
+- `src/ship/` — Ship entity (cone mesh as child for orientation), ShipStats (speed, vision_range, collision_radius), MovementTarget, movement with asteroid collision (stop+cancel), bounds clamping, spawn_ship (enemies get EnemyVisibility + Health + AlphaMode::Blend)
 - `src/camera/` — Free camera (WASD pan, scroll zoom, middle-mouse orbit)
 - `src/input/` — Ship selection (left-click observer), move commands (right-click ground), selection indicator torus
 - `src/fog/` — Distance+raycast LOS detection, enemy fade in/out (0.5s) via material alpha
@@ -91,6 +91,20 @@ Flat plugin structure, registered in `main.rs`:
 - Ambient light: `GlobalAmbientLight` as resource, NOT `AmbientLight` as entity
 - `Image::new_fill` requires 5th arg: `RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD`
 - `emissive` field on `StandardMaterial` takes `LinearRgba`, not `Color` — use `LinearRgba::new(r, g, b, a)`
+
+## Roadmap
+
+See `docs/plans/2026-03-14-feature-brainstorm-v3.md` for full details.
+
+**Next up: Phase 1 — Core Simulation.** Replace direct movement with physics-based
+(momentum, turn rates, main engine vs thrusters). Add facing control, waypoint queuing,
+and holy trinity ship classes (battleship/destroyer/scout). This is a major rewrite of
+the ship movement system.
+
+**Phase 2: Multiplayer** (bevy_replicon, client+host from day one)
+**Phase 3: Fleet & Loadouts** (mount points, weapon variety, PD, fleet comp screen)
+**Phase 4: Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
+**Phase 5: Depth** (directional damage, repair, beams)
 
 ## Pre-approvals
 
