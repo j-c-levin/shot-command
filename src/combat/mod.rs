@@ -67,8 +67,9 @@ pub struct Projectile {
 }
 
 /// Pure function: direction from shooter to target, normalized.
+/// Returns Vec3::ZERO if from == to.
 pub fn projectile_direction(from: Vec3, to: Vec3) -> Vec3 {
-    (to - from).normalize()
+    (to - from).normalize_or_zero()
 }
 
 /// Pure function: hit test — is projectile within radius of target?
@@ -83,8 +84,16 @@ fn auto_target(
     mut player_query: Query<(&Transform, &mut FireRate, &Team), With<Ship>>,
     enemy_query: Query<(&Transform, &Team), (With<Ship>, With<Detected>)>,
 ) {
+    let has_enemies = !enemy_query.is_empty();
+
     for (player_transform, mut fire_rate, player_team) in &mut player_query {
         if *player_team != Team::PLAYER {
+            continue;
+        }
+
+        // Only tick timer when enemies are detected, reset otherwise
+        if !has_enemies {
+            fire_rate.timer.reset();
             continue;
         }
 
@@ -104,8 +113,12 @@ fn auto_target(
             }
             let enemy_pos = ship_xz_position(enemy_transform);
             let dist = (enemy_pos - player_pos).length();
-            if closest.is_none() || dist < closest.unwrap().0 {
-                closest = Some((dist, enemy_transform.translation));
+            match closest {
+                None => closest = Some((dist, enemy_transform.translation)),
+                Some((best, _)) if dist < best => {
+                    closest = Some((dist, enemy_transform.translation));
+                }
+                _ => {}
             }
         }
 
@@ -115,6 +128,10 @@ fn auto_target(
 
         let spawn_pos = player_transform.translation;
         let direction = projectile_direction(spawn_pos, target_pos);
+
+        if direction == Vec3::ZERO {
+            continue;
+        }
 
         commands.spawn((
             Projectile {
@@ -151,9 +168,12 @@ fn check_projectile_hits(
     projectile_query: Query<(Entity, &Transform, &Projectile)>,
     mut enemy_query: Query<(Entity, &Transform, &mut Health, &Team), With<Ship>>,
 ) {
+    // Track already-destroyed enemies to avoid double despawn
+    let mut destroyed: Vec<Entity> = Vec::new();
+
     for (proj_entity, proj_transform, projectile) in &projectile_query {
         for (enemy_entity, enemy_transform, mut health, team) in &mut enemy_query {
-            if *team == Team::PLAYER {
+            if *team == Team::PLAYER || destroyed.contains(&enemy_entity) {
                 continue;
             }
 
@@ -162,6 +182,7 @@ fn check_projectile_hits(
                 health.hp = health.hp.saturating_sub(projectile.damage);
                 if health.hp == 0 {
                     commands.entity(enemy_entity).despawn();
+                    destroyed.push(enemy_entity);
                 }
                 break;
             }
