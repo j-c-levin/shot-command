@@ -32,6 +32,7 @@ fn setup_selection_indicator(
         })),
         Transform::from_xyz(0.0, -1000.0, 0.0),
         Visibility::Hidden,
+        Pickable::IGNORE,
     ));
 }
 

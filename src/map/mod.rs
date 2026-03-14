@@ -155,6 +155,7 @@ fn spawn_boundary_markers(
             Mesh3d(meshes.add(Cuboid::new(size.x, size.y, size.z))),
             MeshMaterial3d(marker_material.clone()),
             Transform::from_translation(pos),
+            Pickable::IGNORE,
         ));
     }
 }

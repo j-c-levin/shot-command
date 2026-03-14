@@ -51,7 +51,7 @@ fn spawn_camera(mut commands: Commands) {
         Transform::from_xyz(200.0, 500.0, 100.0).looking_at(Vec3::ZERO, Vec3::Y),
     ));
 
-    commands.spawn(AmbientLight {
+    commands.insert_resource(GlobalAmbientLight {
         color: Color::srgb(0.1, 0.1, 0.2),
         brightness: 200.0,
         ..default()

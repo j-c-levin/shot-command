@@ -131,6 +131,7 @@ fn init_fog(
         Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(map_size.x / 2.0, map_size.y / 2.0)))),
         MeshMaterial3d(fog_material),
         Transform::from_xyz(0.0, 15.0, 0.0),
+        Pickable::IGNORE,
     ));
 
     commands.insert_resource(FogTextureHandle(image_handle));
