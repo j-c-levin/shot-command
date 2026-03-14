@@ -1,17 +1,10 @@
 use bevy::prelude::*;
 
-use crate::ship::Ship;
-
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {
     fn build(&self, app: &mut App) {
-        app.init_state::<GameState>()
-            .add_systems(
-                Update,
-                check_victory.run_if(in_state(GameState::Playing)),
-            )
-            .add_systems(OnEnter(GameState::Victory), spawn_victory_ui);
+        app.init_state::<GameState>();
     }
 }
 
@@ -20,7 +13,6 @@ pub enum GameState {
     #[default]
     Setup,
     Playing,
-    Victory,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -50,38 +42,6 @@ impl Default for EnemyVisibility {
 #[derive(Component, Clone, Debug)]
 pub struct Health {
     pub hp: u8,
-}
-
-fn check_victory(
-    query: Query<&Team, With<Ship>>,
-    mut next_state: ResMut<NextState<GameState>>,
-) {
-    // Don't trigger victory if no ships exist yet (commands not flushed)
-    if query.is_empty() {
-        return;
-    }
-    let any_enemy_alive = query.iter().any(|team| *team == Team::ENEMY);
-    if !any_enemy_alive {
-        next_state.set(GameState::Victory);
-    }
-}
-
-fn spawn_victory_ui(mut commands: Commands) {
-    commands.spawn((
-        Text::new("ENEMY DESTROYED — VICTORY!"),
-        TextFont {
-            font_size: 60.0,
-            ..default()
-        },
-        TextColor(Color::srgb(0.2, 1.0, 0.3)),
-        Node {
-            position_type: PositionType::Absolute,
-            top: Val::Percent(40.0),
-            width: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            ..default()
-        },
-    ));
 }
 
 #[cfg(test)]
