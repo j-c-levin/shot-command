@@ -74,7 +74,7 @@ pub fn collides_with_asteroid(pos: Vec2, ship_radius: f32, asteroids: &[(Vec2, f
 fn move_ships(
     mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(Entity, &mut Transform, &ShipStats, &MovementTarget), With<Ship>>,
+    mut query: Query<(Entity, &mut Transform, &ShipStats, &MovementTarget), (With<Ship>, Without<Asteroid>)>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
     let asteroids: Vec<(Vec2, f32)> = asteroid_query
