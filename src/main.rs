@@ -9,6 +9,7 @@ use input::{on_ground_clicked, on_ship_clicked};
 use ship::spawn_ship;
 
 mod camera;
+mod combat;
 mod fog;
 mod game;
 mod input;
@@ -21,7 +22,7 @@ fn main() {
     let mut app = App::new();
     app.set_error_handler(error);
 
-    app.add_plugins(
+    app.add_plugins((
         DefaultPlugins
             .set(WindowPlugin {
                 primary_window: Some(Window {
@@ -53,7 +54,8 @@ fn main() {
                 ..default()
             })
             .set(ImagePlugin::default_nearest()),
-    );
+        MeshPickingPlugin,
+    ));
 
     info!("Starting {}", NAME);
 
@@ -64,6 +66,7 @@ fn main() {
         camera::CameraPlugin,
         input::InputPlugin,
         fog::FogPlugin,
+        combat::CombatPlugin,
     ));
 
     app.add_systems(OnEnter(GameState::Setup), setup_game);
@@ -76,12 +79,11 @@ fn setup_game(
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut next_state: ResMut<NextState<GameState>>,
-    ground_query: Query<Entity, With<map::GroundPlane>>,
 ) {
-    // Attach ground plane click observer for move commands
-    for ground in &ground_query {
-        commands.entity(ground).observe(on_ground_clicked);
-    }
+    // Global observer for ground click — ground plane is spawned in Startup
+    // which hasn't flushed yet during OnEnter(Setup), so we use a global observer
+    // that filters by GroundPlane component instead of an entity observer.
+    commands.add_observer(on_ground_clicked);
     // Spawn player ship at one corner
     let player = spawn_ship(
         &mut commands,
@@ -94,6 +96,7 @@ fn setup_game(
     // Attach picking observers to player ship
     commands
         .entity(player)
+        .insert(combat::FireRate::default())
         .observe(on_ship_clicked);
 
     // Spawn enemy ship at opposite corner (stationary)
