@@ -56,6 +56,10 @@ fn check_victory(
     query: Query<&Team, With<Ship>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
+    // Don't trigger victory if no ships exist yet (commands not flushed)
+    if query.is_empty() {
+        return;
+    }
     let any_enemy_alive = query.iter().any(|team| *team == Team::ENEMY);
     if !any_enemy_alive {
         next_state.set(GameState::Victory);
