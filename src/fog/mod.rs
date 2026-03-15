@@ -20,6 +20,11 @@ impl Plugin for FogPlugin {
 
 /// Client-side fog plugin: only handles fade-in for newly replicated enemy ships.
 /// The server handles LOS detection and visibility filtering via bevy_replicon.
+/// Marker component inserted on enemy ships that are fading out after
+/// bevy_replicon would normally despawn them. Client-only, no serde needed.
+#[derive(Component)]
+pub struct FadingOut;
+
 pub struct FogClientPlugin;
 
 impl Plugin for FogClientPlugin {
@@ -52,21 +57,26 @@ fn tag_new_enemy_ships(
     }
 }
 
-/// Each frame, ramp EnemyVisibility opacity toward 1.0 and update child material alpha.
+/// Each frame, ramp EnemyVisibility opacity toward 1.0 (fade-in) or 0.0 (fade-out).
 ///
-/// TODO: Fade-out is not implemented. bevy_replicon despawns entities immediately when
-/// server-side visibility is lost, so enemies disappear instantly. Future polish could
-/// delay despawn and fade out over FADE_DURATION.
+/// Entities marked with [`FadingOut`] fade toward 0.0 and are despawned when they
+/// reach zero opacity. This allows a smooth fade-out when bevy_replicon removes
+/// server-side visibility, instead of an instant disappearance.
 fn fade_client_enemies(
+    mut commands: Commands,
     time: Res<Time>,
-    mut query: Query<(&mut EnemyVisibility, &mut Visibility, &Children), With<Ship>>,
+    mut query: Query<
+        (Entity, &mut EnemyVisibility, &mut Visibility, &Children, Option<&FadingOut>),
+        With<Ship>,
+    >,
     child_query: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (mut ev, mut visibility, children) in &mut query {
-        ev.opacity = fade_opacity(ev.opacity, 1.0, time.delta_secs(), FADE_DURATION);
+    for (entity, mut ev, mut visibility, children, fading_out) in &mut query {
+        let target_opacity = if fading_out.is_some() { 0.0 } else { 1.0 };
+        ev.opacity = fade_opacity(ev.opacity, target_opacity, time.delta_secs(), FADE_DURATION);
 
-        if ev.opacity > 0.0 {
+        if ev.opacity > 0.001 {
             *visibility = Visibility::Visible;
             for child in children.iter() {
                 if let Ok(mat_handle) = child_query.get(child) {
@@ -75,6 +85,9 @@ fn fade_client_enemies(
                     }
                 }
             }
+        } else if fading_out.is_some() {
+            // Fade-out complete — actually despawn the entity
+            commands.entity(entity).despawn();
         } else {
             *visibility = Visibility::Hidden;
         }

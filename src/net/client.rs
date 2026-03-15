@@ -3,20 +3,25 @@ use std::time::SystemTime;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use bevy_replicon::shared::replication::registry::{
+    ReplicationRegistry,
+    ctx::DespawnCtx,
+};
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetClient,
     netcode::{ClientAuthentication, NetcodeClientTransport},
     renet::ConnectionConfig,
 };
 
-use crate::game::{GameState, Health, Team};
+use crate::fog::FadingOut;
+use crate::game::{EnemyVisibility, GameState, Health, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{Asteroid, AsteroidSize, GroundPlane, MapBounds};
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
 use crate::net::{LocalTeam, PROTOCOL_ID};
-use crate::ship::{FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue};
+use crate::ship::{FacingLocked, FacingTarget, Ship, ShipClass, WaypointQueue};
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -26,12 +31,11 @@ pub struct ClientNetPlugin;
 
 impl Plugin for ClientNetPlugin {
     fn build(&self, app: &mut App) {
-        // Register replicated components (must mirror server exactly)
+        // Register replicated components (must mirror server exactly, minus server-only ones)
         app.replicate::<Ship>()
             .replicate::<ShipClass>()
             .replicate::<Team>()
             .replicate::<Transform>()
-            .replicate::<Velocity>()
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
             .replicate::<FacingLocked>()
@@ -46,6 +50,10 @@ impl Plugin for ClientNetPlugin {
 
         // Register server→client trigger
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
+
+        // Override replicon's despawn function to fade out ships instead of instant removal
+        let mut registry = app.world_mut().resource_mut::<ReplicationRegistry>();
+        registry.despawn = custom_replicon_despawn;
 
         // Systems
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
@@ -158,4 +166,24 @@ fn client_setup_scene(
     commands.add_observer(on_ground_clicked);
 
     info!("Client scene setup complete (ground plane + map bounds + observers)");
+}
+
+/// Custom despawn function for bevy_replicon's [`ReplicationRegistry`].
+///
+/// Instead of immediately despawning ship entities when the server removes visibility,
+/// inserts a [`FadingOut`] marker so `fade_client_enemies` can fade the ship out over
+/// `FADE_DURATION` before actually despawning it. Non-ship entities are despawned normally.
+fn custom_replicon_despawn(_ctx: &DespawnCtx, mut entity: EntityWorldMut) {
+    if entity.contains::<Ship>() {
+        // Insert FadingOut marker; ensure EnemyVisibility exists so fade system works
+        // even if the entity was still waiting to be tagged.
+        if !entity.contains::<EnemyVisibility>() {
+            entity.insert(EnemyVisibility { opacity: 1.0 });
+        }
+        entity.insert(FadingOut);
+        // Remove Replicated so replicon no longer tracks this entity
+        entity.remove::<Replicated>();
+    } else {
+        entity.despawn();
+    }
 }
