@@ -19,7 +19,8 @@ impl Plugin for ShipPlugin {
                 clamp_ships_to_bounds,
             )
                 .chain(),
-        );
+        )
+        .add_systems(Update, (update_waypoint_markers, update_facing_indicators));
     }
 }
 
@@ -508,6 +509,93 @@ pub fn spawn_ship(
     }
 
     entity_commands.id()
+}
+
+// ── Visual Indicators ───────────────────────────────────────────────────
+
+fn update_waypoint_markers(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    ship_query: Query<(Entity, &WaypointQueue, &Team), With<Ship>>,
+    marker_query: Query<(Entity, &WaypointMarker)>,
+) {
+    // Despawn all existing markers
+    for (entity, _) in &marker_query {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn new markers for each player ship's waypoints
+    for (ship_entity, waypoints, team) in &ship_query {
+        if *team != Team::PLAYER {
+            continue;
+        }
+        for (i, wp) in waypoints.waypoints.iter().enumerate() {
+            let alpha = 0.6 - (i as f32 * 0.1).min(0.4);
+            commands.spawn((
+                WaypointMarker { owner: ship_entity },
+                Mesh3d(meshes.add(Sphere::new(2.0))),
+                MeshMaterial3d(materials.add(StandardMaterial {
+                    base_color: Color::srgba(0.2, 0.8, 1.0, alpha),
+                    alpha_mode: AlphaMode::Blend,
+                    unlit: true,
+                    ..default()
+                })),
+                Transform::from_xyz(wp.x, 1.0, wp.y),
+            ));
+        }
+    }
+}
+
+fn update_facing_indicators(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    ship_query: Query<
+        (Entity, &Transform, Option<&FacingLocked>, Option<&FacingTarget>, &Team),
+        With<Ship>,
+    >,
+    indicator_query: Query<(Entity, &FacingIndicator)>,
+) {
+    // Despawn all existing facing indicators
+    for (entity, _) in &indicator_query {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn facing indicator for locked player ships only
+    for (ship_entity, transform, locked, facing, team) in &ship_query {
+        if locked.is_none() || *team != Team::PLAYER {
+            continue;
+        }
+        let Some(target) = facing else {
+            continue;
+        };
+
+        let pos = transform.translation;
+        let arrow_len = 30.0;
+        let mid = Vec3::new(
+            pos.x + target.direction.x * arrow_len / 2.0,
+            1.0,
+            pos.z + target.direction.y * arrow_len / 2.0,
+        );
+        let end = Vec3::new(
+            pos.x + target.direction.x * arrow_len,
+            1.0,
+            pos.z + target.direction.y * arrow_len,
+        );
+
+        commands.spawn((
+            FacingIndicator { owner: ship_entity },
+            Mesh3d(meshes.add(Capsule3d::new(0.5, arrow_len))),
+            MeshMaterial3d(materials.add(StandardMaterial {
+                base_color: Color::srgba(1.0, 0.8, 0.2, 0.6),
+                alpha_mode: AlphaMode::Blend,
+                unlit: true,
+                ..default()
+            })),
+            Transform::from_translation(mid).looking_at(end, Vec3::Y),
+        ));
+    }
 }
 
 // ── Tests ───────────────────────────────────────────────────────────────
