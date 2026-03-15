@@ -13,18 +13,18 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    info!("Server bind address: {}", cli.bind);
 
     App::new()
         .add_plugins((
             MinimalPlugins.set(ScheduleRunnerPlugin::run_loop(
                 std::time::Duration::from_secs_f64(1.0 / 60.0),
             )),
+            bevy::log::LogPlugin::default(),
             RepliconPlugins,
             RepliconRenetPlugins,
         ))
-        .add_systems(Startup, || {
-            info!("Server started (stub — exiting)");
+        .add_systems(Startup, move || {
+            info!("Server started (stub), bind address: {}", cli.bind);
         })
         .run();
 }
