@@ -3,9 +3,14 @@ use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 
 use crate::game::Team;
 use crate::map::GroundPlane;
-use crate::net::commands::{FacingLockCommand, FacingUnlockCommand, MoveCommand};
+use crate::net::commands::{
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
+};
 use crate::net::LocalTeam;
-use crate::ship::{FacingLocked, Selected, SelectionIndicator, Ship};
+use crate::ship::{
+    FacingLocked, Selected, SelectionIndicator, Ship, ShipSecrets, ShipSecretsOwner,
+    TargetDesignation,
+};
 
 pub struct InputPlugin;
 
@@ -13,13 +18,30 @@ pub struct InputPlugin;
 #[derive(Resource, Default)]
 pub struct LockMode(pub bool);
 
+/// Resource: when true, next left-click on enemy designates target
+#[derive(Resource, Default)]
+pub struct TargetMode(pub bool);
+
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LockMode>()
-            .add_systems(Startup, (setup_selection_indicator, setup_lock_mode_hud))
+            .init_resource::<TargetMode>()
+            .add_systems(
+                Startup,
+                (
+                    setup_selection_indicator,
+                    setup_lock_mode_hud,
+                    setup_target_mode_hud,
+                ),
+            )
             .add_systems(
                 Update,
-                (update_selection_indicator, handle_keyboard, update_lock_mode_hud),
+                (
+                    update_selection_indicator,
+                    handle_keyboard,
+                    update_lock_mode_hud,
+                    update_target_mode_hud,
+                ),
             );
     }
 }
@@ -49,6 +71,7 @@ pub fn on_ship_clicked(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     local_team: Res<LocalTeam>,
+    mut target_mode: ResMut<TargetMode>,
     ship_query: Query<(Entity, &Team), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
@@ -71,6 +94,18 @@ pub fn on_ship_clicked(
     }
 
     if click.button != PointerButton::Primary {
+        return;
+    }
+
+    // Target mode: left-click on enemy ship designates target
+    if target_mode.0 && *team != my_team {
+        for selected_ship in &selected_query {
+            commands.client_trigger(TargetCommand {
+                ship: selected_ship,
+                target: entity,
+            });
+        }
+        target_mode.0 = false;
         return;
     }
 
@@ -127,12 +162,8 @@ pub fn on_ground_clicked(
         return;
     }
 
-    if click.button != PointerButton::Secondary {
-        return;
-    }
-
-    // Lock mode: next right-click sets facing
-    if lock_mode.0 {
+    // Lock mode: left-click sets facing direction
+    if click.button == PointerButton::Primary && lock_mode.0 {
         for (entity, transform, team) in &selected_query {
             if *team != my_team {
                 continue;
@@ -147,6 +178,10 @@ pub fn on_ground_clicked(
             }
         }
         lock_mode.0 = false;
+        return;
+    }
+
+    if click.button != PointerButton::Secondary {
         return;
     }
 
@@ -192,14 +227,17 @@ fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     mut lock_mode: ResMut<LockMode>,
+    mut target_mode: ResMut<TargetMode>,
     selected_query: Query<Entity, With<Selected>>,
     locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
+    secrets_query: Query<(&ShipSecretsOwner, Option<&TargetDesignation>), With<ShipSecrets>>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         for entity in &selected_query {
             commands.entity(entity).remove::<Selected>();
         }
         lock_mode.0 = false;
+        target_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyL) {
@@ -213,6 +251,29 @@ fn handle_keyboard(
             // No selected ships locked — toggle lock mode
             lock_mode.0 = !lock_mode.0;
         }
+        target_mode.0 = false;
+    }
+
+    if keys.just_pressed(KeyCode::KeyK) {
+        // Check if selected ship already has a target — if so, clear it
+        let mut has_target = false;
+        for selected_entity in &selected_query {
+            for (owner, target) in &secrets_query {
+                if owner.0 == selected_entity && target.is_some() {
+                    commands.client_trigger(ClearTargetCommand {
+                        ship: selected_entity,
+                    });
+                    has_target = true;
+                }
+            }
+        }
+        if !has_target {
+            // No target — toggle target mode
+            target_mode.0 = !target_mode.0;
+        } else {
+            target_mode.0 = false;
+        }
+        lock_mode.0 = false;
     }
 }
 
@@ -224,7 +285,7 @@ struct LockModeHud;
 fn setup_lock_mode_hud(mut commands: Commands) {
     commands.spawn((
         LockModeHud,
-        Text::new("LOCK MODE — Right-click to set facing"),
+        Text::new("LOCK MODE — Left-click to set facing"),
         TextFont {
             font_size: 24.0,
             ..default()
@@ -249,6 +310,45 @@ fn update_lock_mode_hud(
         return;
     };
     *vis = if lock_mode.0 {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+}
+
+// ── Target Mode HUD ─────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct TargetModeHud;
+
+fn setup_target_mode_hud(mut commands: Commands) {
+    commands.spawn((
+        TargetModeHud,
+        Text::new("TARGET MODE — Click enemy to designate"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 0.3, 0.3, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(50.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn update_target_mode_hud(
+    target_mode: Res<TargetMode>,
+    mut query: Query<&mut Visibility, With<TargetModeHud>>,
+) {
+    let Ok(mut vis) = query.single_mut() else {
+        return;
+    };
+    *vis = if target_mode.0 {
         Visibility::Visible
     } else {
         Visibility::Hidden
