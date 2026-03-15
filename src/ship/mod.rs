@@ -474,14 +474,16 @@ fn apply_thrust(
 
         let is_last = waypoints.waypoints.len() == 1;
 
-        // Average-case deceleration (ship will turn to help brake)
-        let avg_decel = profile.acceleration * (1.0 + profile.thruster_factor) / 2.0;
+        // Worst-case deceleration: ship faces target and must brake with
+        // rear thrusters only (thruster_factor). Using worst-case ensures
+        // the ship starts braking early enough to stop at the waypoint.
+        let min_decel = profile.acceleration * profile.thruster_factor;
 
         let desired = desired_velocity_to_target(
             to_target,
             dist,
             profile.top_speed,
-            avg_decel,
+            min_decel,
             is_last,
         );
 
