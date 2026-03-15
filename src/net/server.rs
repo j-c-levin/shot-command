@@ -26,7 +26,7 @@ use crate::net::commands::{
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue, ship_xz_position,
+    FacingLocked, FacingTarget, Ship, ShipClass, WaypointQueue, ship_xz_position,
     spawn_server_ship,
 };
 
@@ -62,12 +62,11 @@ pub struct ServerNetPlugin;
 
 impl Plugin for ServerNetPlugin {
     fn build(&self, app: &mut App) {
-        // Register replicated components
+        // Register replicated components (Velocity is server-only, not replicated)
         app.replicate::<Ship>()
             .replicate::<ShipClass>()
             .replicate::<Team>()
             .replicate::<Transform>()
-            .replicate::<Velocity>()
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
             .replicate::<FacingLocked>()
@@ -430,7 +429,7 @@ fn on_client_disconnected(
 /// - Enemy ships are only visible if at least one friendly ship has LOS on them.
 ///
 /// // TODO: per-component visibility — currently if an enemy ship is visible,
-/// // ALL its replicated components are sent (including Velocity, WaypointQueue, etc.).
+/// // ALL its replicated components are sent (including WaypointQueue, etc.).
 fn server_update_visibility(
     los_bit: Res<LosBit>,
     client_teams: Res<ClientTeams>,
