@@ -186,6 +186,11 @@ pub struct FacingTarget {
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct FacingLocked;
 
+/// The entity this ship is targeting (must be an enemy ship).
+/// Cleared automatically when the target leaves LOS.
+#[derive(Component, Clone, Debug, Serialize, Deserialize, MapEntities)]
+pub struct TargetDesignation(#[entities] pub Entity);
+
 #[derive(Component)]
 pub struct Selected;
 

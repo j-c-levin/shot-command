@@ -28,6 +28,22 @@ pub struct FacingUnlockCommand {
     pub ship: Entity,
 }
 
+/// Client → server: designate a target for a ship.
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
+pub struct TargetCommand {
+    #[entities]
+    pub ship: Entity,
+    #[entities]
+    pub target: Entity,
+}
+
+/// Client → server: clear a ship's target designation.
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
+pub struct ClearTargetCommand {
+    #[entities]
+    pub ship: Entity,
+}
+
 /// Server → client: tells the client which team it controls.
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct TeamAssignment {
