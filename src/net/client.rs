@@ -19,6 +19,7 @@ use crate::net::{LocalTeam, PROTOCOL_ID};
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
 };
+use crate::weapon::Mounts;
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -36,6 +37,7 @@ impl Plugin for ClientNetPlugin {
             .replicate::<Team>()
             .replicate::<Transform>()
             .replicate::<Health>()
+            .replicate::<Mounts>()
             .replicate::<Asteroid>()
             .replicate::<AsteroidSize>();
 

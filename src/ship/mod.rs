@@ -6,6 +6,7 @@ use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, GameState, Health, Team};
 use crate::net::LocalTeam;
+use crate::weapon::{Mount, MountSize, Mounts, WeaponState, WeaponType};
 
 pub struct ShipPhysicsPlugin;
 
@@ -72,6 +73,51 @@ pub struct ShipProfile {
 }
 
 impl ShipClass {
+    /// Returns the default mount loadout for this ship class.
+    /// Weapons are initialized with full ammo and zero cooldown.
+    pub fn default_mounts(&self) -> Vec<Mount> {
+        fn armed(size: MountSize, offset: Vec2, weapon_type: WeaponType) -> Mount {
+            let profile = weapon_type.profile();
+            Mount {
+                size,
+                offset,
+                weapon: Some(WeaponState {
+                    weapon_type,
+                    ammo: profile.max_ammo,
+                    cooldown: 0.0,
+                }),
+            }
+        }
+        fn empty(size: MountSize, offset: Vec2) -> Mount {
+            Mount {
+                size,
+                offset,
+                weapon: None,
+            }
+        }
+
+        match self {
+            ShipClass::Battleship => vec![
+                armed(MountSize::Large, Vec2::new(-8.0, 6.0), WeaponType::HeavyCannon),
+                armed(MountSize::Large, Vec2::new(8.0, 6.0), WeaponType::HeavyCannon),
+                empty(MountSize::Medium, Vec2::new(-5.0, 0.0)),
+                empty(MountSize::Medium, Vec2::new(5.0, 0.0)),
+                empty(MountSize::Small, Vec2::new(-3.0, -6.0)),
+                empty(MountSize::Small, Vec2::new(3.0, -6.0)),
+            ],
+            ShipClass::Destroyer => vec![
+                armed(MountSize::Large, Vec2::new(0.0, 6.0), WeaponType::HeavyCannon),
+                empty(MountSize::Medium, Vec2::new(-4.0, 0.0)),
+                empty(MountSize::Medium, Vec2::new(4.0, 0.0)),
+                empty(MountSize::Small, Vec2::new(0.0, -5.0)),
+            ],
+            ShipClass::Scout => vec![
+                armed(MountSize::Medium, Vec2::new(0.0, 3.0), WeaponType::Cannon),
+                empty(MountSize::Small, Vec2::new(0.0, -3.0)),
+            ],
+        }
+    }
+
     pub fn profile(&self) -> ShipProfile {
         match self {
             ShipClass::Battleship => ShipProfile {
@@ -658,6 +704,7 @@ pub fn spawn_server_ship(
             WaypointQueue::default(),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: 3 },
+            Mounts(class.default_mounts()),
         ))
         .id();
 
@@ -950,6 +997,58 @@ mod tests {
     }
 
     // WaypointQueue tests
+    // default_mounts tests
+    #[test]
+    fn battleship_has_six_mounts() {
+        let mounts = ShipClass::Battleship.default_mounts();
+        assert_eq!(mounts.len(), 6);
+        let large = mounts.iter().filter(|m| m.size == MountSize::Large).count();
+        let medium = mounts.iter().filter(|m| m.size == MountSize::Medium).count();
+        let small = mounts.iter().filter(|m| m.size == MountSize::Small).count();
+        assert_eq!(large, 2);
+        assert_eq!(medium, 2);
+        assert_eq!(small, 2);
+        // Both large mounts have heavy cannons
+        for m in mounts.iter().filter(|m| m.size == MountSize::Large) {
+            let w = m.weapon.as_ref().expect("large mount should be armed");
+            assert_eq!(w.weapon_type, WeaponType::HeavyCannon);
+            assert_eq!(w.ammo, WeaponType::HeavyCannon.profile().max_ammo);
+            assert_eq!(w.cooldown, 0.0);
+        }
+        // Medium and small mounts are empty
+        for m in mounts.iter().filter(|m| m.size != MountSize::Large) {
+            assert!(m.weapon.is_none());
+        }
+    }
+
+    #[test]
+    fn destroyer_has_four_mounts() {
+        let mounts = ShipClass::Destroyer.default_mounts();
+        assert_eq!(mounts.len(), 4);
+        let large = mounts.iter().filter(|m| m.size == MountSize::Large).count();
+        let medium = mounts.iter().filter(|m| m.size == MountSize::Medium).count();
+        let small = mounts.iter().filter(|m| m.size == MountSize::Small).count();
+        assert_eq!(large, 1);
+        assert_eq!(medium, 2);
+        assert_eq!(small, 1);
+        let large_mount = mounts.iter().find(|m| m.size == MountSize::Large).unwrap();
+        assert_eq!(large_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::HeavyCannon);
+    }
+
+    #[test]
+    fn scout_has_two_mounts() {
+        let mounts = ShipClass::Scout.default_mounts();
+        assert_eq!(mounts.len(), 2);
+        let medium = mounts.iter().filter(|m| m.size == MountSize::Medium).count();
+        let small = mounts.iter().filter(|m| m.size == MountSize::Small).count();
+        assert_eq!(medium, 1);
+        assert_eq!(small, 1);
+        let medium_mount = mounts.iter().find(|m| m.size == MountSize::Medium).unwrap();
+        assert_eq!(medium_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::Cannon);
+        let small_mount = mounts.iter().find(|m| m.size == MountSize::Small).unwrap();
+        assert!(small_mount.weapon.is_none());
+    }
+
     #[test]
     fn waypoint_queue_default_is_empty() {
         let wq = WaypointQueue::default();

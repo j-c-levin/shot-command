@@ -29,6 +29,7 @@ use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
     ship_xz_position, spawn_server_ship,
 };
+use crate::weapon::Mounts;
 
 /// Resource containing the bind address string, inserted before the plugin runs.
 #[derive(Resource, Debug, Clone)]
@@ -70,6 +71,7 @@ impl Plugin for ServerNetPlugin {
             .replicate::<Team>()
             .replicate::<Transform>()
             .replicate::<Health>()
+            .replicate::<Mounts>()
             .replicate::<Asteroid>()
             .replicate::<AsteroidSize>();
 
