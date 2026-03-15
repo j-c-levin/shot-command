@@ -38,14 +38,17 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 48 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 65 tests:
 
 | Module | What's tested |
 |---|---|
 | `src/game/mod.rs` | Team constants, GameState default/variants, EnemyVisibility default, Health damage/saturation |
 | `src/map/mod.rs` | MapBounds contains/clamp/size |
-| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking) |
+| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class |
 | `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
+| `src/weapon/mod.rs` | Weapon profiles (heavy cannon, cannon, railgun values), mount size mapping |
+| `src/weapon/projectile.rs` | Projectile spawning, direction normalization, advancement, bounds despawn |
+| `src/weapon/firing.rs` | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone) |
 
 ## Architecture
 
@@ -56,26 +59,37 @@ Library crate (`src/lib.rs`) with two binaries:
 
 ### Modules
 
-- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing / Setup→Connecting→Playing), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health
+- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (u16), Destroyed marker, DestroyTimer
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
-- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile, Velocity, WaypointQueue, FacingTarget/FacingLocked, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship
+- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship
+- `src/weapon/` — Weapon system:
+  - `mod.rs` — MountSize, WeaponType (HeavyCannon/Cannon/Railgun), FiringArc, WeaponProfile, WeaponState, Mount, Mounts component
+  - `projectile.rs` — Projectile/ProjectileVelocity/ProjectileDamage/ProjectileOwner components, spawn_projectile, ProjectilePlugin (advance, bounds, hit detection)
+  - `firing.rs` — compute_lead_position, is_in_firing_arc, tick_weapon_cooldowns, auto_fire system
+  - `damage.rs` — DamagePlugin: mark_destroyed (with 1s delay timer), despawn_destroyed (cleanup ShipSecrets), check_win_condition (broadcast GameResult)
 - `src/camera/` — Free camera (WASD pan, scroll zoom, middle-mouse orbit)
-- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L key lock mode toggle. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand).
+- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand).
 - `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
 - `src/net/` — Networking module:
   - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
-  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand (client→server with MapEntities), TeamAssignment (server→client)
-  - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation, LOS visibility filtering, ShipSecrets sync, disconnection handling
+  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand (client→server with MapEntities), TeamAssignment, GameResult (server→client)
+  - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target), LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting), target visibility clearing, disconnection handling
   - `client.rs` — ClientNetPlugin: renet transport, team assignment observer, ground plane setup, materializer/asteroid registration
-  - `materializer.rs` — Spawns meshes for replicated Ship and Asteroid entities on client
+  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, and Projectile entities on client. Targeting indicator system.
 
 ### System ordering (Update schedule)
 
 **Server — Ship physics chain:** 1. Update facing targets → 2. Turn ships → 3. Apply thrust → 4. Apply velocity (with space drag) → 5. Check waypoint arrival → 6. Clamp to bounds
 
-**Server — Networking:** sync_ship_secrets → server_update_visibility (LOS per-client)
+**Server — Weapons:** tick_weapon_cooldowns → auto_fire (spawn projectiles)
 
-**Client — Visual indicators** (parallel): waypoint markers, facing direction arrows (read from ShipSecrets)
+**Server — Projectiles:** advance_projectiles → check_projectile_bounds → check_projectile_hits
+
+**Server — Damage:** mark_destroyed → despawn_destroyed → check_win_condition
+
+**Server — Networking:** sync_ship_secrets → server_update_visibility (LOS per-client) → clear_lost_targets
+
+**Client — Visual indicators** (parallel): waypoint markers, facing direction arrows (read from ShipSecrets), targeting indicators
 
 **Client — Fog:** fade_out_ghosts (fading ghost entities from visibility loss)
 
@@ -93,6 +107,9 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append.
 - **Team component** uses `u8` id for multiplayer. First client = Team(0), second = Team(1).
 - **Uniform vision range**: 200m for all ship classes. Sensor/radar differentiation is Phase 4.
+- **Weapon system**: Mounts are sized slots (Large/Medium/Small) per ship class. Weapons auto-fire at designated targets when in range+arc. Projectiles are independent server entities with velocity — no hitscan. Cooldown ticks every frame regardless of targeting. Lead calculation predicts target position. Railguns require forward-facing (±10°).
+- **Targeting**: K+left-click enemy designates target. K again clears. Target auto-clears when enemy leaves LOS. TargetDesignation synced via ShipSecrets (team-private).
+- **Destruction**: Ships at 0 HP get Destroyed marker + 1s delay timer, then despawn (ship + ShipSecrets). Ghost fade-out fires on despawn. Win condition: all enemy ships destroyed → GameResult broadcast → GameOver state.
 
 ### Connection flow
 
@@ -140,7 +157,13 @@ with team validation, ghost entity fade-out, ShipSecrets per-component visibilit
 space drag, uniform vision range. See design doc at
 `docs/plans/2026-03-15-phase2-multiplayer-design.md`.
 
-**Next up: Phase 3 — Fleet & Loadouts** (mount points, weapon variety, PD, fleet comp screen)
+**Phase 3a: Mount Points & Cannons — COMPLETE.** Three cannon types (heavy cannon,
+cannon, railgun), K-key targeting, simulated projectile entities, HP damage,
+ship destruction with delayed despawn, win/lose condition. See design doc at
+`docs/plans/2026-03-15-phase3a-weapons-design.md`.
+
+**Next up: Phase 3b — Missiles & Point Defense** (missile volleys, PD interception, saturation gameplay)
+**Phase 3c: Fleet Composition Screen** (pre-game loadout with point budget)
 **Phase 4: Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
 **Phase 5: Depth** (directional damage, repair, beams)
 
