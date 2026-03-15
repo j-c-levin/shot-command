@@ -10,6 +10,7 @@ use bevy_replicon_renet::{
 };
 
 use crate::game::{GameState, Health, Team};
+use crate::map::{GroundPlane, MapBounds};
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
@@ -45,6 +46,11 @@ impl Plugin for ClientNetPlugin {
 
         // Systems
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
+        app.add_systems(OnEnter(GameState::Playing), client_setup_scene);
+        app.add_systems(
+            Update,
+            super::materializer::materialize_ships.run_if(in_state(GameState::Playing)),
+        );
 
         // Observer for team assignment from server
         app.add_observer(on_team_assignment);
@@ -111,4 +117,35 @@ fn on_team_assignment(
 
     next_state.set(GameState::Playing);
     info!("Transitioning to Playing state");
+}
+
+/// Sets up the client scene when entering Playing state:
+/// ground plane (for click-to-move picking) and MapBounds resource.
+/// Note: Camera, ambient light, and directional light are handled by CameraPlugin.
+fn client_setup_scene(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Insert MapBounds resource (same values as MapPlugin)
+    let bounds = MapBounds {
+        half_extents: Vec2::splat(500.0),
+    };
+    commands.insert_resource(bounds.clone());
+
+    // Ground plane for click-to-move picking
+    let size = bounds.size();
+    commands.spawn((
+        GroundPlane,
+        Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(size.x / 2.0, size.y / 2.0)))),
+        MeshMaterial3d(materials.add(StandardMaterial {
+            base_color: Color::srgb(0.02, 0.02, 0.05),
+            perceptual_roughness: 1.0,
+            ..default()
+        })),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Pickable::default(),
+    ));
+
+    info!("Client scene setup complete (ground plane + map bounds)");
 }

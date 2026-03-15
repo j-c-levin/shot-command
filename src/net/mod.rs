@@ -1,5 +1,6 @@
 pub mod client;
 pub mod commands;
+pub mod materializer;
 pub mod server;
 
 use bevy::prelude::*;
