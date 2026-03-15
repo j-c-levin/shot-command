@@ -224,7 +224,9 @@ pub fn ship_heading(transform: &Transform) -> f32 {
 /// Returns a velocity vector that, if matched, would take the ship straight to
 /// the target and arrive at zero speed (for last waypoint) or cruise speed.
 ///
-/// `deceleration` should be the worst-case (minimum) deceleration available.
+/// `deceleration` is the effective braking force available.
+/// A safety factor of 2.5x is applied so ships start slowing down well before
+/// the target and arrive cleanly — braking shouldn't be a player concern.
 pub fn desired_velocity_to_target(
     to_target: Vec2,
     dist: f32,
@@ -238,10 +240,12 @@ pub fn desired_velocity_to_target(
     let dir = to_target / dist;
 
     let desired_speed = if is_last_waypoint {
-        // Speed that allows stopping at target: v = sqrt(2 * a * d)
-        // Use a safety factor to start braking earlier
-        let stopping_speed = (2.0 * deceleration * dist).sqrt();
-        stopping_speed.min(top_speed)
+        // v = sqrt(2 * a * d), with safety factor so we brake early
+        let safe_decel = deceleration * 2.5;
+        let stopping_speed = (2.0 * safe_decel * dist).sqrt();
+        // Also cap approach speed based on distance — don't come in hot
+        let approach_cap = (dist * 0.8).min(top_speed);
+        stopping_speed.min(approach_cap).min(top_speed)
     } else {
         top_speed
     };
@@ -441,14 +445,14 @@ fn apply_thrust(
 
         let is_last = waypoints.waypoints.len() == 1;
 
-        // Worst-case deceleration (thrusters only, facing away from braking direction)
-        let min_decel = profile.acceleration * profile.thruster_factor;
+        // Average-case deceleration (ship will turn to help brake)
+        let avg_decel = profile.acceleration * (1.0 + profile.thruster_factor) / 2.0;
 
         let desired = desired_velocity_to_target(
             to_target,
             dist,
             profile.top_speed,
-            min_decel,
+            avg_decel,
             is_last,
         );
 
