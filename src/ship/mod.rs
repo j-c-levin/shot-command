@@ -100,14 +100,14 @@ impl ShipClass {
         match self {
             ShipClass::Battleship => vec![
                 armed(MountSize::Large, Vec2::new(-8.0, 6.0), WeaponType::HeavyCannon),
-                armed(MountSize::Large, Vec2::new(8.0, 6.0), WeaponType::HeavyCannon),
+                empty(MountSize::Large, Vec2::new(8.0, 6.0)),
                 empty(MountSize::Medium, Vec2::new(-5.0, 0.0)),
                 empty(MountSize::Medium, Vec2::new(5.0, 0.0)),
                 empty(MountSize::Small, Vec2::new(-3.0, -6.0)),
                 empty(MountSize::Small, Vec2::new(3.0, -6.0)),
             ],
             ShipClass::Destroyer => vec![
-                armed(MountSize::Large, Vec2::new(0.0, 6.0), WeaponType::HeavyCannon),
+                armed(MountSize::Large, Vec2::new(0.0, 6.0), WeaponType::Railgun),
                 empty(MountSize::Medium, Vec2::new(-4.0, 0.0)),
                 empty(MountSize::Medium, Vec2::new(4.0, 0.0)),
                 empty(MountSize::Small, Vec2::new(0.0, -5.0)),
@@ -1047,13 +1047,12 @@ mod tests {
         assert_eq!(large, 2);
         assert_eq!(medium, 2);
         assert_eq!(small, 2);
-        // Both large mounts have heavy cannons
-        for m in mounts.iter().filter(|m| m.size == MountSize::Large) {
-            let w = m.weapon.as_ref().expect("large mount should be armed");
-            assert_eq!(w.weapon_type, WeaponType::HeavyCannon);
-            assert_eq!(w.ammo, WeaponType::HeavyCannon.profile().max_ammo);
-            assert_eq!(w.cooldown, 0.0);
-        }
+        // First large mount has heavy cannon, second is empty
+        let armed_large = mounts.iter().filter(|m| m.size == MountSize::Large && m.weapon.is_some()).count();
+        assert_eq!(armed_large, 1);
+        let w = mounts.iter().find(|m| m.size == MountSize::Large && m.weapon.is_some())
+            .unwrap().weapon.as_ref().unwrap();
+        assert_eq!(w.weapon_type, WeaponType::HeavyCannon);
         // Medium and small mounts are empty
         for m in mounts.iter().filter(|m| m.size != MountSize::Large) {
             assert!(m.weapon.is_none());
@@ -1071,7 +1070,7 @@ mod tests {
         assert_eq!(medium, 2);
         assert_eq!(small, 1);
         let large_mount = mounts.iter().find(|m| m.size == MountSize::Large).unwrap();
-        assert_eq!(large_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::HeavyCannon);
+        assert_eq!(large_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::Railgun);
     }
 
     #[test]

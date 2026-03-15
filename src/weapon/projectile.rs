@@ -109,7 +109,7 @@ fn check_projectile_hits(
             let dist = (proj_xz - ship_xz).length();
 
             if dist < class.profile().collision_radius {
-                health.hp = health.hp.saturating_sub(damage.0);
+                // TODO: re-enable damage: health.hp = health.hp.saturating_sub(damage.0);
                 commands.entity(proj_entity).despawn();
                 break;
             }
