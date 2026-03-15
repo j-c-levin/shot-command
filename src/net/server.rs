@@ -22,12 +22,13 @@ use crate::fog::is_in_los;
 use crate::game::{GameState, Health, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
-    FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
+    TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
-    ship_xz_position, spawn_server_ship,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
+    WaypointQueue, ship_xz_position, spawn_server_ship,
 };
 use crate::weapon::Mounts;
 
@@ -80,12 +81,15 @@ impl Plugin for ServerNetPlugin {
             .replicate::<ShipSecretsOwner>()
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>();
+            .replicate::<FacingLocked>()
+            .replicate::<TargetDesignation>();
 
         // Register client→server triggers (events with entity mapping)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
             .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered);
+            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
+            .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
+            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
 
         // Register server→client trigger
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
@@ -103,10 +107,11 @@ impl Plugin for ServerNetPlugin {
         // Server game setup: spawn fleets when entering Playing state
         app.add_systems(OnEnter(GameState::Playing), server_setup_game);
 
-        // Sync ship state to ShipSecrets children, then update visibility
+        // Sync ship state to ShipSecrets children, then update visibility,
+        // then clear targets that are no longer in LOS
         app.add_systems(
             Update,
-            (sync_ship_secrets, server_update_visibility)
+            (sync_ship_secrets, server_update_visibility, clear_lost_targets)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
@@ -118,6 +123,8 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_move_command);
         app.add_observer(handle_facing_lock_command);
         app.add_observer(handle_facing_unlock_command);
+        app.add_observer(handle_target_command);
+        app.add_observer(handle_clear_target_command);
 
         // Disconnection observer
         app.add_observer(on_client_disconnected);
@@ -416,6 +423,133 @@ fn handle_facing_unlock_command(
     info!("FacingUnlockCommand applied: ship {:?}", cmd.ship);
 }
 
+/// Observer: handle `TargetCommand` from clients.
+fn handle_target_command(
+    trigger: On<FromClient<TargetCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "TargetCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    // Validate target is a ship
+    let Ok(target_team) = team_query.get(cmd.target) else {
+        warn!(
+            "TargetCommand rejected: target {:?} is not a ship",
+            cmd.target
+        );
+        return;
+    };
+
+    // Validate target is on a different team
+    let Ok(ship_team) = team_query.get(cmd.ship) else {
+        return;
+    };
+    if *target_team == *ship_team {
+        warn!(
+            "TargetCommand rejected: target {:?} is on the same team as ship {:?}",
+            cmd.target, cmd.ship
+        );
+        return;
+    }
+
+    commands
+        .entity(cmd.ship)
+        .insert(TargetDesignation(cmd.target));
+
+    info!(
+        "TargetCommand applied: ship {:?} targeting {:?}",
+        cmd.ship, cmd.target
+    );
+}
+
+/// Observer: handle `ClearTargetCommand` from clients.
+fn handle_clear_target_command(
+    trigger: On<FromClient<ClearTargetCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "ClearTargetCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    commands.entity(cmd.ship).remove::<TargetDesignation>();
+
+    info!("ClearTargetCommand applied: ship {:?}", cmd.ship);
+}
+
+/// Each frame, check if targeted enemies are still visible to the targeting ship's team.
+/// If no friendly ship has LOS on the target, clear the TargetDesignation.
+fn clear_lost_targets(
+    mut commands: Commands,
+    targeting_ships: Query<(Entity, &TargetDesignation, &Team), With<Ship>>,
+    all_ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
+    target_transforms: Query<&Transform, With<Ship>>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
+) {
+    let asteroids: Vec<(Vec2, f32)> = asteroid_query
+        .iter()
+        .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
+        .collect();
+
+    for (ship_entity, target_designation, ship_team) in &targeting_ships {
+        let Ok(target_transform) = target_transforms.get(target_designation.0) else {
+            // Target entity no longer exists — clear designation
+            commands.entity(ship_entity).remove::<TargetDesignation>();
+            continue;
+        };
+
+        let target_pos = ship_xz_position(target_transform);
+
+        // Check if any friendly ship has LOS on the target
+        let any_friendly_sees_target =
+            all_ships
+                .iter()
+                .any(|(_, friendly_t, friendly_class, friendly_team)| {
+                    *friendly_team == *ship_team
+                        && is_in_los(
+                            ship_xz_position(friendly_t),
+                            target_pos,
+                            friendly_class.profile().vision_range,
+                            &asteroids,
+                        )
+                });
+
+        if !any_friendly_sees_target {
+            commands.entity(ship_entity).remove::<TargetDesignation>();
+            info!(
+                "Target {:?} lost LOS — clearing designation on ship {:?}",
+                target_designation.0, ship_entity
+            );
+        }
+    }
+}
+
 /// Observer that fires when a ConnectedClient is removed (client disconnects).
 /// Ships belonging to the disconnected team remain in the world — physics keeps
 /// running, so they will drift and brake to a stop naturally.
@@ -440,7 +574,12 @@ fn on_client_disconnected(
 fn sync_ship_secrets(
     mut commands: Commands,
     ship_query: Query<
-        (&WaypointQueue, Option<&FacingTarget>, Option<&FacingLocked>),
+        (
+            &WaypointQueue,
+            Option<&FacingTarget>,
+            Option<&FacingLocked>,
+            Option<&TargetDesignation>,
+        ),
         With<Ship>,
     >,
     mut secrets_query: Query<
@@ -449,7 +588,9 @@ fn sync_ship_secrets(
     >,
 ) {
     for (secrets_entity, owner, mut secrets_waypoints) in &mut secrets_query {
-        let Ok((ship_waypoints, ship_facing, ship_locked)) = ship_query.get(owner.0) else {
+        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target)) =
+            ship_query.get(owner.0)
+        else {
             continue;
         };
 
@@ -468,6 +609,15 @@ fn sync_ship_secrets(
             commands.entity(secrets_entity).insert(FacingLocked);
         } else {
             commands.entity(secrets_entity).remove::<FacingLocked>();
+        }
+
+        // Sync TargetDesignation: insert or remove on the ShipSecrets entity
+        if let Some(target) = ship_target {
+            commands.entity(secrets_entity).insert(target.clone());
+        } else {
+            commands
+                .entity(secrets_entity)
+                .remove::<TargetDesignation>();
         }
     }
 }

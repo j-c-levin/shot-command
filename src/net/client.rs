@@ -13,11 +13,13 @@ use crate::game::{GameState, Health, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{Asteroid, AsteroidSize, GroundPlane, MapBounds};
 use crate::net::commands::{
-    FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
+    TeamAssignment,
 };
 use crate::net::{LocalTeam, PROTOCOL_ID};
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
+    WaypointQueue,
 };
 use crate::weapon::Mounts;
 
@@ -46,12 +48,15 @@ impl Plugin for ClientNetPlugin {
             .replicate::<ShipSecretsOwner>()
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>();
+            .replicate::<FacingLocked>()
+            .replicate::<TargetDesignation>();
 
         // Register client→server triggers (same types as server)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
             .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered);
+            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
+            .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
+            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
 
         // Register server→client trigger
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
