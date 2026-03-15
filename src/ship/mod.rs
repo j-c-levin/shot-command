@@ -488,7 +488,8 @@ fn apply_velocity(
     }
 }
 
-const ARRIVAL_THRESHOLD: f32 = 30.0;
+const ARRIVAL_THRESHOLD_TIGHT: f32 = 10.0;
+const ARRIVAL_THRESHOLD_LOOSE: f32 = 30.0;
 
 fn check_waypoint_arrival(
     mut query: Query<(&Transform, &mut WaypointQueue), With<Ship>>,
@@ -498,7 +499,14 @@ fn check_waypoint_arrival(
             let pos = ship_xz_position(transform);
             let dist = (next_wp - pos).length();
 
-            if dist < ARRIVAL_THRESHOLD {
+            // Tight threshold for final destination, loose for intermediate waypoints
+            let threshold = if waypoints.waypoints.len() > 1 {
+                ARRIVAL_THRESHOLD_LOOSE
+            } else {
+                ARRIVAL_THRESHOLD_TIGHT
+            };
+
+            if dist < threshold {
                 waypoints.waypoints.pop_front();
                 if waypoints.waypoints.is_empty() {
                     waypoints.braking = true;
