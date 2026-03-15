@@ -5,29 +5,44 @@ use std::collections::VecDeque;
 use crate::game::{EnemyVisibility, GameState, Health, Team};
 use crate::map::MapBounds;
 
-pub struct ShipPlugin;
+pub struct ShipPhysicsPlugin;
 
-impl Plugin for ShipPlugin {
+impl Plugin for ShipPhysicsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                update_facing_targets,
+                turn_ships,
+                apply_thrust,
+                apply_velocity,
+                check_waypoint_arrival,
+                clamp_ships_to_bounds,
+            )
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
+pub struct ShipVisualsPlugin;
+
+impl Plugin for ShipVisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, init_indicator_assets)
-            .add_systems(
-                Update,
-                (
-                    update_facing_targets,
-                    turn_ships,
-                    apply_thrust,
-                    apply_velocity,
-                    check_waypoint_arrival,
-                    clamp_ships_to_bounds,
-                )
-                    .chain()
-                    .run_if(in_state(GameState::Playing)),
-            )
             .add_systems(
                 Update,
                 (update_waypoint_markers, update_facing_indicators)
                     .run_if(in_state(GameState::Playing)),
             );
+    }
+}
+
+pub struct ShipPlugin;
+
+impl Plugin for ShipPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((ShipPhysicsPlugin, ShipVisualsPlugin));
     }
 }
 
