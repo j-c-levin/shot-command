@@ -1,3 +1,4 @@
+use bevy::ecs::entity::MapEntities;
 use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
@@ -140,6 +141,17 @@ pub struct Selected;
 
 #[derive(Component)]
 pub struct SelectionIndicator;
+
+/// Marker for the child entity that holds team-private ship state.
+/// This entity is only visible to the owning team via replicon visibility,
+/// preventing enemies from seeing WaypointQueue, FacingTarget, and FacingLocked.
+#[derive(Component, Serialize, Deserialize)]
+pub struct ShipSecrets;
+
+/// Points from a ShipSecrets entity back to its parent Ship entity.
+/// Uses `#[entities]` for replicon entity mapping across server/client.
+#[derive(Component, Serialize, Deserialize, MapEntities)]
+pub struct ShipSecretsOwner(#[entities] pub Entity);
 
 /// Marker for waypoint indicator entities.
 #[derive(Component)]
@@ -613,13 +625,15 @@ pub fn spawn_ship(
 
 /// Spawn a ship with only data components (no mesh, material, or visibility).
 /// Used by the server, which has no rendering context.
+/// Also spawns a `ShipSecrets` child entity that holds team-private state
+/// (WaypointQueue, FacingTarget, FacingLocked) for per-component visibility.
 pub fn spawn_server_ship(
     commands: &mut Commands,
     position: Vec2,
     team: Team,
     class: ShipClass,
 ) -> Entity {
-    commands
+    let ship_entity = commands
         .spawn((
             Ship,
             Replicated,
@@ -630,7 +644,18 @@ pub fn spawn_server_ship(
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: 3 },
         ))
-        .id()
+        .id();
+
+    // Spawn ShipSecrets child — holds replicated copies of private state.
+    // Visibility is controlled per-team in server_update_visibility.
+    commands.spawn((
+        ShipSecrets,
+        ShipSecretsOwner(ship_entity),
+        Replicated,
+        WaypointQueue::default(),
+    ));
+
+    ship_entity
 }
 
 // ── Visual Indicators ───────────────────────────────────────────────────
@@ -639,7 +664,8 @@ fn update_waypoint_markers(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
     local_team: Res<LocalTeam>,
-    ship_query: Query<(Entity, &WaypointQueue, &Team), With<Ship>>,
+    secrets_query: Query<(&ShipSecretsOwner, &WaypointQueue), With<ShipSecrets>>,
+    ship_team_query: Query<&Team, With<Ship>>,
     marker_query: Query<(Entity, &WaypointMarker)>,
 ) {
     // Despawn all existing markers
@@ -647,15 +673,19 @@ fn update_waypoint_markers(
         commands.entity(entity).despawn();
     }
 
-    // Spawn new markers for each local team ship's waypoints
-    for (ship_entity, waypoints, team) in &ship_query {
-        let Some(my_team) = local_team.0 else { continue; };
+    let Some(my_team) = local_team.0 else { return; };
+
+    // Spawn markers from ShipSecrets entities (only visible for own team)
+    for (owner, waypoints) in &secrets_query {
+        let Ok(team) = ship_team_query.get(owner.0) else {
+            continue;
+        };
         if *team != my_team {
             continue;
         }
         for wp in &waypoints.waypoints {
             commands.spawn((
-                WaypointMarker { owner: ship_entity },
+                WaypointMarker { owner: owner.0 },
                 Mesh3d(assets.waypoint_mesh.clone()),
                 MeshMaterial3d(assets.waypoint_material.clone()),
                 Transform::from_xyz(wp.x, 1.0, wp.y),
@@ -668,10 +698,11 @@ fn update_facing_indicators(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
     local_team: Res<LocalTeam>,
-    ship_query: Query<
-        (Entity, &Transform, Option<&FacingLocked>, Option<&FacingTarget>, &Team),
-        With<Ship>,
+    secrets_query: Query<
+        (&ShipSecretsOwner, Option<&FacingLocked>, Option<&FacingTarget>),
+        With<ShipSecrets>,
     >,
+    ship_query: Query<(&Transform, &Team), With<Ship>>,
     indicator_query: Query<(Entity, &FacingIndicator)>,
 ) {
     // Despawn all existing facing indicators
@@ -679,10 +710,17 @@ fn update_facing_indicators(
         commands.entity(entity).despawn();
     }
 
-    // Spawn facing indicator for locked local team ships only
-    for (ship_entity, transform, locked, facing, team) in &ship_query {
-        let Some(my_team) = local_team.0 else { continue; };
-        if locked.is_none() || *team != my_team {
+    let Some(my_team) = local_team.0 else { return; };
+
+    // Spawn facing indicator for locked local team ships only, reading from ShipSecrets
+    for (owner, locked, facing) in &secrets_query {
+        if locked.is_none() {
+            continue;
+        }
+        let Ok((transform, team)) = ship_query.get(owner.0) else {
+            continue;
+        };
+        if *team != my_team {
             continue;
         }
         let Some(target) = facing else {
@@ -702,7 +740,7 @@ fn update_facing_indicators(
         let rotation = Quat::from_rotation_arc(Vec3::Y, direction_3d.normalize());
 
         commands.spawn((
-            FacingIndicator { owner: ship_entity },
+            FacingIndicator { owner: owner.0 },
             Mesh3d(assets.facing_mesh.clone()),
             MeshMaterial3d(assets.facing_material.clone()),
             Transform::from_translation(mid).with_rotation(rotation),

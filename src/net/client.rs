@@ -21,7 +21,9 @@ use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
 use crate::net::{LocalTeam, PROTOCOL_ID};
-use crate::ship::{FacingLocked, FacingTarget, Ship, ShipClass, WaypointQueue};
+use crate::ship::{
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
+};
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -32,16 +34,22 @@ pub struct ClientNetPlugin;
 impl Plugin for ClientNetPlugin {
     fn build(&self, app: &mut App) {
         // Register replicated components (must mirror server exactly, minus server-only ones)
+        // NOTE: WaypointQueue, FacingTarget, FacingLocked are NOT replicated on Ship entities.
+        // They arrive via ShipSecrets child entities with per-team visibility.
         app.replicate::<Ship>()
             .replicate::<ShipClass>()
             .replicate::<Team>()
             .replicate::<Transform>()
-            .replicate::<WaypointQueue>()
-            .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>()
             .replicate::<Health>()
             .replicate::<Asteroid>()
             .replicate::<AsteroidSize>();
+
+        // ShipSecrets child entity components (team-private state)
+        app.replicate::<ShipSecrets>()
+            .replicate::<ShipSecretsOwner>()
+            .replicate::<WaypointQueue>()
+            .replicate::<FacingTarget>()
+            .replicate::<FacingLocked>();
 
         // Register client→server triggers (same types as server)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)

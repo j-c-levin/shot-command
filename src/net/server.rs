@@ -26,8 +26,8 @@ use crate::net::commands::{
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, WaypointQueue, ship_xz_position,
-    spawn_server_ship,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, WaypointQueue,
+    ship_xz_position, spawn_server_ship,
 };
 
 /// Resource containing the bind address string, inserted before the plugin runs.
@@ -63,16 +63,22 @@ pub struct ServerNetPlugin;
 impl Plugin for ServerNetPlugin {
     fn build(&self, app: &mut App) {
         // Register replicated components (Velocity is server-only, not replicated)
+        // NOTE: WaypointQueue, FacingTarget, FacingLocked are NOT replicated on Ship entities.
+        // They are replicated via ShipSecrets child entities with per-team visibility.
         app.replicate::<Ship>()
             .replicate::<ShipClass>()
             .replicate::<Team>()
             .replicate::<Transform>()
-            .replicate::<WaypointQueue>()
-            .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>()
             .replicate::<Health>()
             .replicate::<Asteroid>()
             .replicate::<AsteroidSize>();
+
+        // ShipSecrets child entity components (team-private state)
+        app.replicate::<ShipSecrets>()
+            .replicate::<ShipSecretsOwner>()
+            .replicate::<WaypointQueue>()
+            .replicate::<FacingTarget>()
+            .replicate::<FacingLocked>();
 
         // Register client→server triggers (events with entity mapping)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
@@ -95,10 +101,12 @@ impl Plugin for ServerNetPlugin {
         // Server game setup: spawn fleets when entering Playing state
         app.add_systems(OnEnter(GameState::Playing), server_setup_game);
 
-        // LOS-based visibility filtering each frame during gameplay
+        // Sync ship state to ShipSecrets children, then update visibility
         app.add_systems(
             Update,
-            server_update_visibility.run_if(in_state(GameState::Playing)),
+            (sync_ship_secrets, server_update_visibility)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
         );
 
         // Observer for new client connections
@@ -422,6 +430,44 @@ fn on_client_disconnected(
     }
 }
 
+/// Each frame, copy WaypointQueue/FacingTarget/FacingLocked from Ship entities
+/// to their ShipSecrets child entities. Physics reads from Ship; replication reads
+/// from ShipSecrets.
+fn sync_ship_secrets(
+    mut commands: Commands,
+    ship_query: Query<
+        (&WaypointQueue, Option<&FacingTarget>, Option<&FacingLocked>),
+        With<Ship>,
+    >,
+    mut secrets_query: Query<
+        (Entity, &ShipSecretsOwner, &mut WaypointQueue),
+        (With<ShipSecrets>, Without<Ship>),
+    >,
+) {
+    for (secrets_entity, owner, mut secrets_waypoints) in &mut secrets_query {
+        let Ok((ship_waypoints, ship_facing, ship_locked)) = ship_query.get(owner.0) else {
+            continue;
+        };
+
+        // Sync WaypointQueue
+        *secrets_waypoints = ship_waypoints.clone();
+
+        // Sync FacingTarget: insert or remove on the ShipSecrets entity
+        if let Some(facing) = ship_facing {
+            commands.entity(secrets_entity).insert(facing.clone());
+        } else {
+            commands.entity(secrets_entity).remove::<FacingTarget>();
+        }
+
+        // Sync FacingLocked: insert or remove on the ShipSecrets entity
+        if ship_locked.is_some() {
+            commands.entity(secrets_entity).insert(FacingLocked);
+        } else {
+            commands.entity(secrets_entity).remove::<FacingLocked>();
+        }
+    }
+}
+
 /// Each frame, compute LOS per-client and update replicon visibility.
 ///
 /// For each connected client (which has an assigned team):
@@ -434,6 +480,7 @@ fn server_update_visibility(
     los_bit: Res<LosBit>,
     client_teams: Res<ClientTeams>,
     ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
+    secrets_query: Query<(Entity, &ShipSecretsOwner), With<ShipSecrets>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
     mut clients: Query<(Entity, &mut ClientVisibility), With<ConnectedClient>>,
 ) {
@@ -451,11 +498,18 @@ fn server_update_visibility(
         })
         .collect();
 
+    // Build a map from ship entity to team for ShipSecrets lookup
+    let ship_teams: HashMap<Entity, Team> = all_ships
+        .iter()
+        .map(|&(e, _, _, team)| (e, team))
+        .collect();
+
     for (client_entity, mut client_visibility) in &mut clients {
         let Some(client_team) = client_teams.map.get(&client_entity) else {
             continue;
         };
 
+        // Ship entity visibility (LOS-based for enemies, always for own team)
         for &(ship_entity, ship_pos, _vision_range, ship_team) in &all_ships {
             if ship_team == *client_team {
                 // Friendly ship: always visible to this client
@@ -467,6 +521,14 @@ fn server_update_visibility(
                         && is_in_los(friendly_pos, ship_pos, friendly_range, &asteroids)
                 });
                 client_visibility.set(ship_entity, **los_bit, seen);
+            }
+        }
+
+        // ShipSecrets visibility: always visible to own team, never to enemy
+        for (secrets_entity, owner) in &secrets_query {
+            if let Some(ship_team) = ship_teams.get(&owner.0) {
+                let visible = *ship_team == *client_team;
+                client_visibility.set(secrets_entity, **los_bit, visible);
             }
         }
     }
