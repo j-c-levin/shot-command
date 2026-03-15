@@ -4,16 +4,10 @@
 use bevy::log::tracing_subscriber::{field::MakeExt, fmt};
 use bevy::{app::App, asset::AssetMetaCheck, ecs::error::error, log, prelude::*};
 
-use game::{GameState, Team};
-use input::{on_ground_clicked, on_ship_clicked};
-use ship::{spawn_ship, ShipClass};
-
-mod camera;
-mod fog;
-mod game;
-mod input;
-mod map;
-mod ship;
+use nebulous_shot_command::game::{GameState, Team};
+use nebulous_shot_command::input::{on_ground_clicked, on_ship_clicked};
+use nebulous_shot_command::ship::{spawn_ship, ShipClass};
+use nebulous_shot_command::{camera, fog, game, input, map, ship};
 
 const NAME: &str = env!("CARGO_PKG_NAME");
 
