@@ -220,6 +220,64 @@ pub fn ship_heading(transform: &Transform) -> f32 {
     dir.y.atan2(dir.x)
 }
 
+/// Compute the desired velocity to reach a target, accounting for braking.
+/// Returns a velocity vector that, if matched, would take the ship straight to
+/// the target and arrive at zero speed (for last waypoint) or cruise speed.
+///
+/// `deceleration` should be the worst-case (minimum) deceleration available.
+pub fn desired_velocity_to_target(
+    to_target: Vec2,
+    dist: f32,
+    top_speed: f32,
+    deceleration: f32,
+    is_last_waypoint: bool,
+) -> Vec2 {
+    if dist < 0.5 {
+        return Vec2::ZERO;
+    }
+    let dir = to_target / dist;
+
+    let desired_speed = if is_last_waypoint {
+        // Speed that allows stopping at target: v = sqrt(2 * a * d)
+        // Use a safety factor to start braking earlier
+        let stopping_speed = (2.0 * deceleration * dist).sqrt();
+        stopping_speed.min(top_speed)
+    } else {
+        top_speed
+    };
+
+    dir * desired_speed
+}
+
+/// Compute the thrust vector needed to correct velocity toward desired.
+/// Returns the direction and magnitude of thrust to apply.
+pub fn compute_steering_thrust(
+    current_velocity: Vec2,
+    desired_velocity: Vec2,
+    facing: Vec2,
+    acceleration: f32,
+    thruster_factor: f32,
+    dt: f32,
+) -> Vec2 {
+    let velocity_error = desired_velocity - current_velocity;
+    let error_magnitude = velocity_error.length();
+
+    if error_magnitude < 0.01 {
+        return Vec2::ZERO;
+    }
+
+    let thrust_dir = velocity_error / error_magnitude;
+
+    // How much thrust we can apply in this direction given our facing
+    let angle = angle_between_directions(facing, thrust_dir);
+    let effective_accel = acceleration * thrust_multiplier(angle, thruster_factor);
+
+    // Don't overshoot the correction
+    let thrust_magnitude = (effective_accel * dt).min(error_magnitude);
+
+    thrust_dir * thrust_magnitude
+}
+
 // ── Systems ─────────────────────────────────────────────────────────────
 
 fn update_facing_targets(
@@ -353,16 +411,18 @@ fn apply_thrust(
         // Auto-brake: no waypoints left and braking flag set
         if waypoints.braking && waypoints.waypoints.is_empty() {
             if speed > 0.1 {
-                let vel_dir = velocity.linear.normalize_or_zero();
-                // Braking force depends on angle between facing and opposing velocity
-                let angle = angle_between_directions(facing, -vel_dir);
-                let effective_decel =
-                    profile.acceleration * thrust_multiplier(angle, profile.thruster_factor);
-                let decel_amount = effective_decel * dt;
-                if speed <= decel_amount {
+                let correction = compute_steering_thrust(
+                    velocity.linear,
+                    Vec2::ZERO, // desired: stop
+                    facing,
+                    profile.acceleration,
+                    profile.thruster_factor,
+                    dt,
+                );
+                velocity.linear += correction;
+                // Snap to zero if very slow
+                if velocity.linear.length() < 0.1 {
                     velocity.linear = Vec2::ZERO;
-                } else {
-                    velocity.linear -= vel_dir * decel_amount;
                 }
             } else {
                 velocity.linear = Vec2::ZERO;
@@ -375,53 +435,44 @@ fn apply_thrust(
             continue;
         }
 
-        // Has waypoints — thrust toward next waypoint
+        // Has waypoints — use steering controller
         let pos = ship_xz_position(transform);
         let next_wp = waypoints.waypoints[0];
         let to_target = next_wp - pos;
         let dist = to_target.length();
 
-        if dist < 1.0 {
+        if dist < 0.5 {
             continue;
         }
 
-        let desired_dir = to_target / dist;
-        let angle = angle_between_directions(facing, desired_dir);
-        let multiplier = thrust_multiplier(angle, profile.thruster_factor);
-        let effective_accel = profile.acceleration * multiplier;
-        let effective_top_speed = profile.top_speed * multiplier;
-
-        // Check if approaching last waypoint and need to brake
         let is_last = waypoints.waypoints.len() == 1;
-        if is_last {
-            let brake_dist = braking_distance(speed, effective_accel);
-            if brake_dist >= dist {
-                // Brake toward the waypoint
-                let vel_dir = velocity.linear.normalize_or_zero();
-                let brake_angle = angle_between_directions(facing, -vel_dir);
-                let brake_decel =
-                    profile.acceleration * thrust_multiplier(brake_angle, profile.thruster_factor);
-                let decel_amount = brake_decel * dt;
-                if speed <= decel_amount {
-                    velocity.linear = Vec2::ZERO;
-                } else {
-                    velocity.linear -= vel_dir * decel_amount;
-                }
-                continue;
-            }
-        }
 
-        // Accelerate toward waypoint
-        if speed < effective_top_speed {
-            velocity.linear += desired_dir * effective_accel * dt;
-            let new_speed = velocity.linear.length();
-            if new_speed > effective_top_speed {
-                velocity.linear = velocity.linear.normalize() * effective_top_speed;
-            }
-        } else if speed > effective_top_speed {
-            let excess = speed - effective_top_speed;
-            let decel = (effective_accel * dt).min(excess);
-            velocity.linear = velocity.linear.normalize() * (speed - decel);
+        // Worst-case deceleration (thrusters only, facing away from braking direction)
+        let min_decel = profile.acceleration * profile.thruster_factor;
+
+        let desired = desired_velocity_to_target(
+            to_target,
+            dist,
+            profile.top_speed,
+            min_decel,
+            is_last,
+        );
+
+        let correction = compute_steering_thrust(
+            velocity.linear,
+            desired,
+            facing,
+            profile.acceleration,
+            profile.thruster_factor,
+            dt,
+        );
+
+        velocity.linear += correction;
+
+        // Clamp to top speed
+        let new_speed = velocity.linear.length();
+        if new_speed > profile.top_speed {
+            velocity.linear = velocity.linear.normalize() * profile.top_speed;
         }
     }
 }
@@ -494,14 +545,17 @@ pub fn spawn_ship(
             radius: 8.0,
             height: 20.0,
         }),
-        ShipClass::Scout => meshes.add(Sphere::new(5.0).mesh().uv(16, 16)),
+        ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
     };
 
-    // Align mesh forward with -Z
-    let mesh_rotation = match class {
-        ShipClass::Battleship => Quat::IDENTITY,
-        ShipClass::Destroyer => Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2),
-        ShipClass::Scout => Quat::IDENTITY,
+    // Child transform: rotation to align forward with -Z, plus scale for ellipsoid
+    let mesh_transform = match class {
+        ShipClass::Battleship => Transform::IDENTITY,
+        ShipClass::Destroyer => {
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        }
+        // Ellipsoid: unit sphere scaled (wide, short, long)
+        ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
     };
 
     let is_enemy = team != Team::PLAYER;
@@ -539,7 +593,7 @@ pub fn spawn_ship(
     entity_commands.with_child((
         Mesh3d(ship_mesh),
         MeshMaterial3d(ship_material),
-        Transform::from_rotation(mesh_rotation),
+        mesh_transform,
     ));
 
     if is_enemy {
@@ -745,6 +799,67 @@ mod tests {
         let t = Transform::default();
         let dir = ship_facing_direction(&t);
         assert!((dir - Vec2::new(0.0, -1.0)).length() < 0.01);
+    }
+
+    // Steering tests
+    #[test]
+    fn desired_velocity_slows_near_target() {
+        // Far away: full speed
+        let far = desired_velocity_to_target(Vec2::X * 1000.0, 1000.0, 100.0, 10.0, true);
+        // Close: should be slower
+        let close = desired_velocity_to_target(Vec2::X * 10.0, 10.0, 100.0, 10.0, true);
+        assert!(close.length() < far.length());
+    }
+
+    #[test]
+    fn desired_velocity_is_zero_at_target() {
+        let v = desired_velocity_to_target(Vec2::X * 0.1, 0.1, 100.0, 10.0, true);
+        assert_eq!(v, Vec2::ZERO);
+    }
+
+    #[test]
+    fn desired_velocity_points_toward_target() {
+        let v = desired_velocity_to_target(Vec2::new(100.0, 0.0), 100.0, 80.0, 10.0, true);
+        assert!(v.x > 0.0);
+        assert!(v.y.abs() < 0.001);
+    }
+
+    #[test]
+    fn desired_velocity_not_last_waypoint_is_full_speed() {
+        let v = desired_velocity_to_target(Vec2::X * 5.0, 5.0, 100.0, 10.0, false);
+        // Not last waypoint: should want full top speed even when close
+        assert!((v.length() - 100.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn steering_corrects_perpendicular_velocity() {
+        // Ship moving +X, target is +Y — correction should push toward +Y and against +X
+        let correction = compute_steering_thrust(
+            Vec2::new(50.0, 0.0),    // current: moving right
+            Vec2::new(0.0, 50.0),    // desired: moving up
+            Vec2::Y,                  // facing up
+            30.0,                     // acceleration
+            0.3,                      // thruster_factor
+            0.1,                      // dt
+        );
+        // Should have negative X component (braking sideways) and positive Y (accelerating forward)
+        assert!(correction.x < 0.0, "should brake perpendicular: {}", correction.x);
+        assert!(correction.y > 0.0, "should accelerate toward target: {}", correction.y);
+    }
+
+    #[test]
+    fn steering_brakes_when_overshooting() {
+        // Ship moving fast toward target but should be slowing down
+        let correction = compute_steering_thrust(
+            Vec2::new(80.0, 0.0),    // current: fast
+            Vec2::new(10.0, 0.0),    // desired: slow (near target)
+            Vec2::X,                  // facing right
+            30.0,
+            0.3,
+            0.1,
+        );
+        // Correction should oppose velocity (negative X)
+        assert!(correction.x < 0.0, "should brake: {}", correction.x);
     }
 
     // WaypointQueue tests
