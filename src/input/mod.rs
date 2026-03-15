@@ -4,7 +4,8 @@ use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
+    CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
+    FireMissileCommand, MoveCommand, TargetCommand,
 };
 use crate::net::LocalTeam;
 use crate::ship::{
@@ -22,16 +23,22 @@ pub struct LockMode(pub bool);
 #[derive(Resource, Default)]
 pub struct TargetMode(pub bool);
 
+/// Resource: when true, clicks queue missile launches
+#[derive(Resource, Default)]
+pub struct MissileMode(pub bool);
+
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LockMode>()
             .init_resource::<TargetMode>()
+            .init_resource::<MissileMode>()
             .add_systems(
                 Startup,
                 (
                     setup_selection_indicator,
                     setup_lock_mode_hud,
                     setup_target_mode_hud,
+                    setup_missile_mode_hud,
                 ),
             )
             .add_systems(
@@ -41,6 +48,7 @@ impl Plugin for InputPlugin {
                     handle_keyboard,
                     update_lock_mode_hud,
                     update_target_mode_hud,
+                    update_missile_mode_hud,
                 ),
             );
     }
@@ -72,11 +80,12 @@ pub fn on_ship_clicked(
     keys: Res<ButtonInput<KeyCode>>,
     local_team: Res<LocalTeam>,
     mut target_mode: ResMut<TargetMode>,
-    ship_query: Query<(Entity, &Team), With<Ship>>,
+    missile_mode: Res<MissileMode>,
+    ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
     let clicked_entity = click.event_target();
-    let Ok((entity, team)) = ship_query.get(clicked_entity) else {
+    let Ok((entity, team, transform)) = ship_query.get(clicked_entity) else {
         return;
     };
 
@@ -94,6 +103,20 @@ pub fn on_ship_clicked(
     }
 
     if click.button != PointerButton::Primary {
+        return;
+    }
+
+    // Missile mode: left-click on enemy queues a missile
+    if missile_mode.0 && *team != my_team {
+        let target_pos = Vec2::new(transform.translation.x, transform.translation.z);
+        for selected_ship in &selected_query {
+            commands.client_trigger(FireMissileCommand {
+                ship: selected_ship,
+                target_point: target_pos,
+                target_entity: Some(entity),
+            });
+        }
+        // Don't exit missile mode — allow rapid clicking for volleys
         return;
     }
 
@@ -126,6 +149,7 @@ pub fn on_ground_clicked(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut lock_mode: ResMut<LockMode>,
+    missile_mode: Res<MissileMode>,
     local_team: Res<LocalTeam>,
     ground_query: Query<Entity, With<GroundPlane>>,
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
@@ -142,6 +166,22 @@ pub fn on_ground_clicked(
     let Some(my_team) = local_team.0 else {
         return;
     };
+
+    // Missile mode: left-click on ground queues a missile at that position
+    if click.button == PointerButton::Primary && missile_mode.0 {
+        for (entity, _transform, team) in &selected_query {
+            if *team != my_team {
+                continue;
+            }
+            commands.client_trigger(FireMissileCommand {
+                ship: entity,
+                target_point: destination,
+                target_entity: None,
+            });
+        }
+        // Don't exit missile mode
+        return;
+    }
 
     // Alt+right-click: set facing direction and lock
     if click.button == PointerButton::Secondary && keys.pressed(KeyCode::AltLeft) {
@@ -228,6 +268,7 @@ fn handle_keyboard(
     mut commands: Commands,
     mut lock_mode: ResMut<LockMode>,
     mut target_mode: ResMut<TargetMode>,
+    mut missile_mode: ResMut<MissileMode>,
     selected_query: Query<Entity, With<Selected>>,
     locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&TargetDesignation>), With<ShipSecrets>>,
@@ -236,8 +277,14 @@ fn handle_keyboard(
         for entity in &selected_query {
             commands.entity(entity).remove::<Selected>();
         }
+        if missile_mode.0 {
+            for entity in &selected_query {
+                commands.client_trigger(CancelMissilesCommand { ship: entity });
+            }
+        }
         lock_mode.0 = false;
         target_mode.0 = false;
+        missile_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyL) {
@@ -252,6 +299,7 @@ fn handle_keyboard(
             lock_mode.0 = !lock_mode.0;
         }
         target_mode.0 = false;
+        missile_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyK) {
@@ -274,6 +322,13 @@ fn handle_keyboard(
             target_mode.0 = false;
         }
         lock_mode.0 = false;
+        missile_mode.0 = false;
+    }
+
+    if keys.just_pressed(KeyCode::KeyM) {
+        missile_mode.0 = !missile_mode.0;
+        lock_mode.0 = false;
+        target_mode.0 = false;
     }
 }
 
@@ -349,6 +404,45 @@ fn update_target_mode_hud(
         return;
     };
     *vis = if target_mode.0 {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+}
+
+// ── Missile Mode HUD ────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct MissileModeHud;
+
+fn setup_missile_mode_hud(mut commands: Commands) {
+    commands.spawn((
+        MissileModeHud,
+        Text::new("MISSILE MODE — Click enemy or ground to fire"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 0.5, 0.1, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(80.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn update_missile_mode_hud(
+    missile_mode: Res<MissileMode>,
+    mut query: Query<&mut Visibility, With<MissileModeHud>>,
+) {
+    let Ok(mut vis) = query.single_mut() else {
+        return;
+    };
+    *vis = if missile_mode.0 {
         Visibility::Visible
     } else {
         Visibility::Hidden
