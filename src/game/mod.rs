@@ -46,7 +46,7 @@ impl Default for EnemyVisibility {
 
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct Health {
-    pub hp: u8,
+    pub hp: u16,
 }
 
 #[cfg(test)]
@@ -94,14 +94,14 @@ mod tests {
 
     #[test]
     fn health_takes_damage() {
-        let mut h = Health { hp: 3 };
-        h.hp -= 1;
-        assert_eq!(h.hp, 2);
+        let mut h = Health { hp: 200 };
+        h.hp -= 15;
+        assert_eq!(h.hp, 185);
     }
 
     #[test]
     fn health_saturates_at_zero() {
-        let h = Health { hp: 0 };
+        let h = Health { hp: 0u16 };
         assert_eq!(h.hp.saturating_sub(1), 0);
     }
 }

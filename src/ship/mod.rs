@@ -63,6 +63,7 @@ pub enum ShipClass {
 
 #[derive(Clone, Debug)]
 pub struct ShipProfile {
+    pub hp: u16,
     pub acceleration: f32,
     pub thruster_factor: f32,
     pub turn_rate: f32,
@@ -121,6 +122,7 @@ impl ShipClass {
     pub fn profile(&self) -> ShipProfile {
         match self {
             ShipClass::Battleship => ShipProfile {
+                hp: 200,
                 acceleration: 6.0,
                 thruster_factor: 0.2,
                 turn_rate: 0.8,
@@ -130,6 +132,7 @@ impl ShipClass {
                 collision_radius: 12.0,
             },
             ShipClass::Destroyer => ShipProfile {
+                hp: 100,
                 acceleration: 10.0,
                 thruster_factor: 0.3,
                 turn_rate: 1.5,
@@ -139,6 +142,7 @@ impl ShipClass {
                 collision_radius: 8.0,
             },
             ShipClass::Scout => ShipProfile {
+                hp: 50,
                 acceleration: 14.0,
                 thruster_factor: 0.5,
                 turn_rate: 3.0,
@@ -674,7 +678,7 @@ pub fn spawn_ship(
     ));
 
     if is_enemy {
-        entity_commands.insert((EnemyVisibility::default(), Health { hp: 3 }));
+        entity_commands.insert((EnemyVisibility::default(), Health { hp: class.profile().hp }));
     }
 
     entity_commands.id()
@@ -703,7 +707,7 @@ pub fn spawn_server_ship(
             Velocity::default(),
             WaypointQueue::default(),
             Transform::from_xyz(position.x, 5.0, position.y),
-            Health { hp: 3 },
+            Health { hp: class.profile().hp },
             Mounts(class.default_mounts()),
         ))
         .id();
