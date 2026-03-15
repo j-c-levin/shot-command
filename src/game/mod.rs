@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy::time::Timer;
 use serde::{Deserialize, Serialize};
 
 pub struct GamePlugin;
@@ -18,6 +19,7 @@ pub enum GameState {
     /// Client: connecting to server, waiting for team assignment
     Connecting,
     Playing,
+    GameOver,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -49,6 +51,14 @@ pub struct Health {
     pub hp: u16,
 }
 
+/// Marker: this ship has been destroyed (hp reached 0). Server-only.
+#[derive(Component, Clone, Debug)]
+pub struct Destroyed;
+
+/// Timer that delays despawn after destruction. Server-only.
+#[derive(Component, Clone, Debug)]
+pub struct DestroyTimer(pub Timer);
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -76,6 +86,7 @@ mod tests {
             GameState::WaitingForPlayers,
             GameState::Connecting,
             GameState::Playing,
+            GameState::GameOver,
         ];
         for (i, a) in states.iter().enumerate() {
             for (j, b) in states.iter().enumerate() {

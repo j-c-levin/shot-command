@@ -22,8 +22,8 @@ use crate::fog::is_in_los;
 use crate::game::{GameState, Health, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
-    TeamAssignment,
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
+    TargetCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
@@ -92,8 +92,9 @@ impl Plugin for ServerNetPlugin {
             .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
             .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
 
-        // Register server→client trigger
+        // Register server→client triggers
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
+        app.add_server_event::<GameResult>(Channel::Ordered);
 
         // Init resources
         app.init_resource::<ClientTeams>();

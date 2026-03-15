@@ -49,3 +49,9 @@ pub struct ClearTargetCommand {
 pub struct TeamAssignment {
     pub team: Team,
 }
+
+/// Server → client: announces the game result (which team won).
+#[derive(Event, Debug, Clone, Serialize, Deserialize)]
+pub struct GameResult {
+    pub winning_team: Team,
+}

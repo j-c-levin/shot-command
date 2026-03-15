@@ -13,8 +13,8 @@ use crate::game::{GameState, Health, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{Asteroid, AsteroidSize, GroundPlane, MapBounds};
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand, TargetCommand,
-    TeamAssignment,
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
+    TargetCommand, TeamAssignment,
 };
 use crate::net::{LocalTeam, PROTOCOL_ID};
 use crate::ship::{
@@ -58,8 +58,9 @@ impl Plugin for ClientNetPlugin {
             .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
             .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
 
-        // Register server→client trigger
+        // Register server→client triggers
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
+        app.add_server_event::<GameResult>(Channel::Ordered);
 
         // Systems
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
@@ -75,6 +76,12 @@ impl Plugin for ClientNetPlugin {
 
         // Observer for team assignment from server
         app.add_observer(on_team_assignment);
+
+        // Observer for game result from server
+        app.add_observer(on_game_result);
+
+        // Game over UI
+        app.add_systems(OnEnter(GameState::GameOver), show_game_over_ui);
     }
 }
 
@@ -172,5 +179,63 @@ fn client_setup_scene(
     commands.add_observer(on_ground_clicked);
 
     info!("Client scene setup complete (ground plane + map bounds + observers)");
+}
+
+/// Stores the game outcome once the server announces it.
+#[derive(Resource, Debug)]
+pub struct GameOutcome(pub Team);
+
+/// Observer that fires when the server sends a GameResult event.
+fn on_game_result(
+    trigger: On<GameResult>,
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    let result = &*trigger;
+    info!("Game result received: Team {} wins!", result.winning_team.0);
+    commands.insert_resource(GameOutcome(result.winning_team));
+    next_state.set(GameState::GameOver);
+}
+
+/// Display Victory/Defeat UI text when entering GameOver state.
+fn show_game_over_ui(
+    mut commands: Commands,
+    game_outcome: Option<Res<GameOutcome>>,
+    local_team: Res<LocalTeam>,
+) {
+    let Some(outcome) = game_outcome else {
+        warn!("GameOver entered but no GameOutcome resource found");
+        return;
+    };
+
+    let is_victory = local_team
+        .0
+        .map(|t| t == outcome.0)
+        .unwrap_or(false);
+
+    let (text, color) = if is_victory {
+        ("Victory!", Color::srgb(0.2, 1.0, 0.2))
+    } else {
+        ("Defeat", Color::srgb(1.0, 0.2, 0.2))
+    };
+
+    commands.spawn((
+        Text::new(text),
+        TextFont {
+            font_size: 48.0,
+            ..default()
+        },
+        TextColor(color),
+        Node {
+            position_type: PositionType::Absolute,
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            ..default()
+        },
+    ));
+
+    info!("Game over: {}", text);
 }
 
