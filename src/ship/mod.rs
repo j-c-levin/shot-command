@@ -80,7 +80,7 @@ impl ShipClass {
                 turn_rate: 0.8,
                 turn_acceleration: 0.4,
                 top_speed: 20.0,
-                vision_range: 250.0,
+                vision_range: 200.0,
                 collision_radius: 12.0,
             },
             ShipClass::Destroyer => ShipProfile {
@@ -98,7 +98,7 @@ impl ShipClass {
                 turn_rate: 3.0,
                 turn_acceleration: 2.0,
                 top_speed: 35.0,
-                vision_range: 150.0,
+                vision_range: 200.0,
                 collision_radius: 5.0,
             },
         }
