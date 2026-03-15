@@ -75,11 +75,11 @@ impl ShipClass {
                 collision_radius: 8.0,
             },
             ShipClass::Scout => ShipProfile {
-                acceleration: 50.0,
+                acceleration: 45.0,
                 thruster_factor: 0.5,
                 turn_rate: 3.0,
                 turn_acceleration: 2.0,
-                top_speed: 130.0,
+                top_speed: 90.0,
                 vision_range: 150.0,
                 collision_radius: 5.0,
             },
@@ -488,7 +488,7 @@ fn apply_velocity(
     }
 }
 
-const ARRIVAL_THRESHOLD: f32 = 10.0;
+const ARRIVAL_THRESHOLD: f32 = 30.0;
 
 fn check_waypoint_arrival(
     mut query: Query<(&Transform, &mut WaypointQueue), With<Ship>>,
@@ -508,24 +508,9 @@ fn check_waypoint_arrival(
     }
 }
 
-fn clamp_ships_to_bounds(
-    bounds: Res<MapBounds>,
-    mut query: Query<(&mut Transform, &mut Velocity), With<Ship>>,
-) {
-    for (mut transform, mut velocity) in &mut query {
-        let pos = ship_xz_position(&transform);
-        let clamped = bounds.clamp(pos);
-        if pos != clamped {
-            transform.translation.x = clamped.x;
-            transform.translation.z = clamped.y;
-            if (pos.x - clamped.x).abs() > 0.01 {
-                velocity.linear.x = 0.0;
-            }
-            if (pos.y - clamped.y).abs() > 0.01 {
-                velocity.linear.y = 0.0;
-            }
-        }
-    }
+fn clamp_ships_to_bounds() {
+    // Ships are allowed to drift outside map bounds and return on their own.
+    // Player commands are constrained to the ground plane (which is within bounds).
 }
 
 // ── Spawning ────────────────────────────────────────────────────────────
