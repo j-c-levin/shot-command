@@ -1,0 +1,65 @@
+//! Shared replication registration plugin.
+//!
+//! Both server and client must register replicated components and events in
+//! **exactly the same order** — bevy_replicon computes a protocol hash from
+//! registration order and rejects connections on mismatch. This plugin is the
+//! single source of truth for that ordering.
+
+use bevy::prelude::*;
+use bevy_replicon::prelude::*;
+
+use crate::game::{Health, Team};
+use crate::map::{Asteroid, AsteroidSize};
+use crate::net::commands::{
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
+    TargetCommand, TeamAssignment,
+};
+use crate::ship::{
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
+    WaypointQueue,
+};
+use crate::weapon::{MissileQueue, Mounts};
+use crate::weapon::projectile::{Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
+
+pub struct SharedReplicationPlugin;
+
+impl Plugin for SharedReplicationPlugin {
+    fn build(&self, app: &mut App) {
+        // ── Replicated components ──────────────────────────────────────
+        // Velocity is server-only, not replicated.
+        // WaypointQueue, FacingTarget, FacingLocked are NOT replicated on Ship entities —
+        // they arrive via ShipSecrets entities with per-team visibility.
+        app.replicate::<Ship>()
+            .replicate::<ShipClass>()
+            .replicate::<Team>()
+            .replicate::<Transform>()
+            .replicate::<Health>()
+            .replicate::<Mounts>()
+            .replicate::<Asteroid>()
+            .replicate::<AsteroidSize>()
+            .replicate::<Projectile>()
+            .replicate::<ProjectileVelocity>()
+            .replicate::<ProjectileDamage>()
+            .replicate::<ProjectileOwner>();
+
+        // ShipSecrets entity components (team-private state)
+        app.replicate::<ShipSecrets>()
+            .replicate::<ShipSecretsOwner>()
+            .replicate::<WaypointQueue>()
+            .replicate::<FacingTarget>()
+            .replicate::<FacingLocked>()
+            .replicate::<TargetDesignation>()
+            .replicate::<MissileQueue>();
+
+        // ── Client→server triggers ─────────────────────────────────────
+        app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
+            .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
+            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
+            .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
+            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
+
+        // ── Server→client triggers ─────────────────────────────────────
+        app.add_server_event::<TeamAssignment>(Channel::Ordered);
+        app.add_server_event::<GameResult>(Channel::Ordered);
+    }
+}

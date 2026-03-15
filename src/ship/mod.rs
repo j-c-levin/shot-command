@@ -6,7 +6,7 @@ use std::collections::VecDeque;
 
 use crate::game::{GameState, Health, Team};
 use crate::net::LocalTeam;
-use crate::weapon::{Mount, MountSize, Mounts, WeaponState, WeaponType};
+use crate::weapon::{MissileQueue, Mount, MountSize, Mounts, WeaponState, WeaponType};
 
 pub struct ShipPhysicsPlugin;
 
@@ -723,6 +723,7 @@ pub fn spawn_server_ship(
             class,
             Velocity::default(),
             WaypointQueue::default(),
+            MissileQueue::default(),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: class.profile().hp },
             Mounts(class.default_mounts()),
@@ -736,6 +737,7 @@ pub fn spawn_server_ship(
         ShipSecretsOwner(ship_entity),
         Replicated,
         WaypointQueue::default(),
+        MissileQueue::default(),
     ));
 
     ship_entity

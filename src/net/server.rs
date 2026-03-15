@@ -19,10 +19,10 @@ use bevy_replicon_renet::{
 };
 
 use crate::fog::is_in_los;
-use crate::game::{GameState, Health, Team};
+use crate::game::{GameState, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
+    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand,
     TargetCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
@@ -30,7 +30,7 @@ use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
     WaypointQueue, ship_xz_position, spawn_server_ship,
 };
-use crate::weapon::Mounts;
+use crate::weapon::MissileQueue;
 use crate::weapon::firing::{auto_fire, tick_weapon_cooldowns};
 
 /// Resource containing the bind address string, inserted before the plugin runs.
@@ -65,36 +65,8 @@ pub struct ServerNetPlugin;
 
 impl Plugin for ServerNetPlugin {
     fn build(&self, app: &mut App) {
-        // Register replicated components (Velocity is server-only, not replicated)
-        // NOTE: WaypointQueue, FacingTarget, FacingLocked are NOT replicated on Ship entities.
-        // They are replicated via ShipSecrets child entities with per-team visibility.
-        app.replicate::<Ship>()
-            .replicate::<ShipClass>()
-            .replicate::<Team>()
-            .replicate::<Transform>()
-            .replicate::<Health>()
-            .replicate::<Mounts>()
-            .replicate::<Asteroid>()
-            .replicate::<AsteroidSize>();
-
-        // ShipSecrets child entity components (team-private state)
-        app.replicate::<ShipSecrets>()
-            .replicate::<ShipSecretsOwner>()
-            .replicate::<WaypointQueue>()
-            .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>()
-            .replicate::<TargetDesignation>();
-
-        // Register client→server triggers (events with entity mapping)
-        app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
-            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
-
-        // Register server→client triggers
-        app.add_server_event::<TeamAssignment>(Channel::Ordered);
-        app.add_server_event::<GameResult>(Channel::Ordered);
+        // Replication registration is handled by SharedReplicationPlugin
+        // (must be added before this plugin in both server and client).
 
         // Init resources
         app.init_resource::<ClientTeams>();
@@ -188,7 +160,6 @@ fn setup_renet_server(
 /// can only receive messages and replication after authorization.
 fn on_client_connected(
     trigger: On<Add, AuthorizedClient>,
-    mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
@@ -205,11 +176,8 @@ fn on_client_connected(
         client_teams.map.len()
     );
 
-    // Send team assignment to the newly connected client
-    commands.server_trigger(ToClients {
-        mode: SendMode::Direct(ClientId::Client(client_entity)),
-        message: TeamAssignment { team },
-    });
+    // Don't send TeamAssignment here — it's sent after fleet spawning in
+    // server_setup_game so clients receive it after entities are replicated.
 
     // After 2 clients connected, transition to Playing
     if client_teams.map.len() >= 2 {
@@ -219,8 +187,9 @@ fn on_client_connected(
 }
 
 /// Spawn symmetric fleets for each team when entering Playing state.
-/// Also inserts MapBounds so physics systems can read it.
-fn server_setup_game(mut commands: Commands) {
+/// Also inserts MapBounds and sends TeamAssignment to all clients
+/// (deferred until after spawning so entities replicate before clients act).
+fn server_setup_game(mut commands: Commands, client_teams: Res<ClientTeams>) {
     // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
     commands.insert_resource(MapBounds {
         half_extents: Vec2::splat(500.0),
@@ -286,6 +255,14 @@ fn server_setup_game(mut commands: Commands) {
             Transform::from_xyz(pos.x, 0.0, pos.y),
             Replicated,
         ));
+    }
+
+    // Send TeamAssignment to every connected client now that entities exist.
+    for (&client_entity, &team) in &client_teams.map {
+        commands.server_trigger(ToClients {
+            mode: SendMode::Direct(ClientId::Client(client_entity)),
+            message: TeamAssignment { team },
+        });
     }
 
     info!(
@@ -589,16 +566,17 @@ fn sync_ship_secrets(
             Option<&FacingTarget>,
             Option<&FacingLocked>,
             Option<&TargetDesignation>,
+            &MissileQueue,
         ),
         With<Ship>,
     >,
     mut secrets_query: Query<
-        (Entity, &ShipSecretsOwner, &mut WaypointQueue),
+        (Entity, &ShipSecretsOwner, &mut WaypointQueue, &mut MissileQueue),
         (With<ShipSecrets>, Without<Ship>),
     >,
 ) {
-    for (secrets_entity, owner, mut secrets_waypoints) in &mut secrets_query {
-        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target)) =
+    for (secrets_entity, owner, mut secrets_waypoints, mut secrets_missiles) in &mut secrets_query {
+        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles)) =
             ship_query.get(owner.0)
         else {
             continue;
@@ -606,6 +584,9 @@ fn sync_ship_secrets(
 
         // Sync WaypointQueue
         *secrets_waypoints = ship_waypoints.clone();
+
+        // Sync MissileQueue
+        *secrets_missiles = ship_missiles.clone();
 
         // Sync FacingTarget: insert or remove on the ShipSecrets entity
         if let Some(facing) = ship_facing {
