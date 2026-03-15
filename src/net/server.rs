@@ -4,6 +4,7 @@ use std::time::SystemTime;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use bevy_replicon::shared::message::client_message::FromClient;
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetServer,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig as NetcodeServerConfig},
@@ -67,6 +68,11 @@ impl Plugin for ServerNetPlugin {
 
         // Observer for new client connections
         app.add_observer(on_client_connected);
+
+        // Command handler observers
+        app.add_observer(handle_move_command);
+        app.add_observer(handle_facing_lock_command);
+        app.add_observer(handle_facing_unlock_command);
     }
 }
 
@@ -180,4 +186,143 @@ fn server_setup_game(mut commands: Commands) {
     }
 
     info!("Server: spawned symmetric fleets for 2 teams");
+}
+
+/// Resolves a `ClientId` to the connected client entity for team lookup.
+fn client_entity(client_id: ClientId) -> Option<Entity> {
+    match client_id {
+        ClientId::Client(entity) => Some(entity),
+        ClientId::Server => None,
+    }
+}
+
+/// Validates that the given client owns a ship (same team). Returns the team if valid.
+fn validate_ownership(
+    client_id: ClientId,
+    ship_entity: Entity,
+    client_teams: &ClientTeams,
+    ship_query: &Query<&Team, With<Ship>>,
+    command_name: &str,
+) -> Option<()> {
+    let Some(entity) = client_entity(client_id) else {
+        warn!("{command_name} from server client (no entity), ignoring");
+        return None;
+    };
+
+    let Some(client_team) = client_teams.map.get(&entity) else {
+        warn!("{command_name} from unknown client {entity:?}");
+        return None;
+    };
+
+    let Ok(ship_team) = ship_query.get(ship_entity) else {
+        warn!("{command_name} for invalid ship {ship_entity:?}");
+        return None;
+    };
+
+    if ship_team != client_team {
+        warn!(
+            "{command_name} rejected: client Team({}) tried to control Team({}) ship",
+            client_team.0, ship_team.0
+        );
+        return None;
+    }
+
+    Some(())
+}
+
+/// Observer: handle `MoveCommand` from clients.
+fn handle_move_command(
+    trigger: On<FromClient<MoveCommand>>,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    mut waypoint_query: Query<&mut WaypointQueue, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(from.client_id, cmd.ship, &client_teams, &team_query, "MoveCommand")
+        .is_none()
+    {
+        return;
+    }
+
+    let Ok(mut waypoints) = waypoint_query.get_mut(cmd.ship) else {
+        return;
+    };
+
+    if cmd.append {
+        waypoints.waypoints.push_back(cmd.destination);
+        waypoints.braking = false;
+    } else {
+        waypoints.waypoints.clear();
+        waypoints.waypoints.push_back(cmd.destination);
+        waypoints.braking = false;
+    }
+
+    info!(
+        "MoveCommand applied: ship {:?} -> ({}, {}), append={}",
+        cmd.ship, cmd.destination.x, cmd.destination.y, cmd.append
+    );
+}
+
+/// Observer: handle `FacingLockCommand` from clients.
+fn handle_facing_lock_command(
+    trigger: On<FromClient<FacingLockCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "FacingLockCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    commands.entity(cmd.ship).insert((
+        FacingTarget {
+            direction: cmd.direction,
+        },
+        FacingLocked,
+    ));
+
+    info!(
+        "FacingLockCommand applied: ship {:?} facing ({}, {})",
+        cmd.ship, cmd.direction.x, cmd.direction.y
+    );
+}
+
+/// Observer: handle `FacingUnlockCommand` from clients.
+fn handle_facing_unlock_command(
+    trigger: On<FromClient<FacingUnlockCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "FacingUnlockCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    commands.entity(cmd.ship).remove::<FacingLocked>();
+
+    info!("FacingUnlockCommand applied: ship {:?}", cmd.ship);
 }
