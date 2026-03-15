@@ -371,15 +371,45 @@ pub fn compute_steering_thrust(
 fn update_facing_targets(
     mut commands: Commands,
     query: Query<
-        (Entity, &Transform, &WaypointQueue, Option<&FacingLocked>),
+        (
+            Entity,
+            &Transform,
+            &WaypointQueue,
+            Option<&FacingLocked>,
+            Option<&TargetDesignation>,
+            Option<&crate::weapon::Mounts>,
+        ),
         With<Ship>,
     >,
+    target_transforms: Query<&Transform, Without<crate::weapon::projectile::Projectile>>,
 ) {
-    for (entity, transform, waypoints, locked) in &query {
+    for (entity, transform, waypoints, locked, target, mounts) in &query {
         if locked.is_some() {
             continue;
         }
 
+        // Check if this ship has a forward-arc weapon and a target — if so,
+        // face the target so the railgun can fire, even while moving to a waypoint.
+        if let (Some(designation), Some(mounts)) = (target, mounts) {
+            let has_forward_weapon = mounts.0.iter().any(|m| {
+                m.weapon.as_ref().is_some_and(|w| {
+                    w.weapon_type.profile().arc == crate::weapon::FiringArc::Forward
+                })
+            });
+            if has_forward_weapon {
+                if let Ok(target_transform) = target_transforms.get(designation.0) {
+                    let pos = ship_xz_position(transform);
+                    let target_pos = ship_xz_position(target_transform);
+                    let dir = (target_pos - pos).normalize_or_zero();
+                    if dir != Vec2::ZERO {
+                        commands.entity(entity).insert(FacingTarget { direction: dir });
+                        continue;
+                    }
+                }
+            }
+        }
+
+        // Default behavior: face next waypoint, or remove facing target
         if let Some(&next_wp) = waypoints.waypoints.front() {
             let pos = ship_xz_position(transform);
             let dir = (next_wp - pos).normalize_or_zero();
