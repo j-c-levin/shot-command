@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, GameState, Health, Team};
@@ -32,10 +33,10 @@ impl Plugin for ShipPlugin {
 
 // ── Components ──────────────────────────────────────────────────────────
 
-#[derive(Component)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct Ship;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShipClass {
     Battleship,
     Destroyer,
@@ -87,13 +88,13 @@ impl ShipClass {
     }
 }
 
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Velocity {
     pub linear: Vec2,
     pub angular: f32,
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct WaypointQueue {
     pub waypoints: VecDeque<Vec2>,
     /// True after final waypoint is popped — ship should auto-brake
@@ -109,13 +110,13 @@ impl Default for WaypointQueue {
     }
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct FacingTarget {
     pub direction: Vec2,
 }
 
 /// Marker: ship facing is player-locked, not auto-set by waypoints
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct FacingLocked;
 
 #[derive(Component)]

@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub struct GamePlugin;
 
@@ -8,14 +9,14 @@ impl Plugin for GamePlugin {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States, Serialize, Deserialize)]
 pub enum GameState {
     #[default]
     Setup,
     Playing,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Team(pub u8);
 
 impl Team {
@@ -39,7 +40,7 @@ impl Default for EnemyVisibility {
     }
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct Health {
     pub hp: u8,
 }
