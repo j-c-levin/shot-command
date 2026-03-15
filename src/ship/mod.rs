@@ -506,12 +506,21 @@ fn apply_thrust(
     }
 }
 
+/// Fraction of velocity lost per second to "space friction" (drag).
+/// Not realistic, but makes ships feel controllable and assists braking.
+/// At 0.3, a coasting ship loses ~26% of its speed per second.
+const SPACE_DRAG: f32 = 0.3;
+
 fn apply_velocity(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &Velocity), With<Ship>>,
+    mut query: Query<(&mut Transform, &mut Velocity), With<Ship>>,
 ) {
     let dt = time.delta_secs();
-    for (mut transform, velocity) in &mut query {
+    for (mut transform, mut velocity) in &mut query {
+        // Apply drag: exponential decay so ships naturally bleed speed
+        let drag = (1.0 - SPACE_DRAG * dt).max(0.0);
+        velocity.linear *= drag;
+
         transform.translation.x += velocity.linear.x * dt;
         transform.translation.z += velocity.linear.y * dt;
     }
