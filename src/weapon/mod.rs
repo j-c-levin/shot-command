@@ -1,6 +1,7 @@
 pub mod damage;
 pub mod firing;
 pub mod missile;
+pub mod pd;
 pub mod projectile;
 
 use bevy::ecs::entity::{EntityMapper, MapEntities};

@@ -19,7 +19,7 @@ use crate::ship::{
     WaypointQueue,
 };
 use crate::weapon::{MissileQueue, Mounts};
-use crate::weapon::projectile::{Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
+use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 pub struct SharedReplicationPlugin;
 
@@ -40,7 +40,8 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<Projectile>()
             .replicate::<ProjectileVelocity>()
             .replicate::<ProjectileDamage>()
-            .replicate::<ProjectileOwner>();
+            .replicate::<ProjectileOwner>()
+            .replicate::<CwisRound>();
 
         // ShipSecrets entity components (team-private state)
         app.replicate::<ShipSecrets>()

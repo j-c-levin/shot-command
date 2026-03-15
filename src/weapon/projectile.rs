@@ -1,11 +1,12 @@
 use bevy::ecs::entity::MapEntities;
 use bevy::prelude::*;
-use bevy_replicon::prelude::{AppRuleExt, Replicated};
+use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 
 use crate::game::{GameState, Health};
 use crate::map::MapBounds;
 use crate::ship::{Ship, ShipClass};
+use crate::weapon::missile::{Missile, MissileHealth};
 
 // ── Components ──────────────────────────────────────────────────────────
 
@@ -25,6 +26,10 @@ pub struct ProjectileDamage(pub u16);
 /// friendly fire IS possible.
 #[derive(Component, Serialize, Deserialize, MapEntities, Clone)]
 pub struct ProjectileOwner(#[entities] pub Entity);
+
+/// Marker for CIWS rounds. These only damage missiles, not ships.
+#[derive(Component, Serialize, Deserialize)]
+pub struct CwisRound;
 
 // ── Spawning ────────────────────────────────────────────────────────────
 
@@ -92,7 +97,7 @@ fn check_projectile_hits(
     mut commands: Commands,
     projectile_query: Query<
         (Entity, &Transform, &ProjectileDamage, &ProjectileOwner),
-        With<Projectile>,
+        (With<Projectile>, Without<CwisRound>),
     >,
     mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health), With<Ship>>,
 ) {
@@ -117,22 +122,48 @@ fn check_projectile_hits(
     }
 }
 
+/// Collision radius for missiles when checking CIWS hits.
+const MISSILE_COLLISION_RADIUS: f32 = 3.0;
+
+/// Check CIWS projectile-to-missile collisions. One hit per projectile per frame.
+fn check_cwis_hits(
+    mut commands: Commands,
+    cwis_query: Query<
+        (Entity, &Transform, &ProjectileDamage),
+        (With<Projectile>, With<CwisRound>),
+    >,
+    mut missile_query: Query<(Entity, &Transform, &mut MissileHealth), With<Missile>>,
+) {
+    for (proj_entity, proj_transform, damage) in &cwis_query {
+        let proj_pos = proj_transform.translation;
+
+        for (_missile_entity, missile_transform, mut health) in &mut missile_query {
+            let dist = (proj_pos - missile_transform.translation).length();
+
+            if dist < MISSILE_COLLISION_RADIUS {
+                health.0 = health.0.saturating_sub(damage.0);
+                commands.entity(proj_entity).despawn();
+                break;
+            }
+        }
+    }
+}
+
 // ── Plugin ──────────────────────────────────────────────────────────────
 
 pub struct ProjectilePlugin;
 
 impl Plugin for ProjectilePlugin {
     fn build(&self, app: &mut App) {
-        app.replicate::<Projectile>()
-            .replicate::<ProjectileVelocity>()
-            .replicate::<ProjectileDamage>()
-            .replicate::<ProjectileOwner>()
-            .add_systems(
+        // NOTE: Projectile component replication is registered in ServerNetPlugin
+        // to ensure ordering matches the client exactly (protocol hash).
+        app.add_systems(
                 Update,
                 (
                     advance_projectiles,
                     check_projectile_bounds,
                     check_projectile_hits,
+                    check_cwis_hits,
                 )
                     .chain()
                     .run_if(in_state(GameState::Playing)),
