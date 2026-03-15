@@ -3,8 +3,8 @@
 ## Project
 
 Bevy 0.18 space tactical game inspired by Nebulous: Fleet Command. Player maneuvers ships
-to locate and destroy enemies. Ships auto-fire projectiles at detected enemies within LOS.
-Physics-free MVP — ships move directly toward targets.
+to locate and destroy enemies. Physics-based movement with momentum, facing control, and
+waypoint queuing. Three ship classes with distinct handling.
 Flat plugin architecture, designed for future multiplayer expansion.
 
 ## Build & workflow
@@ -29,53 +29,56 @@ First build from clean is ~4-5 minutes (Bevy is large). Subsequent builds are fa
 All tests are **pure-function or World-level only** — no full App, no render context, no asset
 server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
-- **Pure math** (movement, LOS, combat, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
+- **Pure math** (physics, LOS, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
 - **Resource/component presence**: `World::new()` + `world.insert_resource()` / `world.spawn()`
 - **Avoid**: spinning up `App` with `DefaultPlugins` in tests
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 37 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 41 tests:
 
 | Module | What's tested |
 |---|---|
 | `src/game/mod.rs` | Team constants, GameState default, EnemyVisibility default, Health damage/saturation |
 | `src/map/mod.rs` | MapBounds contains/clamp/size |
-| `src/ship/mod.rs` | XZ position extraction, movement direction, arrival detection, asteroid collision |
+| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue |
 | `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
-| `src/combat/mod.rs` | Projectile direction normalization, hit detection within/outside/at radius |
 
 ## Architecture
 
 Flat plugin structure, registered in `main.rs`:
 
-- `src/game/` — GameState enum (Setup→Playing→Victory), Team component, Detected marker, EnemyVisibility (opacity), Health, win condition (no enemies alive)
+- `src/game/` — GameState enum (Setup→Playing), Team component, Detected marker, EnemyVisibility (opacity), Health
 - `src/map/` — MapBounds resource, asteroids, ground plane (pickable for move commands)
-- `src/ship/` — Ship entity (cone mesh as child for orientation), ShipStats (speed, vision_range, collision_radius), MovementTarget, movement with asteroid collision (stop+cancel), bounds clamping, spawn_ship (enemies get EnemyVisibility + Health + AlphaMode::Blend)
+- `src/ship/` — Ship entity, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (acceleration, thruster_factor, turn_rate, turn_acceleration, top_speed, vision_range, collision_radius), Velocity (linear Vec2 + angular f32), WaypointQueue (VecDeque + braking flag), FacingTarget/FacingLocked, physics systems (turn, thrust, velocity, waypoint arrival, bounds clamp), visual indicators (waypoint markers, facing arrow), spawn_ship with class-specific meshes (cuboid/cone/sphere)
 - `src/camera/` — Free camera (WASD pan, scroll zoom, middle-mouse orbit)
-- `src/input/` — Ship selection (left-click observer), move commands (right-click ground), selection indicator torus
-- `src/fog/` — Distance+raycast LOS detection, enemy fade in/out (0.5s) via material alpha
-- `src/combat/` — Auto-targeting closest detected enemy, projectile spawning (0.5s fire rate), movement, hit detection, damage (3 hits to destroy)
+- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L key lock mode toggle, LockMode resource, selection indicator torus
+- `src/fog/` — Distance+raycast LOS detection (reads vision_range from ShipClass profile), enemy fade in/out (0.5s) via material alpha
 
-### System ordering (Update schedule, Playing state)
+### System ordering (Update schedule)
 
-1. Input → 2. Ship movement + bounds clamp → 3. Detection (distance+raycast) → 4. Fade (opacity+material alpha) → 5. Auto-target + fire projectiles → 6. Move projectiles → 7. Check projectile hits → 8. Win condition check
+**Ship physics chain:** 1. Update facing targets (auto-set toward waypoint if unlocked) → 2. Turn ships (angular velocity ramp) → 3. Apply thrust (asymmetric, cosine-interpolated) → 4. Apply velocity (position += vel * dt) → 5. Check waypoint arrival (pop + braking) → 6. Clamp to bounds
+
+**Visual indicators** (parallel): waypoint markers, facing direction arrows
+
+**Fog chain** (Playing state): 1. Detect enemies (distance + LOS) → 2. Fade enemies (opacity + material alpha)
 
 ### Key patterns
 
+- **Physics model**: Velocity persists (momentum/drift). Thrust depends on angle between facing and movement (cosine interpolation from 1.0 to thruster_factor). Angular velocity ramps up/down at turn_acceleration.
+- **Facing lock/unlock**: Unlocked ships auto-face waypoint. Locked ships maintain player-set facing. Alt+right-click to lock, alt+click-ship or L to unlock.
+- **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append. Auto-brake on final waypoint.
 - **Picking observers**: ship clicks use per-entity `.observe()`, ground click uses global `add_observer()` with component filter
 - **`Pickable::IGNORE`** on selection indicator to prevent it intercepting clicks
-- **`Detected` marker** is the decoupling point between LOS detection and combat targeting
-- **`EnemyVisibility` component** drives fade opacity and material alpha for smooth reveal
+- **`Detected` marker** is the decoupling point between LOS detection and future combat
 - **Team component** uses `u8` id (not Player/Enemy markers) for multiplayer extensibility
-- **Enemy ships start `Visibility::Hidden`** with `AlphaMode::Blend`, fade system manages visibility
 
 ### Game setup flow
 
 `main.rs::setup_game` runs on `OnEnter(GameState::Setup)`:
-1. Registers `on_ground_clicked` as global observer (ground plane doesn't exist yet — spawned in Startup)
-2. Spawns player ship at (-350, -350) with `on_ship_clicked` observer + `FireRate`
-3. Spawns enemy ship at (350, 350) with `on_ship_clicked` observer, starts hidden, gets `EnemyVisibility` + `Health{hp:3}`
+1. Registers `on_ground_clicked` as global observer
+2. Spawns 3 player ships (battleship, destroyer, scout) near (-300, -300) with click observers
+3. Spawns 5 enemy ships (mixed classes) scattered around map with EnemyVisibility + Health
 4. Transitions to `GameState::Playing`
 
 ## Bevy 0.18 notes
@@ -96,12 +99,11 @@ Flat plugin structure, registered in `main.rs`:
 
 See `docs/plans/2026-03-14-feature-brainstorm-v3.md` for full details.
 
-**Next up: Phase 1 — Core Simulation.** Replace direct movement with physics-based
-(momentum, turn rates, main engine vs thrusters). Add facing control, waypoint queuing,
-and holy trinity ship classes (battleship/destroyer/scout). This is a major rewrite of
-the ship movement system.
+**Phase 1: Core Simulation — COMPLETE.** Physics-based movement, facing control,
+waypoint queuing, ship classes (battleship/destroyer/scout). See design doc at
+`docs/plans/2026-03-14-phase1-core-simulation-design.md`.
 
-**Phase 2: Multiplayer** (bevy_replicon, client+host from day one)
+**Next up: Phase 2 — Multiplayer** (bevy_replicon, client+host from day one)
 **Phase 3: Fleet & Loadouts** (mount points, weapon variety, PD, fleet comp screen)
 **Phase 4: Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
 **Phase 5: Depth** (directional damage, repair, beams)
