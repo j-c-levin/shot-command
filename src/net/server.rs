@@ -31,6 +31,7 @@ use crate::ship::{
     WaypointQueue, ship_xz_position, spawn_server_ship,
 };
 use crate::weapon::Mounts;
+use crate::weapon::firing::{auto_fire, tick_weapon_cooldowns};
 
 /// Resource containing the bind address string, inserted before the plugin runs.
 #[derive(Resource, Debug, Clone)]
@@ -112,6 +113,14 @@ impl Plugin for ServerNetPlugin {
         app.add_systems(
             Update,
             (sync_ship_secrets, server_update_visibility, clear_lost_targets)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
+
+        // Weapon systems: cooldown ticking and auto-fire
+        app.add_systems(
+            Update,
+            (tick_weapon_cooldowns, auto_fire)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
