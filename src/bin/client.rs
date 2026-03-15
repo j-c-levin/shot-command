@@ -4,6 +4,7 @@ use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
 use nebulous_shot_command::camera::CameraPlugin;
+use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
 use nebulous_shot_command::net::LocalTeam;
@@ -42,6 +43,7 @@ fn main() {
             GamePlugin,
             CameraPlugin,
             ShipVisualsPlugin,
+            FogClientPlugin,
             ClientNetPlugin,
         ))
         .insert_resource(ClientConnectAddress(cli.connect))

@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::{Detected, EnemyVisibility, GameState, Team};
 use crate::map::{Asteroid, AsteroidSize};
+use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass, ship_xz_position};
 
 pub struct FogPlugin;
@@ -14,6 +15,69 @@ impl Plugin for FogPlugin {
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
+    }
+}
+
+/// Client-side fog plugin: only handles fade-in for newly replicated enemy ships.
+/// The server handles LOS detection and visibility filtering via bevy_replicon.
+pub struct FogClientPlugin;
+
+impl Plugin for FogClientPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (tag_new_enemy_ships, fade_client_enemies)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
+/// When a new enemy ship appears via replication, insert EnemyVisibility with
+/// opacity 0.0 so it can fade in smoothly.
+fn tag_new_enemy_ships(
+    mut commands: Commands,
+    local_team: Res<LocalTeam>,
+    query: Query<(Entity, &Team), Added<Ship>>,
+) {
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+    for (entity, team) in &query {
+        if *team != my_team {
+            commands
+                .entity(entity)
+                .insert(EnemyVisibility { opacity: 0.0 });
+        }
+    }
+}
+
+/// Each frame, ramp EnemyVisibility opacity toward 1.0 and update child material alpha.
+///
+/// TODO: Fade-out is not implemented. bevy_replicon despawns entities immediately when
+/// server-side visibility is lost, so enemies disappear instantly. Future polish could
+/// delay despawn and fade out over FADE_DURATION.
+fn fade_client_enemies(
+    time: Res<Time>,
+    mut query: Query<(&mut EnemyVisibility, &mut Visibility, &Children), With<Ship>>,
+    child_query: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (mut ev, mut visibility, children) in &mut query {
+        ev.opacity = fade_opacity(ev.opacity, 1.0, time.delta_secs(), FADE_DURATION);
+
+        if ev.opacity > 0.0 {
+            *visibility = Visibility::Visible;
+            for child in children.iter() {
+                if let Ok(mat_handle) = child_query.get(child) {
+                    if let Some(material) = materials.get_mut(mat_handle) {
+                        material.base_color = material.base_color.with_alpha(ev.opacity);
+                    }
+                }
+            }
+        } else {
+            *visibility = Visibility::Hidden;
+        }
     }
 }
 
