@@ -6,7 +6,7 @@ use bevy::{app::App, asset::AssetMetaCheck, ecs::error::error, log, prelude::*};
 
 use game::{GameState, Team};
 use input::{on_ground_clicked, on_ship_clicked};
-use ship::spawn_ship;
+use ship::{spawn_ship, ShipClass};
 
 mod camera;
 mod fog;
@@ -78,37 +78,46 @@ fn setup_game(
     mut materials: ResMut<Assets<StandardMaterial>>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
-    // Global observer for ground click — ground plane is spawned in Startup
-    // which hasn't flushed yet during OnEnter(Setup), so we use a global observer
-    // that filters by GroundPlane component instead of an entity observer.
     commands.add_observer(on_ground_clicked);
-    // Spawn player ship at one corner
-    let player = spawn_ship(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(-350.0, -350.0),
-        Team::PLAYER,
-        Color::srgb(0.2, 0.6, 1.0),
-    );
-    // Attach picking observers to player ship
-    commands
-        .entity(player)
-        .observe(on_ship_clicked);
 
-    // Spawn enemy ship at opposite corner (stationary)
-    let enemy = spawn_ship(
-        &mut commands,
-        &mut meshes,
-        &mut materials,
-        Vec2::new(350.0, 350.0),
-        Team::ENEMY,
-        Color::srgb(1.0, 0.2, 0.2),
+    let player_color = Color::srgb(0.2, 0.6, 1.0);
+
+    // Player fleet near bottom-left corner
+    let battleship = spawn_ship(
+        &mut commands, &mut meshes, &mut materials,
+        Vec2::new(-300.0, -300.0), Team::PLAYER, player_color, ShipClass::Battleship,
     );
-    // Enemy also needs click observer for selection feedback
-    commands
-        .entity(enemy)
-        .observe(on_ship_clicked);
+    commands.entity(battleship).observe(on_ship_clicked);
+
+    let destroyer = spawn_ship(
+        &mut commands, &mut meshes, &mut materials,
+        Vec2::new(-330.0, -260.0), Team::PLAYER, player_color, ShipClass::Destroyer,
+    );
+    commands.entity(destroyer).observe(on_ship_clicked);
+
+    let scout = spawn_ship(
+        &mut commands, &mut meshes, &mut materials,
+        Vec2::new(-280.0, -330.0), Team::PLAYER, player_color, ShipClass::Scout,
+    );
+    commands.entity(scout).observe(on_ship_clicked);
+
+    // Enemy ships scattered around the map
+    let enemy_color = Color::srgb(1.0, 0.2, 0.2);
+    let enemy_positions = [
+        (Vec2::new(300.0, 300.0), ShipClass::Battleship),
+        (Vec2::new(-200.0, 350.0), ShipClass::Destroyer),
+        (Vec2::new(350.0, -100.0), ShipClass::Destroyer),
+        (Vec2::new(0.0, 300.0), ShipClass::Scout),
+        (Vec2::new(250.0, -300.0), ShipClass::Scout),
+    ];
+
+    for (pos, class) in enemy_positions {
+        let enemy = spawn_ship(
+            &mut commands, &mut meshes, &mut materials,
+            pos, Team::ENEMY, enemy_color, class,
+        );
+        commands.entity(enemy).observe(on_ship_clicked);
+    }
 
     next_state.set(GameState::Playing);
     info!("Game setup complete — entering Playing state");

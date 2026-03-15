@@ -2,7 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::{Detected, EnemyVisibility, GameState, Team};
 use crate::map::{Asteroid, AsteroidSize};
-use crate::ship::{Ship, ShipStats, ship_xz_position};
+use crate::ship::{Ship, ShipClass, ship_xz_position};
 
 pub struct FogPlugin;
 
@@ -75,7 +75,7 @@ pub fn ray_blocked_by_asteroid(
 
 fn detect_enemies(
     mut commands: Commands,
-    player_ships: Query<(&Transform, &ShipStats, &Team), With<Ship>>,
+    player_ships: Query<(&Transform, &ShipClass, &Team), With<Ship>>,
     enemy_query: Query<(Entity, &Transform, &Team, Option<&Detected>), With<Ship>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
@@ -92,12 +92,12 @@ fn detect_enemies(
         let enemy_pos = ship_xz_position(enemy_transform);
         let mut seen = false;
 
-        for (player_transform, stats, player_team) in &player_ships {
+        for (player_transform, class, player_team) in &player_ships {
             if *player_team != Team::PLAYER {
                 continue;
             }
             let player_pos = ship_xz_position(player_transform);
-            if is_in_los(player_pos, enemy_pos, stats.vision_range, &asteroids) {
+            if is_in_los(player_pos, enemy_pos, class.profile().vision_range, &asteroids) {
                 seen = true;
                 break;
             }

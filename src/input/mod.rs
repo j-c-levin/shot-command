@@ -2,16 +2,23 @@ use bevy::prelude::*;
 
 use crate::game::Team;
 use crate::map::GroundPlane;
-use crate::ship::{MovementTarget, Selected, SelectionIndicator, Ship};
+use crate::ship::{
+    FacingLocked, FacingTarget, Selected, SelectionIndicator, Ship, WaypointQueue,
+};
 
 pub struct InputPlugin;
 
+/// Resource: when true, next right-click sets facing lock direction
+#[derive(Resource, Default)]
+pub struct LockMode(pub bool);
+
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, setup_selection_indicator)
+        app.init_resource::<LockMode>()
+            .add_systems(Startup, setup_selection_indicator)
             .add_systems(
                 Update,
-                (update_selection_indicator, handle_keyboard_deselect),
+                (update_selection_indicator, handle_keyboard),
             );
     }
 }
@@ -39,18 +46,27 @@ fn setup_selection_indicator(
 pub fn on_ship_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
     ship_query: Query<(Entity, &Team), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
-    if click.button != PointerButton::Primary {
-        return;
-    }
-
     let clicked_entity = click.event_target();
-
     let Ok((entity, team)) = ship_query.get(clicked_entity) else {
         return;
     };
+
+    // Alt+right-click on own ship: unlock facing
+    if click.button == PointerButton::Secondary
+        && keys.pressed(KeyCode::AltLeft)
+        && *team == Team::PLAYER
+    {
+        commands.entity(entity).remove::<FacingLocked>();
+        return;
+    }
+
+    if click.button != PointerButton::Primary {
+        return;
+    }
 
     if *team != Team::PLAYER {
         return;
@@ -67,27 +83,72 @@ pub fn on_ship_clicked(
 pub fn on_ground_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    mut lock_mode: ResMut<LockMode>,
     ground_query: Query<Entity, With<GroundPlane>>,
-    selected_query: Query<Entity, With<Selected>>,
+    selected_query: Query<(Entity, &Transform), With<Selected>>,
 ) {
+    let clicked_entity = click.event_target();
+    if ground_query.get(clicked_entity).is_err() {
+        return;
+    }
+    let Some(hit_pos) = click.hit.position else {
+        return;
+    };
+    let destination = Vec2::new(hit_pos.x, hit_pos.z);
+
+    // Alt+right-click: set facing direction and lock
+    if click.button == PointerButton::Secondary && keys.pressed(KeyCode::AltLeft) {
+        for (entity, transform) in &selected_query {
+            let pos = Vec2::new(transform.translation.x, transform.translation.z);
+            let dir = (destination - pos).normalize_or_zero();
+            if dir != Vec2::ZERO {
+                commands
+                    .entity(entity)
+                    .insert(FacingTarget { direction: dir })
+                    .insert(FacingLocked);
+            }
+        }
+        lock_mode.0 = false;
+        return;
+    }
+
     if click.button != PointerButton::Secondary {
         return;
     }
 
-    let clicked_entity = click.event_target();
-
-    if ground_query.get(clicked_entity).is_err() {
+    // Lock mode: next right-click sets facing
+    if lock_mode.0 {
+        for (entity, transform) in &selected_query {
+            let pos = Vec2::new(transform.translation.x, transform.translation.z);
+            let dir = (destination - pos).normalize_or_zero();
+            if dir != Vec2::ZERO {
+                commands
+                    .entity(entity)
+                    .insert(FacingTarget { direction: dir })
+                    .insert(FacingLocked);
+            }
+        }
+        lock_mode.0 = false;
         return;
     }
 
-    let Some(hit_pos) = click.hit.position else {
-        return;
-    };
+    // Shift+right-click: append waypoint
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
-    let destination = Vec2::new(hit_pos.x, hit_pos.z);
-
-    for entity in &selected_query {
-        commands.entity(entity).insert(MovementTarget { destination });
+    for (entity, _transform) in &selected_query {
+        if shift {
+            commands.queue(move |world: &mut World| {
+                if let Some(mut wq) = world.get_mut::<WaypointQueue>(entity) {
+                    wq.waypoints.push_back(destination);
+                    wq.braking = false;
+                }
+            });
+        } else {
+            let mut queue = WaypointQueue::default();
+            queue.waypoints.push_back(destination);
+            commands.entity(entity).insert(queue);
+        }
     }
 }
 
@@ -114,14 +175,30 @@ fn update_selection_indicator(
     }
 }
 
-fn handle_keyboard_deselect(
+fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
+    mut lock_mode: ResMut<LockMode>,
     selected_query: Query<Entity, With<Selected>>,
+    locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
 ) {
     if keys.just_pressed(KeyCode::Escape) {
         for entity in &selected_query {
             commands.entity(entity).remove::<Selected>();
+        }
+        lock_mode.0 = false;
+    }
+
+    if keys.just_pressed(KeyCode::KeyL) {
+        if locked_query.iter().next().is_some() {
+            // Some selected ships are locked — unlock them
+            for entity in &locked_query {
+                commands.entity(entity).remove::<FacingLocked>();
+            }
+            lock_mode.0 = false;
+        } else {
+            // No selected ships locked — toggle lock mode
+            lock_mode.0 = !lock_mode.0;
         }
     }
 }
