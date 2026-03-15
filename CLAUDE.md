@@ -38,51 +38,68 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 47 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 48 tests:
 
 | Module | What's tested |
 |---|---|
-| `src/game/mod.rs` | Team constants, GameState default, EnemyVisibility default, Health damage/saturation |
+| `src/game/mod.rs` | Team constants, GameState default/variants, EnemyVisibility default, Health damage/saturation |
 | `src/map/mod.rs` | MapBounds contains/clamp/size |
 | `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking) |
 | `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
 
 ## Architecture
 
-Flat plugin structure, registered in `main.rs`:
+Library crate (`src/lib.rs`) with two binaries:
 
-- `src/game/` — GameState enum (Setup→Playing), Team component, Detected marker, EnemyVisibility (opacity), Health
-- `src/map/` — MapBounds resource, asteroids, ground plane (pickable for move commands)
-- `src/ship/` — Ship entity, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (acceleration, thruster_factor, turn_rate, turn_acceleration, top_speed, vision_range, collision_radius), Velocity (linear Vec2 + angular f32), WaypointQueue (VecDeque + braking flag), FacingTarget/FacingLocked, physics systems (turn, thrust, velocity, waypoint arrival, bounds clamp), visual indicators (waypoint markers, facing arrow), spawn_ship with class-specific meshes (cuboid/cone/sphere)
+- **`src/bin/server.rs`** — headless authoritative server (`MinimalPlugins`, 60Hz tick loop, `--bind` CLI)
+- **`src/bin/client.rs`** — rendering client (`DefaultPlugins`, `--connect` CLI)
+
+### Modules
+
+- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing / Setup→Connecting→Playing), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health
+- `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
+- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile, Velocity, WaypointQueue, FacingTarget/FacingLocked, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship
 - `src/camera/` — Free camera (WASD pan, scroll zoom, middle-mouse orbit)
-- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L key lock mode toggle, LockMode resource, selection indicator torus
-- `src/fog/` — Distance+raycast LOS detection (reads vision_range from ShipClass profile), enemy fade in/out (0.5s) via material alpha
+- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L key lock mode toggle. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand).
+- `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
+- `src/net/` — Networking module:
+  - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
+  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand (client→server with MapEntities), TeamAssignment (server→client)
+  - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation, LOS visibility filtering, ShipSecrets sync, disconnection handling
+  - `client.rs` — ClientNetPlugin: renet transport, team assignment observer, ground plane setup, materializer/asteroid registration
+  - `materializer.rs` — Spawns meshes for replicated Ship and Asteroid entities on client
 
 ### System ordering (Update schedule)
 
-**Ship physics chain:** 1. Update facing targets (auto-set toward waypoint if unlocked) → 2. Turn ships (angular velocity ramp) → 3. Apply thrust (asymmetric, cosine-interpolated) → 4. Apply velocity (position += vel * dt) → 5. Check waypoint arrival (pop + braking) → 6. Clamp to bounds
+**Server — Ship physics chain:** 1. Update facing targets → 2. Turn ships → 3. Apply thrust → 4. Apply velocity (with space drag) → 5. Check waypoint arrival → 6. Clamp to bounds
 
-**Visual indicators** (parallel): waypoint markers, facing direction arrows
+**Server — Networking:** sync_ship_secrets → server_update_visibility (LOS per-client)
 
-**Fog chain** (Playing state): 1. Detect enemies (distance + LOS) → 2. Fade enemies (opacity + material alpha)
+**Client — Visual indicators** (parallel): waypoint markers, facing direction arrows (read from ShipSecrets)
+
+**Client — Fog:** fade_out_ghosts (fading ghost entities from visibility loss)
 
 ### Key patterns
 
-- **Physics model**: Velocity persists (momentum/drift). Steering controller computes desired velocity (direction to target × speed that allows stopping), then thrusts to correct the error between current and desired velocity. Thrust magnitude depends on angle between facing and thrust direction (cosine interpolation from 1.0 to thruster_factor). Angular velocity ramps up/down at turn_acceleration. Ships always brake to stop when queue is empty.
+- **Client/server split**: Server runs all physics and game logic. Client renders and sends commands via `bevy_replicon` triggers. Server validates team ownership on all commands.
+- **Entity replication**: `bevy_replicon` 0.39 + `bevy_replicon_renet` 0.15. Components registered with `app.replicate::<T>()`. Server uses `FilterRegistry::register_scope::<Entity>()` + `ClientVisibility::set()` for per-client LOS filtering.
+- **ShipSecrets pattern**: WaypointQueue/FacingTarget/FacingLocked live on Ship entities (for physics) but replicate via separate ShipSecrets entities (for per-component visibility). ShipSecrets are always visible to owning team, never to enemy. Server syncs Ship→ShipSecrets each frame. NOTE: ShipSecrets is NOT a Bevy child entity — standalone with ShipSecretsOwner back-reference, because true children inherit parent visibility.
+- **Ghost fade-out**: When replicon despawns an enemy ship (visibility lost), `On<Remove, Ship>` observer spawns a visual-only ghost entity at the same position that fades out over 0.5s, then self-destructs.
+- **Entity materializer**: Replicated entities arrive without meshes. Client materializer watches `Added<Ship>` / `Added<Asteroid>` and spawns appropriate mesh children + `Visibility::Visible`.
+- **Authorization**: Must use `On<Add, AuthorizedClient>` (not `ConnectedClient`) for sending messages — clients can't receive messages until protocol check completes.
+- **Space drag**: Ships lose ~26% velocity/second. Not realistic but makes ships feel controllable and assists braking.
+- **Physics model**: Velocity persists (momentum/drift). Steering controller computes desired velocity, then thrusts to correct. Worst-case deceleration (thruster_factor) used for braking calculations. Ships brake to stop when queue is empty.
 - **Facing lock/unlock**: Unlocked ships auto-face waypoint. Locked ships maintain player-set facing. Alt+right-click to lock, alt+click-ship or L to unlock.
-- **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append. Auto-brake on final waypoint.
-- **Picking observers**: ship clicks use per-entity `.observe()`, ground click uses global `add_observer()` with component filter
-- **`Pickable::IGNORE`** on selection indicator to prevent it intercepting clicks
-- **`Detected` marker** is the decoupling point between LOS detection and future combat
-- **Team component** uses `u8` id (not Player/Enemy markers) for multiplayer extensibility
+- **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append.
+- **Team component** uses `u8` id for multiplayer. First client = Team(0), second = Team(1).
+- **Uniform vision range**: 200m for all ship classes. Sensor/radar differentiation is Phase 4.
 
-### Game setup flow
+### Connection flow
 
-`main.rs::setup_game` runs on `OnEnter(GameState::Setup)`:
-1. Registers `on_ground_clicked` as global observer
-2. Spawns 3 player ships (battleship, destroyer, scout) near (-300, -300) with click observers
-3. Spawns 5 enemy ships (mixed classes) scattered around map with EnemyVisibility + Health
-4. Transitions to `GameState::Playing`
+**Server:** Setup → WaitingForPlayers (bind, listen) → Playing (when 2 clients authorized)
+**Client:** Setup → Connecting (connect to server) → Playing (when TeamAssignment received)
+
+Server spawns symmetric fleets (1 battleship, 1 destroyer, 1 scout per team, mirrored positions) and 12 random asteroids on entering Playing.
 
 ## Bevy 0.18 notes
 
@@ -97,6 +114,17 @@ Flat plugin structure, registered in `main.rs`:
 - Ambient light: `GlobalAmbientLight` as resource, NOT `AmbientLight` as entity
 - `Image::new_fill` requires 5th arg: `RenderAssetUsages::MAIN_WORLD | RenderAssetUsages::RENDER_WORLD`
 - `emissive` field on `StandardMaterial` takes `LinearRgba`, not `Color` — use `LinearRgba::new(r, g, b, a)`
+- `MinimalPlugins` does NOT include `StatesPlugin` — add it explicitly when using states on server
+
+## bevy_replicon 0.39 notes
+
+- `ConnectedClient` vs `AuthorizedClient`: messages/replication only work after auth. Use `On<Add, AuthorizedClient>` for post-connect logic.
+- `ReplicationRegistry::despawn` hook: called AFTER entity is removed from entity map. Cannot keep entity alive for fade — use ghost entities instead.
+- `FilterRegistry::register_scope::<Entity>()` for manual entity-level visibility. Call `ClientVisibility::set(entity, bit, visible)` each frame.
+- Client events: `add_mapped_client_event::<T>(Channel::Ordered)` + `MapEntities` derive with `#[entities]` on Entity fields.
+- Server events: `add_server_event::<T>(Channel::Ordered)`. Send via `commands.server_trigger(ToClients { mode, message })`.
+- Client sends triggers via `commands.client_trigger(event)` (from `ClientTriggerExt` trait).
+- Server receives client events as `On<FromClient<T>>` observers.
 
 ## Roadmap
 
@@ -106,8 +134,13 @@ See `docs/plans/2026-03-14-feature-brainstorm-v3.md` for full details.
 waypoint queuing, ship classes (battleship/destroyer/scout). See design doc at
 `docs/plans/2026-03-14-phase1-core-simulation-design.md`.
 
-**Next up: Phase 2 — Multiplayer** (bevy_replicon, client+host from day one)
-**Phase 3: Fleet & Loadouts** (mount points, weapon variety, PD, fleet comp screen)
+**Phase 2: Multiplayer — COMPLETE.** Headless authoritative server + client binaries,
+bevy_replicon entity replication, per-client LOS visibility filtering, command channel
+with team validation, ghost entity fade-out, ShipSecrets per-component visibility,
+space drag, uniform vision range. See design doc at
+`docs/plans/2026-03-15-phase2-multiplayer-design.md`.
+
+**Next up: Phase 3 — Fleet & Loadouts** (mount points, weapon variety, PD, fleet comp screen)
 **Phase 4: Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
 **Phase 5: Depth** (directional damage, repair, beams)
 
