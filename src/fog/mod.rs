@@ -18,66 +18,99 @@ impl Plugin for FogPlugin {
     }
 }
 
-/// Client-side fog plugin: only handles fade-in for newly replicated enemy ships.
-/// The server handles LOS detection and visibility filtering via bevy_replicon.
-/// Marker component inserted on enemy ships that are fading out after
-/// bevy_replicon would normally despawn them. Client-only, no serde needed.
+/// Marker for a visual-only "ghost" entity that fades out after a replicated
+/// enemy ship is despawned by bevy_replicon. Client-only, no serde needed.
 #[derive(Component)]
-pub struct FadingOut;
+pub struct FadeOutGhost;
 
 pub struct FogClientPlugin;
 
 impl Plugin for FogClientPlugin {
     fn build(&self, app: &mut App) {
+        app.add_observer(on_enemy_ship_removed);
         app.add_systems(
             Update,
-            (tag_new_enemy_ships, fade_client_enemies)
-                .chain()
-                .run_if(in_state(GameState::Playing)),
+            fade_out_ghosts.run_if(in_state(GameState::Playing)),
         );
     }
 }
 
-/// When a new enemy ship appears via replication, insert EnemyVisibility with
-/// opacity 0.0 so it can fade in smoothly.
-fn tag_new_enemy_ships(
+/// Observer that fires when a Ship component is removed from an entity.
+/// When replicon despawns an enemy ship, Bevy fires removal observers BEFORE the
+/// entity is fully gone, so we can still read its components. We spawn a visual-only
+/// "ghost" entity at the same position that fades out over FADE_DURATION.
+fn on_enemy_ship_removed(
+    trigger: On<Remove, Ship>,
     mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<(&Transform, &ShipClass, &Team)>,
     local_team: Res<LocalTeam>,
-    query: Query<(Entity, &Team), Added<Ship>>,
 ) {
+    let entity = trigger.entity;
+    let Ok((transform, class, team)) = query.get(entity) else {
+        return;
+    };
+
+    // Only create ghosts for enemy ships
     let Some(my_team) = local_team.0 else {
         return;
     };
-    for (entity, team) in &query {
-        if *team != my_team {
-            commands
-                .entity(entity)
-                .insert(EnemyVisibility { opacity: 0.0 });
-        }
+    if *team == my_team {
+        return;
     }
+
+    let color = Color::srgb(1.0, 0.2, 0.2);
+
+    let ship_mesh = match class {
+        ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
+        ShipClass::Destroyer => meshes.add(Cone {
+            radius: 8.0,
+            height: 20.0,
+        }),
+        ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
+    };
+
+    let mesh_transform = match class {
+        ShipClass::Battleship => Transform::IDENTITY,
+        ShipClass::Destroyer => {
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        }
+        ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
+    };
+
+    let material = materials.add(StandardMaterial {
+        base_color: color.with_alpha(1.0),
+        emissive: color.into(),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            FadeOutGhost,
+            EnemyVisibility { opacity: 1.0 },
+            *transform,
+            Visibility::Visible,
+        ))
+        .with_child((Mesh3d(ship_mesh), MeshMaterial3d(material), mesh_transform));
 }
 
-/// Each frame, ramp EnemyVisibility opacity toward 1.0 (fade-in) or 0.0 (fade-out).
-///
-/// Entities marked with [`FadingOut`] fade toward 0.0 and are despawned when they
-/// reach zero opacity. This allows a smooth fade-out when bevy_replicon removes
-/// server-side visibility, instead of an instant disappearance.
-fn fade_client_enemies(
+/// Fades ghost entities toward opacity 0.0 and despawns them when done.
+fn fade_out_ghosts(
     mut commands: Commands,
     time: Res<Time>,
     mut query: Query<
-        (Entity, &mut EnemyVisibility, &mut Visibility, &Children, Option<&FadingOut>),
-        With<Ship>,
+        (Entity, &mut EnemyVisibility, &Children),
+        With<FadeOutGhost>,
     >,
     child_query: Query<&MeshMaterial3d<StandardMaterial>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
 ) {
-    for (entity, mut ev, mut visibility, children, fading_out) in &mut query {
-        let target_opacity = if fading_out.is_some() { 0.0 } else { 1.0 };
-        ev.opacity = fade_opacity(ev.opacity, target_opacity, time.delta_secs(), FADE_DURATION);
+    for (entity, mut ev, children) in &mut query {
+        ev.opacity = fade_opacity(ev.opacity, 0.0, time.delta_secs(), FADE_DURATION);
 
         if ev.opacity > 0.001 {
-            *visibility = Visibility::Visible;
             for child in children.iter() {
                 if let Ok(mat_handle) = child_query.get(child) {
                     if let Some(material) = materials.get_mut(mat_handle) {
@@ -85,11 +118,8 @@ fn fade_client_enemies(
                     }
                 }
             }
-        } else if fading_out.is_some() {
-            // Fade-out complete — actually despawn the entity
-            commands.entity(entity).despawn();
         } else {
-            *visibility = Visibility::Hidden;
+            commands.entity(entity).despawn();
         }
     }
 }

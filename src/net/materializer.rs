@@ -62,6 +62,7 @@ pub fn materialize_ships(
 
         commands
             .entity(entity)
+            .insert(Visibility::Visible)
             .with_child((
                 Mesh3d(ship_mesh),
                 MeshMaterial3d(ship_material),
@@ -92,11 +93,14 @@ pub fn materialize_asteroids(
             ..default()
         });
 
-        commands.entity(entity).with_child((
-            Mesh3d(asteroid_mesh),
-            MeshMaterial3d(asteroid_material),
-            Transform::IDENTITY,
-        ));
+        commands
+            .entity(entity)
+            .insert(Visibility::Visible)
+            .with_child((
+                Mesh3d(asteroid_mesh),
+                MeshMaterial3d(asteroid_material),
+                Transform::IDENTITY,
+            ));
 
         info!("Materialized asteroid with radius {}", size.radius);
     }
