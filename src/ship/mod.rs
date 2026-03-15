@@ -408,8 +408,8 @@ fn apply_thrust(
         let facing = ship_facing_direction(transform);
         let speed = velocity.linear.length();
 
-        // Auto-brake: no waypoints left and braking flag set
-        if waypoints.braking && waypoints.waypoints.is_empty() {
+        // No waypoints — always brake to a stop
+        if waypoints.waypoints.is_empty() {
             if speed > 0.1 {
                 let correction = compute_steering_thrust(
                     velocity.linear,
@@ -420,18 +420,12 @@ fn apply_thrust(
                     dt,
                 );
                 velocity.linear += correction;
-                // Snap to zero if very slow
                 if velocity.linear.length() < 0.1 {
                     velocity.linear = Vec2::ZERO;
                 }
             } else {
                 velocity.linear = Vec2::ZERO;
             }
-            continue;
-        }
-
-        // No waypoints, not braking — drift
-        if waypoints.waypoints.is_empty() {
             continue;
         }
 
