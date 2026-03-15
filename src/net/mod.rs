@@ -1,11 +1,13 @@
 pub mod client;
 pub mod commands;
 pub mod materializer;
+pub mod replication;
 pub mod server;
 
 use bevy::prelude::*;
 
 pub use client::ClientNetPlugin;
+pub use replication::SharedReplicationPlugin;
 pub use server::ServerNetPlugin;
 
 use crate::game::Team;

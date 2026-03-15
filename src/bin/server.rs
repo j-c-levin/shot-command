@@ -5,8 +5,11 @@ use clap::Parser;
 
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::net::server::{ServerBindAddress, ServerNetPlugin};
+use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::ship::ShipPhysicsPlugin;
 use nebulous_shot_command::weapon::damage::DamagePlugin;
+use nebulous_shot_command::weapon::missile::MissilePlugin;
+use nebulous_shot_command::weapon::pd::PdPlugin;
 use nebulous_shot_command::weapon::projectile::ProjectilePlugin;
 
 #[derive(Parser, Debug)]
@@ -29,9 +32,12 @@ fn main() {
             bevy::log::LogPlugin::default(),
             RepliconPlugins,
             RepliconRenetPlugins,
+            SharedReplicationPlugin,
             GamePlugin,
             ShipPhysicsPlugin,
             ProjectilePlugin,
+            MissilePlugin,
+            PdPlugin,
             DamagePlugin,
             ServerNetPlugin,
         ))

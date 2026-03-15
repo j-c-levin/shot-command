@@ -9,20 +9,11 @@ use bevy_replicon_renet::{
     renet::ConnectionConfig,
 };
 
-use crate::game::{GameState, Health, Team};
+use crate::game::{GameState, Team};
 use crate::input::on_ground_clicked;
-use crate::map::{Asteroid, AsteroidSize, GroundPlane, MapBounds};
-use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
-    TargetCommand, TeamAssignment,
-};
+use crate::map::{GroundPlane, MapBounds};
+use crate::net::commands::{GameResult, TeamAssignment};
 use crate::net::{LocalTeam, PROTOCOL_ID};
-use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
-    WaypointQueue,
-};
-use crate::weapon::Mounts;
-use crate::weapon::projectile::{Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -32,40 +23,8 @@ pub struct ClientNetPlugin;
 
 impl Plugin for ClientNetPlugin {
     fn build(&self, app: &mut App) {
-        // Register replicated components (must mirror server exactly, minus server-only ones)
-        // NOTE: WaypointQueue, FacingTarget, FacingLocked are NOT replicated on Ship entities.
-        // They arrive via ShipSecrets child entities with per-team visibility.
-        app.replicate::<Ship>()
-            .replicate::<ShipClass>()
-            .replicate::<Team>()
-            .replicate::<Transform>()
-            .replicate::<Health>()
-            .replicate::<Mounts>()
-            .replicate::<Asteroid>()
-            .replicate::<AsteroidSize>()
-            .replicate::<Projectile>()
-            .replicate::<ProjectileVelocity>()
-            .replicate::<ProjectileDamage>()
-            .replicate::<ProjectileOwner>();
-
-        // ShipSecrets child entity components (team-private state)
-        app.replicate::<ShipSecrets>()
-            .replicate::<ShipSecretsOwner>()
-            .replicate::<WaypointQueue>()
-            .replicate::<FacingTarget>()
-            .replicate::<FacingLocked>()
-            .replicate::<TargetDesignation>();
-
-        // Register client→server triggers (same types as server)
-        app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
-            .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
-            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
-
-        // Register server→client triggers
-        app.add_server_event::<TeamAssignment>(Channel::Ordered);
-        app.add_server_event::<GameResult>(Channel::Ordered);
+        // Replication registration is handled by SharedReplicationPlugin
+        // (must be added before this plugin in both server and client).
 
         // Systems
         app.add_systems(Startup, super::materializer::init_target_indicator_assets);
@@ -77,6 +36,7 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::materialize_ships,
                 super::materializer::materialize_asteroids,
                 super::materializer::materialize_projectiles,
+                super::materializer::materialize_missiles,
                 super::materializer::update_target_indicators,
             )
                 .run_if(in_state(GameState::Playing)),

@@ -1,12 +1,18 @@
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 
+use crate::game::GameState;
+use crate::net::LocalTeam;
+use crate::game::Team;
+use crate::ship::Ship;
+
 pub struct CameraPlugin;
 
 impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CameraSettings::default())
             .add_systems(Startup, spawn_camera)
+            .add_systems(OnEnter(GameState::Playing), center_camera_on_fleet)
             .add_systems(Update, (camera_pan, camera_zoom, camera_rotate));
     }
 }
@@ -30,7 +36,7 @@ impl Default for CameraSettings {
             zoom_speed: 50.0,
             rotate_speed: 0.005,
             min_zoom: 50.0,
-            max_zoom: 800.0,
+            max_zoom: 1500.0,
         }
     }
 }
@@ -154,4 +160,40 @@ fn camera_rotate(
     let rotated_offset = rotation * offset;
     transform.translation = look_target + rotated_offset;
     transform.look_at(look_target, Vec3::Y);
+}
+
+/// Center the camera above the player's fleet when entering Playing.
+/// TeamAssignment is sent by the server after fleet spawning, so ships
+/// should already be replicated by the time this runs.
+fn center_camera_on_fleet(
+    local_team: Res<LocalTeam>,
+    ships: Query<(&Transform, &Team), With<Ship>>,
+    mut camera: Query<&mut Transform, (With<GameCamera>, Without<Ship>)>,
+) {
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+
+    let mut sum = Vec3::ZERO;
+    let mut count = 0u32;
+    for (transform, team) in &ships {
+        if *team == my_team {
+            sum += transform.translation;
+            count += 1;
+        }
+    }
+
+    if count == 0 {
+        return;
+    }
+
+    let center = sum / count as f32;
+    let Ok(mut cam) = camera.single_mut() else {
+        return;
+    };
+
+    let height = 400.0;
+    let offset_z = 200.0;
+    cam.translation = Vec3::new(center.x, height, center.z + offset_z);
+    cam.look_at(Vec3::new(center.x, 0.0, center.z), Vec3::Y);
 }

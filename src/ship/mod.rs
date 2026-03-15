@@ -110,21 +110,21 @@ impl ShipClass {
         match self {
             ShipClass::Battleship => vec![
                 Some(WeaponType::HeavyCannon), // Large
-                None,                          // Large
-                None,                          // Medium
-                None,                          // Medium
-                None,                          // Small
-                None,                          // Small
+                Some(WeaponType::HeavyVLS),    // Large
+                Some(WeaponType::LightVLS),    // Medium
+                Some(WeaponType::LaserPD),     // Medium
+                Some(WeaponType::CWIS),        // Small
+                Some(WeaponType::CWIS),        // Small
             ],
             ShipClass::Destroyer => vec![
                 Some(WeaponType::Railgun),     // Large
-                None,                          // Medium
-                None,                          // Medium
-                None,                          // Small
+                Some(WeaponType::Cannon),      // Medium
+                Some(WeaponType::LaserPD),     // Medium
+                Some(WeaponType::CWIS),        // Small
             ],
             ShipClass::Scout => vec![
                 Some(WeaponType::Cannon),      // Medium
-                None,                          // Small
+                Some(WeaponType::CWIS),        // Small
             ],
         }
     }
@@ -1031,16 +1031,15 @@ mod tests {
         assert_eq!(large, 2);
         assert_eq!(medium, 2);
         assert_eq!(small, 2);
-        // First large mount has heavy cannon, second is empty
-        let armed_large = mounts.iter().filter(|m| m.size == MountSize::Large && m.weapon.is_some()).count();
-        assert_eq!(armed_large, 1);
-        let w = mounts.iter().find(|m| m.size == MountSize::Large && m.weapon.is_some())
-            .unwrap().weapon.as_ref().unwrap();
-        assert_eq!(w.weapon_type, WeaponType::HeavyCannon);
-        // Medium and small mounts are empty
-        for m in mounts.iter().filter(|m| m.size != MountSize::Large) {
-            assert!(m.weapon.is_none());
-        }
+        // All mounts armed
+        assert!(mounts.iter().all(|m| m.weapon.is_some()));
+        // Check specific weapon types by index
+        assert_eq!(mounts[0].weapon.as_ref().unwrap().weapon_type, WeaponType::HeavyCannon);
+        assert_eq!(mounts[1].weapon.as_ref().unwrap().weapon_type, WeaponType::HeavyVLS);
+        assert_eq!(mounts[2].weapon.as_ref().unwrap().weapon_type, WeaponType::LightVLS);
+        assert_eq!(mounts[3].weapon.as_ref().unwrap().weapon_type, WeaponType::LaserPD);
+        assert_eq!(mounts[4].weapon.as_ref().unwrap().weapon_type, WeaponType::CWIS);
+        assert_eq!(mounts[5].weapon.as_ref().unwrap().weapon_type, WeaponType::CWIS);
     }
 
     #[test]
@@ -1053,8 +1052,12 @@ mod tests {
         assert_eq!(large, 1);
         assert_eq!(medium, 2);
         assert_eq!(small, 1);
-        let large_mount = mounts.iter().find(|m| m.size == MountSize::Large).unwrap();
-        assert_eq!(large_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::Railgun);
+        // All mounts armed
+        assert!(mounts.iter().all(|m| m.weapon.is_some()));
+        assert_eq!(mounts[0].weapon.as_ref().unwrap().weapon_type, WeaponType::Railgun);
+        assert_eq!(mounts[1].weapon.as_ref().unwrap().weapon_type, WeaponType::Cannon);
+        assert_eq!(mounts[2].weapon.as_ref().unwrap().weapon_type, WeaponType::LaserPD);
+        assert_eq!(mounts[3].weapon.as_ref().unwrap().weapon_type, WeaponType::CWIS);
     }
 
     #[test]
@@ -1065,10 +1068,10 @@ mod tests {
         let small = mounts.iter().filter(|m| m.size == MountSize::Small).count();
         assert_eq!(medium, 1);
         assert_eq!(small, 1);
-        let medium_mount = mounts.iter().find(|m| m.size == MountSize::Medium).unwrap();
-        assert_eq!(medium_mount.weapon.as_ref().unwrap().weapon_type, WeaponType::Cannon);
-        let small_mount = mounts.iter().find(|m| m.size == MountSize::Small).unwrap();
-        assert!(small_mount.weapon.is_none());
+        // All mounts armed
+        assert!(mounts.iter().all(|m| m.weapon.is_some()));
+        assert_eq!(mounts[0].weapon.as_ref().unwrap().weapon_type, WeaponType::Cannon);
+        assert_eq!(mounts[1].weapon.as_ref().unwrap().weapon_type, WeaponType::CWIS);
     }
 
     #[test]

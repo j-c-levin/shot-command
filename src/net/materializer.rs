@@ -5,6 +5,7 @@ use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation};
+use crate::weapon::missile::{Missile, MissileVelocity};
 use crate::weapon::projectile::Projectile;
 
 /// System that watches for newly replicated ship entities (via `Added<Ship>` filter)
@@ -117,6 +118,48 @@ pub fn materialize_projectiles(
                 Mesh3d(projectile_mesh),
                 MeshMaterial3d(projectile_material),
                 Transform::IDENTITY,
+            ));
+    }
+}
+
+/// System that watches for newly replicated missile entities and spawns
+/// a small glowing cone mesh as a child entity, oriented along the velocity.
+pub fn materialize_missiles(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<(Entity, &MissileVelocity), Added<Missile>>,
+) {
+    for (entity, velocity) in &query {
+        let missile_mesh = meshes.add(Cone {
+            radius: 1.5,
+            height: 3.0,
+        });
+        let missile_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.4, 0.0),
+            emissive: LinearRgba::new(5.0, 2.0, 0.0, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Opaque,
+            ..default()
+        });
+
+        // Orient cone to point along velocity direction
+        let vel_dir = velocity.0.normalize_or_zero();
+        let child_transform = if vel_dir != Vec3::ZERO {
+            // Cone points along +Y by default, rotate to match velocity
+            let rotation = Quat::from_rotation_arc(Vec3::Y, vel_dir);
+            Transform::from_rotation(rotation)
+        } else {
+            Transform::IDENTITY
+        };
+
+        commands
+            .entity(entity)
+            .insert(Visibility::Visible)
+            .with_child((
+                Mesh3d(missile_mesh),
+                MeshMaterial3d(missile_material),
+                child_transform,
             ));
     }
 }

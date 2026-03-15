@@ -8,6 +8,7 @@ use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::input::InputPlugin;
 use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
+use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::net::LocalTeam;
 use nebulous_shot_command::ship::ShipVisualsPlugin;
 
@@ -41,6 +42,7 @@ fn main() {
             MeshPickingPlugin,
             RepliconPlugins,
             RepliconRenetPlugins,
+            SharedReplicationPlugin,
             GamePlugin,
             CameraPlugin,
             ShipVisualsPlugin,
