@@ -13,6 +13,10 @@ impl Plugin for GamePlugin {
 pub enum GameState {
     #[default]
     Setup,
+    /// Server: waiting for both clients to connect
+    WaitingForPlayers,
+    /// Client: connecting to server, waiting for team assignment
+    Connecting,
     Playing,
 }
 
@@ -63,6 +67,23 @@ mod tests {
     #[test]
     fn default_game_state_is_setup() {
         assert_eq!(GameState::default(), GameState::Setup);
+    }
+
+    #[test]
+    fn game_states_are_distinct() {
+        let states = [
+            GameState::Setup,
+            GameState::WaitingForPlayers,
+            GameState::Connecting,
+            GameState::Playing,
+        ];
+        for (i, a) in states.iter().enumerate() {
+            for (j, b) in states.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
     }
 
     #[test]
