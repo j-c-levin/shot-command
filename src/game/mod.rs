@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
 
 pub struct GamePlugin;
 
@@ -8,14 +9,18 @@ impl Plugin for GamePlugin {
     }
 }
 
-#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States)]
+#[derive(Clone, Copy, Default, Eq, PartialEq, Debug, Hash, States, Serialize, Deserialize)]
 pub enum GameState {
     #[default]
     Setup,
+    /// Server: waiting for both clients to connect
+    WaitingForPlayers,
+    /// Client: connecting to server, waiting for team assignment
+    Connecting,
     Playing,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Team(pub u8);
 
 impl Team {
@@ -39,7 +44,7 @@ impl Default for EnemyVisibility {
     }
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct Health {
     pub hp: u8,
 }
@@ -62,6 +67,23 @@ mod tests {
     #[test]
     fn default_game_state_is_setup() {
         assert_eq!(GameState::default(), GameState::Setup);
+    }
+
+    #[test]
+    fn game_states_are_distinct() {
+        let states = [
+            GameState::Setup,
+            GameState::WaitingForPlayers,
+            GameState::Connecting,
+            GameState::Playing,
+        ];
+        for (i, a) in states.iter().enumerate() {
+            for (j, b) in states.iter().enumerate() {
+                if i != j {
+                    assert_ne!(a, b);
+                }
+            }
+        }
     }
 
     #[test]

@@ -5,15 +5,18 @@
 Bevy 0.18 space tactical game inspired by Nebulous: Fleet Command. Player maneuvers ships
 to locate and destroy enemies. Physics-based movement with momentum, facing control, and
 waypoint queuing. Three ship classes with distinct handling.
-Flat plugin architecture, designed for future multiplayer expansion.
+Client/server multiplayer architecture with `bevy_replicon` + `bevy_replicon_renet`.
 
 ## Build & workflow
 
 ```bash
-cargo run              # dev (dynamic linking, fast compile) — requires nightly toolchain
-cargo check            # quick compilation check
-cargo test             # unit tests only (pure function + World-level, no full App)
-cargo build --release  # optimized release build
+cargo run --bin server                # dev server (headless, 60Hz tick loop)
+cargo run --bin client                # dev client (rendering window)
+cargo run --bin server -- --bind 0.0.0.0:5000  # server on custom address
+cargo run --bin client -- --connect 1.2.3.4:5000  # client to remote server
+cargo check                           # quick compilation check
+cargo test                            # unit tests only (pure function + World-level, no full App)
+cargo build --release --bin server    # optimized server for deployment
 ```
 
 Requires **nightly Rust** (`rust-toolchain.toml`). The `.cargo/config.toml` uses `-Z` flags

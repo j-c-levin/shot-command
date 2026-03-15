@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use rand::Rng;
+use serde::{Deserialize, Serialize};
 
 pub struct MapPlugin;
 
@@ -37,10 +38,10 @@ impl MapBounds {
     }
 }
 
-#[derive(Component)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct Asteroid;
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct AsteroidSize {
     pub radius: f32,
 }

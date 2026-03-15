@@ -2,6 +2,7 @@ use bevy::prelude::*;
 
 use crate::game::{Detected, EnemyVisibility, GameState, Team};
 use crate::map::{Asteroid, AsteroidSize};
+use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass, ship_xz_position};
 
 pub struct FogPlugin;
@@ -14,6 +15,112 @@ impl Plugin for FogPlugin {
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
+    }
+}
+
+/// Marker for a visual-only "ghost" entity that fades out after a replicated
+/// enemy ship is despawned by bevy_replicon. Client-only, no serde needed.
+#[derive(Component)]
+pub struct FadeOutGhost;
+
+pub struct FogClientPlugin;
+
+impl Plugin for FogClientPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_observer(on_enemy_ship_removed);
+        app.add_systems(
+            Update,
+            fade_out_ghosts.run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
+/// Observer that fires when a Ship component is removed from an entity.
+/// When replicon despawns an enemy ship, Bevy fires removal observers BEFORE the
+/// entity is fully gone, so we can still read its components. We spawn a visual-only
+/// "ghost" entity at the same position that fades out over FADE_DURATION.
+fn on_enemy_ship_removed(
+    trigger: On<Remove, Ship>,
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<(&Transform, &ShipClass, &Team)>,
+    local_team: Res<LocalTeam>,
+) {
+    let entity = trigger.entity;
+    let Ok((transform, class, team)) = query.get(entity) else {
+        return;
+    };
+
+    // Only create ghosts for enemy ships
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+    if *team == my_team {
+        return;
+    }
+
+    let color = Color::srgb(1.0, 0.2, 0.2);
+
+    let ship_mesh = match class {
+        ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
+        ShipClass::Destroyer => meshes.add(Cone {
+            radius: 8.0,
+            height: 20.0,
+        }),
+        ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
+    };
+
+    let mesh_transform = match class {
+        ShipClass::Battleship => Transform::IDENTITY,
+        ShipClass::Destroyer => {
+            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+        }
+        ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
+    };
+
+    let material = materials.add(StandardMaterial {
+        base_color: color.with_alpha(1.0),
+        emissive: color.into(),
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    commands
+        .spawn((
+            FadeOutGhost,
+            EnemyVisibility { opacity: 1.0 },
+            *transform,
+            Visibility::Visible,
+        ))
+        .with_child((Mesh3d(ship_mesh), MeshMaterial3d(material), mesh_transform));
+}
+
+/// Fades ghost entities toward opacity 0.0 and despawns them when done.
+fn fade_out_ghosts(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<
+        (Entity, &mut EnemyVisibility, &Children),
+        With<FadeOutGhost>,
+    >,
+    child_query: Query<&MeshMaterial3d<StandardMaterial>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    for (entity, mut ev, children) in &mut query {
+        ev.opacity = fade_opacity(ev.opacity, 0.0, time.delta_secs(), FADE_DURATION);
+
+        if ev.opacity > 0.001 {
+            for child in children.iter() {
+                if let Ok(mat_handle) = child_query.get(child) {
+                    if let Some(material) = materials.get_mut(mat_handle) {
+                        material.base_color = material.base_color.with_alpha(ev.opacity);
+                    }
+                }
+            }
+        } else {
+            commands.entity(entity).despawn();
+        }
     }
 }
 

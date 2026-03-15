@@ -1,27 +1,37 @@
+use bevy::ecs::entity::MapEntities;
 use bevy::prelude::*;
+use bevy_replicon::prelude::Replicated;
+use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, GameState, Health, Team};
-use crate::map::MapBounds;
+use crate::net::LocalTeam;
 
-pub struct ShipPlugin;
+pub struct ShipPhysicsPlugin;
 
-impl Plugin for ShipPlugin {
+impl Plugin for ShipPhysicsPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                update_facing_targets,
+                turn_ships,
+                apply_thrust,
+                apply_velocity,
+                check_waypoint_arrival,
+                clamp_ships_to_bounds,
+            )
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
+pub struct ShipVisualsPlugin;
+
+impl Plugin for ShipVisualsPlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(Startup, init_indicator_assets)
-            .add_systems(
-                Update,
-                (
-                    update_facing_targets,
-                    turn_ships,
-                    apply_thrust,
-                    apply_velocity,
-                    check_waypoint_arrival,
-                    clamp_ships_to_bounds,
-                )
-                    .chain()
-                    .run_if(in_state(GameState::Playing)),
-            )
             .add_systems(
                 Update,
                 (update_waypoint_markers, update_facing_indicators)
@@ -30,12 +40,20 @@ impl Plugin for ShipPlugin {
     }
 }
 
+pub struct ShipPlugin;
+
+impl Plugin for ShipPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins((ShipPhysicsPlugin, ShipVisualsPlugin));
+    }
+}
+
 // ── Components ──────────────────────────────────────────────────────────
 
-#[derive(Component)]
+#[derive(Component, Serialize, Deserialize)]
 pub struct Ship;
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ShipClass {
     Battleship,
     Destroyer,
@@ -57,43 +75,43 @@ impl ShipClass {
     pub fn profile(&self) -> ShipProfile {
         match self {
             ShipClass::Battleship => ShipProfile {
-                acceleration: 15.0,
+                acceleration: 6.0,
                 thruster_factor: 0.2,
                 turn_rate: 0.8,
                 turn_acceleration: 0.4,
-                top_speed: 40.0,
-                vision_range: 250.0,
+                top_speed: 20.0,
+                vision_range: 200.0,
                 collision_radius: 12.0,
             },
             ShipClass::Destroyer => ShipProfile {
-                acceleration: 30.0,
+                acceleration: 10.0,
                 thruster_factor: 0.3,
                 turn_rate: 1.5,
                 turn_acceleration: 1.0,
-                top_speed: 80.0,
+                top_speed: 28.0,
                 vision_range: 200.0,
                 collision_radius: 8.0,
             },
             ShipClass::Scout => ShipProfile {
-                acceleration: 45.0,
+                acceleration: 14.0,
                 thruster_factor: 0.5,
                 turn_rate: 3.0,
                 turn_acceleration: 2.0,
-                top_speed: 90.0,
-                vision_range: 150.0,
+                top_speed: 35.0,
+                vision_range: 200.0,
                 collision_radius: 5.0,
             },
         }
     }
 }
 
-#[derive(Component, Clone, Debug, Default)]
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct Velocity {
     pub linear: Vec2,
     pub angular: f32,
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct WaypointQueue {
     pub waypoints: VecDeque<Vec2>,
     /// True after final waypoint is popped — ship should auto-brake
@@ -109,13 +127,13 @@ impl Default for WaypointQueue {
     }
 }
 
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct FacingTarget {
     pub direction: Vec2,
 }
 
 /// Marker: ship facing is player-locked, not auto-set by waypoints
-#[derive(Component, Clone, Debug)]
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct FacingLocked;
 
 #[derive(Component)]
@@ -123,6 +141,17 @@ pub struct Selected;
 
 #[derive(Component)]
 pub struct SelectionIndicator;
+
+/// Marker for the child entity that holds team-private ship state.
+/// This entity is only visible to the owning team via replicon visibility,
+/// preventing enemies from seeing WaypointQueue, FacingTarget, and FacingLocked.
+#[derive(Component, Serialize, Deserialize)]
+pub struct ShipSecrets;
+
+/// Points from a ShipSecrets entity back to its parent Ship entity.
+/// Uses `#[entities]` for replicon entity mapping across server/client.
+#[derive(Component, Serialize, Deserialize, MapEntities)]
+pub struct ShipSecretsOwner(#[entities] pub Entity);
 
 /// Marker for waypoint indicator entities.
 #[derive(Component)]
@@ -445,14 +474,16 @@ fn apply_thrust(
 
         let is_last = waypoints.waypoints.len() == 1;
 
-        // Average-case deceleration (ship will turn to help brake)
-        let avg_decel = profile.acceleration * (1.0 + profile.thruster_factor) / 2.0;
+        // Worst-case deceleration: ship faces target and must brake with
+        // rear thrusters only (thruster_factor). Using worst-case ensures
+        // the ship starts braking early enough to stop at the waypoint.
+        let min_decel = profile.acceleration * profile.thruster_factor;
 
         let desired = desired_velocity_to_target(
             to_target,
             dist,
             profile.top_speed,
-            avg_decel,
+            min_decel,
             is_last,
         );
 
@@ -475,12 +506,21 @@ fn apply_thrust(
     }
 }
 
+/// Fraction of velocity lost per second to "space friction" (drag).
+/// Not realistic, but makes ships feel controllable and assists braking.
+/// At 0.3, a coasting ship loses ~26% of its speed per second.
+const SPACE_DRAG: f32 = 0.3;
+
 fn apply_velocity(
     time: Res<Time>,
-    mut query: Query<(&mut Transform, &Velocity), With<Ship>>,
+    mut query: Query<(&mut Transform, &mut Velocity), With<Ship>>,
 ) {
     let dt = time.delta_secs();
-    for (mut transform, velocity) in &mut query {
+    for (mut transform, mut velocity) in &mut query {
+        // Apply drag: exponential decay so ships naturally bleed speed
+        let drag = (1.0 - SPACE_DRAG * dt).max(0.0);
+        velocity.linear *= drag;
+
         transform.translation.x += velocity.linear.x * dt;
         transform.translation.z += velocity.linear.y * dt;
     }
@@ -594,12 +634,53 @@ pub fn spawn_ship(
     entity_commands.id()
 }
 
+/// Spawn a ship with only data components (no mesh, material, or visibility).
+/// Used by the server, which has no rendering context.
+/// Also spawns a `ShipSecrets` entity that holds team-private state
+/// (WaypointQueue, FacingTarget, FacingLocked) for per-component visibility.
+/// Note: ShipSecrets is NOT a Bevy child entity — it's a standalone entity with
+/// a `ShipSecretsOwner` back-reference. This is intentional: true Bevy children
+/// inherit their parent's replication visibility, which would defeat the purpose.
+/// When ship destruction is added, ShipSecrets must be despawned alongside the ship.
+pub fn spawn_server_ship(
+    commands: &mut Commands,
+    position: Vec2,
+    team: Team,
+    class: ShipClass,
+) -> Entity {
+    let ship_entity = commands
+        .spawn((
+            Ship,
+            Replicated,
+            team,
+            class,
+            Velocity::default(),
+            WaypointQueue::default(),
+            Transform::from_xyz(position.x, 5.0, position.y),
+            Health { hp: 3 },
+        ))
+        .id();
+
+    // Spawn ShipSecrets child — holds replicated copies of private state.
+    // Visibility is controlled per-team in server_update_visibility.
+    commands.spawn((
+        ShipSecrets,
+        ShipSecretsOwner(ship_entity),
+        Replicated,
+        WaypointQueue::default(),
+    ));
+
+    ship_entity
+}
+
 // ── Visual Indicators ───────────────────────────────────────────────────
 
 fn update_waypoint_markers(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
-    ship_query: Query<(Entity, &WaypointQueue, &Team), With<Ship>>,
+    local_team: Res<LocalTeam>,
+    secrets_query: Query<(&ShipSecretsOwner, &WaypointQueue), With<ShipSecrets>>,
+    ship_team_query: Query<&Team, With<Ship>>,
     marker_query: Query<(Entity, &WaypointMarker)>,
 ) {
     // Despawn all existing markers
@@ -607,14 +688,19 @@ fn update_waypoint_markers(
         commands.entity(entity).despawn();
     }
 
-    // Spawn new markers for each player ship's waypoints
-    for (ship_entity, waypoints, team) in &ship_query {
-        if *team != Team::PLAYER {
+    let Some(my_team) = local_team.0 else { return; };
+
+    // Spawn markers from ShipSecrets entities (only visible for own team)
+    for (owner, waypoints) in &secrets_query {
+        let Ok(team) = ship_team_query.get(owner.0) else {
+            continue;
+        };
+        if *team != my_team {
             continue;
         }
         for wp in &waypoints.waypoints {
             commands.spawn((
-                WaypointMarker { owner: ship_entity },
+                WaypointMarker { owner: owner.0 },
                 Mesh3d(assets.waypoint_mesh.clone()),
                 MeshMaterial3d(assets.waypoint_material.clone()),
                 Transform::from_xyz(wp.x, 1.0, wp.y),
@@ -626,10 +712,12 @@ fn update_waypoint_markers(
 fn update_facing_indicators(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
-    ship_query: Query<
-        (Entity, &Transform, Option<&FacingLocked>, Option<&FacingTarget>, &Team),
-        With<Ship>,
+    local_team: Res<LocalTeam>,
+    secrets_query: Query<
+        (&ShipSecretsOwner, Option<&FacingLocked>, Option<&FacingTarget>),
+        With<ShipSecrets>,
     >,
+    ship_query: Query<(&Transform, &Team), With<Ship>>,
     indicator_query: Query<(Entity, &FacingIndicator)>,
 ) {
     // Despawn all existing facing indicators
@@ -637,9 +725,17 @@ fn update_facing_indicators(
         commands.entity(entity).despawn();
     }
 
-    // Spawn facing indicator for locked player ships only
-    for (ship_entity, transform, locked, facing, team) in &ship_query {
-        if locked.is_none() || *team != Team::PLAYER {
+    let Some(my_team) = local_team.0 else { return; };
+
+    // Spawn facing indicator for locked local team ships only, reading from ShipSecrets
+    for (owner, locked, facing) in &secrets_query {
+        if locked.is_none() {
+            continue;
+        }
+        let Ok((transform, team)) = ship_query.get(owner.0) else {
+            continue;
+        };
+        if *team != my_team {
             continue;
         }
         let Some(target) = facing else {
@@ -659,7 +755,7 @@ fn update_facing_indicators(
         let rotation = Quat::from_rotation_arc(Vec3::Y, direction_3d.normalize());
 
         commands.spawn((
-            FacingIndicator { owner: ship_entity },
+            FacingIndicator { owner: owner.0 },
             Mesh3d(assets.facing_mesh.clone()),
             MeshMaterial3d(assets.facing_material.clone()),
             Transform::from_translation(mid).with_rotation(rotation),
