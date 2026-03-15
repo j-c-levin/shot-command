@@ -3,6 +3,7 @@ use std::net::{SocketAddr, UdpSocket};
 use std::time::SystemTime;
 
 use bevy::prelude::*;
+use rand::Rng;
 use bevy_replicon::prelude::*;
 use bevy_replicon::server::visibility::{
     client_visibility::ClientVisibility,
@@ -70,7 +71,9 @@ impl Plugin for ServerNetPlugin {
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
             .replicate::<FacingLocked>()
-            .replicate::<Health>();
+            .replicate::<Health>()
+            .replicate::<Asteroid>()
+            .replicate::<AsteroidSize>();
 
         // Register client→server triggers (events with entity mapping)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
@@ -221,7 +224,46 @@ fn server_setup_game(mut commands: Commands) {
         info!("Spawned {:?} for Team 1: {:?}", class, entity);
     }
 
-    info!("Server: spawned symmetric fleets for 2 teams");
+    // Spawn asteroids (data-only, no mesh — clients materialize visuals)
+    let bounds = MapBounds {
+        half_extents: Vec2::splat(500.0),
+    };
+    let mut rng = rand::rng();
+    let asteroid_count = 12;
+    let min_distance_from_edge = 50.0;
+    let min_distance_from_center = 100.0;
+
+    for _ in 0..asteroid_count {
+        let radius = rng.random_range(15.0..40.0);
+
+        let pos = loop {
+            let candidate = Vec2::new(
+                rng.random_range(
+                    (-bounds.half_extents.x + min_distance_from_edge)
+                        ..(bounds.half_extents.x - min_distance_from_edge),
+                ),
+                rng.random_range(
+                    (-bounds.half_extents.y + min_distance_from_edge)
+                        ..(bounds.half_extents.y - min_distance_from_edge),
+                ),
+            );
+            if candidate.length() > min_distance_from_center {
+                break candidate;
+            }
+        };
+
+        commands.spawn((
+            Asteroid,
+            AsteroidSize { radius },
+            Transform::from_xyz(pos.x, 0.0, pos.y),
+            Replicated,
+        ));
+    }
+
+    info!(
+        "Server: spawned symmetric fleets for 2 teams and {} asteroids",
+        asteroid_count
+    );
 }
 
 /// Resolves a `ClientId` to the connected client entity for team lookup.

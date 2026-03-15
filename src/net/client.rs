@@ -10,7 +10,8 @@ use bevy_replicon_renet::{
 };
 
 use crate::game::{GameState, Health, Team};
-use crate::map::{GroundPlane, MapBounds};
+use crate::input::on_ground_clicked;
+use crate::map::{Asteroid, AsteroidSize, GroundPlane, MapBounds};
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
@@ -34,7 +35,9 @@ impl Plugin for ClientNetPlugin {
             .replicate::<WaypointQueue>()
             .replicate::<FacingTarget>()
             .replicate::<FacingLocked>()
-            .replicate::<Health>();
+            .replicate::<Health>()
+            .replicate::<Asteroid>()
+            .replicate::<AsteroidSize>();
 
         // Register client→server triggers (same types as server)
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
@@ -49,7 +52,11 @@ impl Plugin for ClientNetPlugin {
         app.add_systems(OnEnter(GameState::Playing), client_setup_scene);
         app.add_systems(
             Update,
-            super::materializer::materialize_ships.run_if(in_state(GameState::Playing)),
+            (
+                super::materializer::materialize_ships,
+                super::materializer::materialize_asteroids,
+            )
+                .run_if(in_state(GameState::Playing)),
         );
 
         // Observer for team assignment from server
@@ -147,5 +154,8 @@ fn client_setup_scene(
         Pickable::default(),
     ));
 
-    info!("Client scene setup complete (ground plane + map bounds)");
+    // Register the global ground-click observer for move commands
+    commands.add_observer(on_ground_clicked);
+
+    info!("Client scene setup complete (ground plane + map bounds + observers)");
 }

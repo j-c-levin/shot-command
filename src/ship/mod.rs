@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, GameState, Health, Team};
+use crate::net::LocalTeam;
 
 pub struct ShipPhysicsPlugin;
 
@@ -637,6 +638,7 @@ pub fn spawn_server_ship(
 fn update_waypoint_markers(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
+    local_team: Res<LocalTeam>,
     ship_query: Query<(Entity, &WaypointQueue, &Team), With<Ship>>,
     marker_query: Query<(Entity, &WaypointMarker)>,
 ) {
@@ -645,9 +647,10 @@ fn update_waypoint_markers(
         commands.entity(entity).despawn();
     }
 
-    // Spawn new markers for each player ship's waypoints
+    // Spawn new markers for each local team ship's waypoints
     for (ship_entity, waypoints, team) in &ship_query {
-        if *team != Team::PLAYER {
+        let Some(my_team) = local_team.0 else { continue; };
+        if *team != my_team {
             continue;
         }
         for wp in &waypoints.waypoints {
@@ -664,6 +667,7 @@ fn update_waypoint_markers(
 fn update_facing_indicators(
     mut commands: Commands,
     assets: Res<IndicatorAssets>,
+    local_team: Res<LocalTeam>,
     ship_query: Query<
         (Entity, &Transform, Option<&FacingLocked>, Option<&FacingTarget>, &Team),
         With<Ship>,
@@ -675,9 +679,10 @@ fn update_facing_indicators(
         commands.entity(entity).despawn();
     }
 
-    // Spawn facing indicator for locked player ships only
+    // Spawn facing indicator for locked local team ships only
     for (ship_entity, transform, locked, facing, team) in &ship_query {
-        if locked.is_none() || *team != Team::PLAYER {
+        let Some(my_team) = local_team.0 else { continue; };
+        if locked.is_none() || *team != my_team {
             continue;
         }
         let Some(target) = facing else {

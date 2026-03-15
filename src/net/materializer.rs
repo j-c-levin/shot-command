@@ -1,6 +1,8 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
+use crate::input::on_ship_clicked;
+use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass};
 
@@ -58,15 +60,44 @@ pub fn materialize_ships(
             })
         };
 
-        commands.entity(entity).with_child((
-            Mesh3d(ship_mesh),
-            MeshMaterial3d(ship_material),
-            mesh_transform,
-        ));
+        commands
+            .entity(entity)
+            .with_child((
+                Mesh3d(ship_mesh),
+                MeshMaterial3d(ship_material),
+                mesh_transform,
+            ))
+            .observe(on_ship_clicked);
 
         info!(
             "Materialized {:?} ship for team {} (own={})",
             class, team.0, is_own_team
         );
+    }
+}
+
+/// System that watches for newly replicated asteroid entities (via `Added<Asteroid>` filter)
+/// and spawns the appropriate mesh + material as a child entity.
+pub fn materialize_asteroids(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<(Entity, &AsteroidSize), Added<Asteroid>>,
+) {
+    for (entity, size) in &query {
+        let asteroid_mesh = meshes.add(Sphere::new(size.radius));
+        let asteroid_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.3, 0.25, 0.2),
+            perceptual_roughness: 0.9,
+            ..default()
+        });
+
+        commands.entity(entity).with_child((
+            Mesh3d(asteroid_mesh),
+            MeshMaterial3d(asteroid_material),
+            Transform::IDENTITY,
+        ));
+
+        info!("Materialized asteroid with radius {}", size.radius);
     }
 }
