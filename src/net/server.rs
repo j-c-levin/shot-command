@@ -106,6 +106,9 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_move_command);
         app.add_observer(handle_facing_lock_command);
         app.add_observer(handle_facing_unlock_command);
+
+        // Disconnection observer
+        app.add_observer(on_client_disconnected);
     }
 }
 
@@ -358,6 +361,24 @@ fn handle_facing_unlock_command(
     commands.entity(cmd.ship).remove::<FacingLocked>();
 
     info!("FacingUnlockCommand applied: ship {:?}", cmd.ship);
+}
+
+/// Observer that fires when a ConnectedClient is removed (client disconnects).
+/// Ships belonging to the disconnected team remain in the world — physics keeps
+/// running, so they will drift and brake to a stop naturally.
+fn on_client_disconnected(
+    trigger: On<Remove, ConnectedClient>,
+    mut client_teams: ResMut<ClientTeams>,
+) {
+    let client_entity = trigger.entity;
+    if let Some(team) = client_teams.map.remove(&client_entity) {
+        info!(
+            "Client {:?} (Team {}) disconnected. Ships will drift and brake.",
+            client_entity, team.0
+        );
+    } else {
+        info!("Unknown client {:?} disconnected", client_entity);
+    }
 }
 
 /// Each frame, compute LOS per-client and update replicon visibility.
