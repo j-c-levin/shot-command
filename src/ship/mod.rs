@@ -1,26 +1,32 @@
 use bevy::prelude::*;
 use std::collections::VecDeque;
 
-use crate::game::{EnemyVisibility, Health, Team};
+use crate::game::{EnemyVisibility, GameState, Health, Team};
 use crate::map::MapBounds;
 
 pub struct ShipPlugin;
 
 impl Plugin for ShipPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(
-            Update,
-            (
-                update_facing_targets,
-                turn_ships,
-                apply_thrust,
-                apply_velocity,
-                check_waypoint_arrival,
-                clamp_ships_to_bounds,
+        app.add_systems(Startup, init_indicator_assets)
+            .add_systems(
+                Update,
+                (
+                    update_facing_targets,
+                    turn_ships,
+                    apply_thrust,
+                    apply_velocity,
+                    check_waypoint_arrival,
+                    clamp_ships_to_bounds,
+                )
+                    .chain()
+                    .run_if(in_state(GameState::Playing)),
             )
-                .chain(),
-        )
-        .add_systems(Update, (update_waypoint_markers, update_facing_indicators));
+            .add_systems(
+                Update,
+                (update_waypoint_markers, update_facing_indicators)
+                    .run_if(in_state(GameState::Playing)),
+            );
     }
 }
 
@@ -128,6 +134,38 @@ pub struct WaypointMarker {
 #[derive(Component)]
 pub struct FacingIndicator {
     pub owner: Entity,
+}
+
+/// Cached mesh/material handles for visual indicators (avoids per-frame allocation)
+#[derive(Resource)]
+struct IndicatorAssets {
+    waypoint_mesh: Handle<Mesh>,
+    waypoint_material: Handle<StandardMaterial>,
+    facing_mesh: Handle<Mesh>,
+    facing_material: Handle<StandardMaterial>,
+}
+
+fn init_indicator_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(IndicatorAssets {
+        waypoint_mesh: meshes.add(Sphere::new(2.0)),
+        waypoint_material: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.2, 0.8, 1.0, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        facing_mesh: meshes.add(Capsule3d::new(0.5, 30.0)),
+        facing_material: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.8, 0.2, 0.6),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+    });
 }
 
 // ── Pure Functions ──────────────────────────────────────────────────────
@@ -515,8 +553,7 @@ pub fn spawn_ship(
 
 fn update_waypoint_markers(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<IndicatorAssets>,
     ship_query: Query<(Entity, &WaypointQueue, &Team), With<Ship>>,
     marker_query: Query<(Entity, &WaypointMarker)>,
 ) {
@@ -530,17 +567,11 @@ fn update_waypoint_markers(
         if *team != Team::PLAYER {
             continue;
         }
-        for (i, wp) in waypoints.waypoints.iter().enumerate() {
-            let alpha = 0.6 - (i as f32 * 0.1).min(0.4);
+        for wp in &waypoints.waypoints {
             commands.spawn((
                 WaypointMarker { owner: ship_entity },
-                Mesh3d(meshes.add(Sphere::new(2.0))),
-                MeshMaterial3d(materials.add(StandardMaterial {
-                    base_color: Color::srgba(0.2, 0.8, 1.0, alpha),
-                    alpha_mode: AlphaMode::Blend,
-                    unlit: true,
-                    ..default()
-                })),
+                Mesh3d(assets.waypoint_mesh.clone()),
+                MeshMaterial3d(assets.waypoint_material.clone()),
                 Transform::from_xyz(wp.x, 1.0, wp.y),
             ));
         }
@@ -549,8 +580,7 @@ fn update_waypoint_markers(
 
 fn update_facing_indicators(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<IndicatorAssets>,
     ship_query: Query<
         (Entity, &Transform, Option<&FacingLocked>, Option<&FacingTarget>, &Team),
         With<Ship>,
@@ -578,22 +608,16 @@ fn update_facing_indicators(
             1.0,
             pos.z + target.direction.y * arrow_len / 2.0,
         );
-        let end = Vec3::new(
-            pos.x + target.direction.x * arrow_len,
-            1.0,
-            pos.z + target.direction.y * arrow_len,
-        );
+
+        // Capsule3d is Y-axis aligned — rotate Y-axis to match facing direction in XZ
+        let direction_3d = Vec3::new(target.direction.x, 0.0, target.direction.y);
+        let rotation = Quat::from_rotation_arc(Vec3::Y, direction_3d.normalize());
 
         commands.spawn((
             FacingIndicator { owner: ship_entity },
-            Mesh3d(meshes.add(Capsule3d::new(0.5, arrow_len))),
-            MeshMaterial3d(materials.add(StandardMaterial {
-                base_color: Color::srgba(1.0, 0.8, 0.2, 0.6),
-                alpha_mode: AlphaMode::Blend,
-                unlit: true,
-                ..default()
-            })),
-            Transform::from_translation(mid).looking_at(end, Vec3::Y),
+            Mesh3d(assets.facing_mesh.clone()),
+            MeshMaterial3d(assets.facing_material.clone()),
+            Transform::from_translation(mid).with_rotation(rotation),
         ));
     }
 }

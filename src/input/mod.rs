@@ -15,10 +15,10 @@ pub struct LockMode(pub bool);
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<LockMode>()
-            .add_systems(Startup, setup_selection_indicator)
+            .add_systems(Startup, (setup_selection_indicator, setup_lock_mode_hud))
             .add_systems(
                 Update,
-                (update_selection_indicator, handle_keyboard),
+                (update_selection_indicator, handle_keyboard, update_lock_mode_hud),
             );
     }
 }
@@ -201,4 +201,43 @@ fn handle_keyboard(
             lock_mode.0 = !lock_mode.0;
         }
     }
+}
+
+// ── Lock Mode HUD ───────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct LockModeHud;
+
+fn setup_lock_mode_hud(mut commands: Commands) {
+    commands.spawn((
+        LockModeHud,
+        Text::new("LOCK MODE — Right-click to set facing"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 0.8, 0.2, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(20.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn update_lock_mode_hud(
+    lock_mode: Res<LockMode>,
+    mut query: Query<&mut Visibility, With<LockModeHud>>,
+) {
+    let Ok(mut vis) = query.single_mut() else {
+        return;
+    };
+    *vis = if lock_mode.0 {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
 }
