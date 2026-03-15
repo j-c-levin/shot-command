@@ -35,13 +35,13 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 41 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 47 tests:
 
 | Module | What's tested |
 |---|---|
 | `src/game/mod.rs` | Team constants, GameState default, EnemyVisibility default, Health damage/saturation |
 | `src/map/mod.rs` | MapBounds contains/clamp/size |
-| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue |
+| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking) |
 | `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
 
 ## Architecture
@@ -65,7 +65,7 @@ Flat plugin structure, registered in `main.rs`:
 
 ### Key patterns
 
-- **Physics model**: Velocity persists (momentum/drift). Thrust depends on angle between facing and movement (cosine interpolation from 1.0 to thruster_factor). Angular velocity ramps up/down at turn_acceleration.
+- **Physics model**: Velocity persists (momentum/drift). Steering controller computes desired velocity (direction to target × speed that allows stopping), then thrusts to correct the error between current and desired velocity. Thrust magnitude depends on angle between facing and thrust direction (cosine interpolation from 1.0 to thruster_factor). Angular velocity ramps up/down at turn_acceleration. Ships always brake to stop when queue is empty.
 - **Facing lock/unlock**: Unlocked ships auto-face waypoint. Locked ships maintain player-set facing. Alt+right-click to lock, alt+click-ship or L to unlock.
 - **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append. Auto-brake on final waypoint.
 - **Picking observers**: ship clicks use per-entity `.observe()`, ground click uses global `add_observer()` with component filter
