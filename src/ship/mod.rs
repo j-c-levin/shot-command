@@ -4,7 +4,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, GameState, Health, Team};
-use crate::map::MapBounds;
 
 pub struct ShipPhysicsPlugin;
 
