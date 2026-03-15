@@ -625,8 +625,12 @@ pub fn spawn_ship(
 
 /// Spawn a ship with only data components (no mesh, material, or visibility).
 /// Used by the server, which has no rendering context.
-/// Also spawns a `ShipSecrets` child entity that holds team-private state
+/// Also spawns a `ShipSecrets` entity that holds team-private state
 /// (WaypointQueue, FacingTarget, FacingLocked) for per-component visibility.
+/// Note: ShipSecrets is NOT a Bevy child entity — it's a standalone entity with
+/// a `ShipSecretsOwner` back-reference. This is intentional: true Bevy children
+/// inherit their parent's replication visibility, which would defeat the purpose.
+/// When ship destruction is added, ShipSecrets must be despawned alongside the ship.
 pub fn spawn_server_ship(
     commands: &mut Commands,
     position: Vec2,

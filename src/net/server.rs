@@ -474,8 +474,8 @@ fn sync_ship_secrets(
 /// - Friendly ships are always visible to that client.
 /// - Enemy ships are only visible if at least one friendly ship has LOS on them.
 ///
-/// // TODO: per-component visibility — currently if an enemy ship is visible,
-/// // ALL its replicated components are sent (including WaypointQueue, etc.).
+/// Per-component visibility is handled via ShipSecrets child entities:
+/// WaypointQueue/FacingTarget/FacingLocked replicate only to the owning team.
 fn server_update_visibility(
     los_bit: Res<LosBit>,
     client_teams: Res<ClientTeams>,
