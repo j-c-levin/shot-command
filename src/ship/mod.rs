@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
@@ -608,6 +609,28 @@ pub fn spawn_ship(
     }
 
     entity_commands.id()
+}
+
+/// Spawn a ship with only data components (no mesh, material, or visibility).
+/// Used by the server, which has no rendering context.
+pub fn spawn_server_ship(
+    commands: &mut Commands,
+    position: Vec2,
+    team: Team,
+    class: ShipClass,
+) -> Entity {
+    commands
+        .spawn((
+            Ship,
+            Replicated,
+            team,
+            class,
+            Velocity::default(),
+            WaypointQueue::default(),
+            Transform::from_xyz(position.x, 5.0, position.y),
+            Health { hp: 3 },
+        ))
+        .id()
 }
 
 // ── Visual Indicators ───────────────────────────────────────────────────

@@ -5,6 +5,7 @@ use clap::Parser;
 
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::net::server::{ServerBindAddress, ServerNetPlugin};
+use nebulous_shot_command::ship::ShipPhysicsPlugin;
 
 #[derive(Parser, Debug)]
 #[command(name = "nebulous-server")]
@@ -27,6 +28,7 @@ fn main() {
             RepliconPlugins,
             RepliconRenetPlugins,
             GamePlugin,
+            ShipPhysicsPlugin,
             ServerNetPlugin,
         ))
         .insert_resource(ServerBindAddress(cli.bind))

@@ -11,10 +11,13 @@ use bevy_replicon_renet::{
 };
 
 use crate::game::{GameState, Health, Team};
+use crate::map::MapBounds;
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
-use crate::ship::{FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue};
+use crate::ship::{
+    FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue, spawn_server_ship,
+};
 
 /// Protocol ID for our game -- used to reject connections from other applications.
 const PROTOCOL_ID: u64 = 0x4E45_4255_4C41_0001; // "NEBULA" + version
@@ -60,6 +63,9 @@ impl Plugin for ServerNetPlugin {
             OnEnter(GameState::WaitingForPlayers),
             setup_renet_server,
         );
+
+        // Server game setup: spawn fleets when entering Playing state
+        app.add_systems(OnEnter(GameState::Playing), server_setup_game);
 
         // Observer for new client connections
         app.add_observer(on_client_connected);
@@ -139,4 +145,41 @@ fn on_client_connected(
         info!("Both players connected, transitioning to Playing");
         next_state.set(GameState::Playing);
     }
+}
+
+/// Spawn symmetric fleets for each team when entering Playing state.
+/// Also inserts MapBounds so physics systems can read it.
+fn server_setup_game(mut commands: Commands) {
+    // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
+    commands.insert_resource(MapBounds {
+        half_extents: Vec2::splat(500.0),
+    });
+
+    // Team 0 fleet near (-300, -300)
+    let team0 = Team(0);
+    let team0_offsets = [
+        (Vec2::new(-300.0, -300.0), ShipClass::Battleship),
+        (Vec2::new(-270.0, -280.0), ShipClass::Destroyer),
+        (Vec2::new(-330.0, -280.0), ShipClass::Scout),
+    ];
+
+    for (pos, class) in &team0_offsets {
+        let entity = spawn_server_ship(&mut commands, *pos, team0, *class);
+        info!("Spawned {:?} for Team 0: {:?}", class, entity);
+    }
+
+    // Team 1 fleet mirrored near (300, 300)
+    let team1 = Team(1);
+    let team1_offsets = [
+        (Vec2::new(300.0, 300.0), ShipClass::Battleship),
+        (Vec2::new(270.0, 280.0), ShipClass::Destroyer),
+        (Vec2::new(330.0, 280.0), ShipClass::Scout),
+    ];
+
+    for (pos, class) in &team1_offsets {
+        let entity = spawn_server_ship(&mut commands, *pos, team1, *class);
+        info!("Spawned {:?} for Team 1: {:?}", class, entity);
+    }
+
+    info!("Server: spawned symmetric fleets for 2 teams");
 }
