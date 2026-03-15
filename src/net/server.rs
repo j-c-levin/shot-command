@@ -15,12 +15,10 @@ use crate::map::MapBounds;
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
+use crate::net::PROTOCOL_ID;
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue, spawn_server_ship,
 };
-
-/// Protocol ID for our game -- used to reject connections from other applications.
-const PROTOCOL_ID: u64 = 0x4E45_4255_4C41_0001; // "NEBULA" + version
 
 /// Resource containing the bind address string, inserted before the plugin runs.
 #[derive(Resource, Debug, Clone)]

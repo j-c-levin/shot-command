@@ -3,6 +3,12 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
+use nebulous_shot_command::camera::CameraPlugin;
+use nebulous_shot_command::game::{GamePlugin, GameState};
+use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
+use nebulous_shot_command::net::LocalTeam;
+use nebulous_shot_command::ship::ShipVisualsPlugin;
+
 #[derive(Parser, Debug)]
 #[command(name = "nebulous-client")]
 struct Cli {
@@ -13,7 +19,6 @@ struct Cli {
 
 fn main() {
     let cli = Cli::parse();
-    info!("Client connecting to: {}", cli.connect);
 
     App::new()
         .add_plugins((
@@ -34,9 +39,18 @@ fn main() {
             MeshPickingPlugin,
             RepliconPlugins,
             RepliconRenetPlugins,
+            GamePlugin,
+            CameraPlugin,
+            ShipVisualsPlugin,
+            ClientNetPlugin,
         ))
-        .add_systems(Startup, || {
-            info!("Client started (stub)");
-        })
+        .insert_resource(ClientConnectAddress(cli.connect))
+        .init_resource::<LocalTeam>()
+        .add_systems(Startup, set_connecting)
         .run();
+}
+
+/// Transition from the default Setup state to Connecting on startup.
+fn set_connecting(mut next_state: ResMut<NextState<GameState>>) {
+    next_state.set(GameState::Connecting);
 }
