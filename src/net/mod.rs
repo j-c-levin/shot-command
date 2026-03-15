@@ -1,6 +1,9 @@
 pub mod commands;
+pub mod server;
 
 use bevy::prelude::*;
+
+pub use server::ServerNetPlugin;
 
 use crate::game::Team;
 
