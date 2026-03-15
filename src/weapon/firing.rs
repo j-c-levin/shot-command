@@ -8,6 +8,9 @@ use crate::ship::{
 use crate::weapon::projectile::spawn_projectile;
 use crate::weapon::{FiringArc, Mounts};
 
+/// Half-angle of the forward firing arc: 10 degrees in radians (PI / 18).
+const FORWARD_ARC_HALF_ANGLE: f32 = std::f32::consts::PI / 18.0;
+
 // ── Pure functions ─────────────────────────────────────────────────────
 
 /// Predict where the target will be when a projectile arrives.
@@ -48,7 +51,7 @@ pub fn is_in_firing_arc(ship_facing: Vec2, target_direction: Vec2, arc: &FiringA
         FiringArc::Turret => true,
         FiringArc::Forward => {
             let angle = angle_between_directions(ship_facing, target_direction);
-            angle <= 0.1745 // ~10 degrees in radians
+            angle <= FORWARD_ARC_HALF_ANGLE
         }
     }
 }

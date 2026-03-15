@@ -4,7 +4,7 @@ use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-use crate::game::{EnemyVisibility, GameState, Health, Team};
+use crate::game::{GameState, Health, Team};
 use crate::net::LocalTeam;
 use crate::weapon::{Mount, MountSize, Mounts, WeaponState, WeaponType};
 
@@ -149,6 +149,29 @@ impl ShipClass {
                 }),
             })
             .collect()
+    }
+
+    /// Create the mesh and child transform for this ship class.
+    /// Centralizes the mesh geometry so materializer and fog ghost code don't duplicate it.
+    pub fn create_mesh(&self, meshes: &mut Assets<Mesh>) -> (Handle<Mesh>, Transform) {
+        let mesh = match self {
+            ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
+            ShipClass::Destroyer => meshes.add(Cone {
+                radius: 8.0,
+                height: 20.0,
+            }),
+            ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
+        };
+
+        let child_transform = match self {
+            ShipClass::Battleship => Transform::IDENTITY,
+            ShipClass::Destroyer => {
+                Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
+            }
+            ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
+        };
+
+        (mesh, child_transform)
     }
 
     pub fn profile(&self) -> ShipProfile {
@@ -677,79 +700,6 @@ fn clamp_ships_to_bounds() {
 }
 
 // ── Spawning ────────────────────────────────────────────────────────────
-
-pub fn spawn_ship(
-    commands: &mut Commands,
-    meshes: &mut ResMut<Assets<Mesh>>,
-    materials: &mut ResMut<Assets<StandardMaterial>>,
-    position: Vec2,
-    team: Team,
-    color: Color,
-    class: ShipClass,
-) -> Entity {
-    let ship_mesh = match class {
-        ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
-        ShipClass::Destroyer => meshes.add(Cone {
-            radius: 8.0,
-            height: 20.0,
-        }),
-        ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
-    };
-
-    // Child transform: rotation to align forward with -Z, plus scale for ellipsoid
-    let mesh_transform = match class {
-        ShipClass::Battleship => Transform::IDENTITY,
-        ShipClass::Destroyer => {
-            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
-        }
-        // Ellipsoid: unit sphere scaled (wide, short, long)
-        ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
-    };
-
-    let is_enemy = team != Team::PLAYER;
-    let ship_material = materials.add(StandardMaterial {
-        base_color: if is_enemy {
-            color.with_alpha(0.0)
-        } else {
-            color
-        },
-        emissive: color.into(),
-        alpha_mode: if is_enemy {
-            AlphaMode::Blend
-        } else {
-            AlphaMode::Opaque
-        },
-        ..default()
-    });
-
-    let initial_visibility = if is_enemy {
-        Visibility::Hidden
-    } else {
-        Visibility::Visible
-    };
-
-    let mut entity_commands = commands.spawn((
-        Ship,
-        team,
-        class,
-        Velocity::default(),
-        WaypointQueue::default(),
-        Transform::from_xyz(position.x, 5.0, position.y),
-        initial_visibility,
-    ));
-
-    entity_commands.with_child((
-        Mesh3d(ship_mesh),
-        MeshMaterial3d(ship_material),
-        mesh_transform,
-    ));
-
-    if is_enemy {
-        entity_commands.insert((EnemyVisibility::default(), Health { hp: class.profile().hp }));
-    }
-
-    entity_commands.id()
-}
 
 /// Spawn a ship with only data components (no mesh, material, or visibility).
 /// Used by the server, which has no rendering context.

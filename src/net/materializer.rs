@@ -28,22 +28,7 @@ pub fn materialize_ships(
             Color::srgb(1.0, 0.2, 0.2)
         };
 
-        let ship_mesh = match class {
-            ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
-            ShipClass::Destroyer => meshes.add(Cone {
-                radius: 8.0,
-                height: 20.0,
-            }),
-            ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
-        };
-
-        let mesh_transform = match class {
-            ShipClass::Battleship => Transform::IDENTITY,
-            ShipClass::Destroyer => {
-                Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
-            }
-            ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
-        };
+        let (ship_mesh, mesh_transform) = class.create_mesh(&mut meshes);
 
         let ship_material = if is_own_team {
             materials.add(StandardMaterial {
@@ -144,12 +129,36 @@ pub struct TargetIndicator {
     pub owner: Entity,
 }
 
+/// Cached mesh/material handles for target indicators (avoids per-frame allocation).
+#[derive(Resource)]
+pub struct TargetIndicatorAssets {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
+}
+
+/// Startup system that creates the torus mesh + red material for target indicators.
+pub fn init_target_indicator_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    commands.insert_resource(TargetIndicatorAssets {
+        mesh: meshes.add(Torus::new(6.0, 8.0)),
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.15, 0.1, 0.7),
+            emissive: LinearRgba::new(2.0, 0.3, 0.2, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+    });
+}
+
 /// System that renders a red torus at the position of each targeted enemy ship.
 /// Only shows targets for the local player's team.
 pub fn update_target_indicators(
     mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+    assets: Res<TargetIndicatorAssets>,
     local_team: Res<LocalTeam>,
     secrets_query: Query<
         (&ShipSecretsOwner, &TargetDesignation),
@@ -164,15 +173,6 @@ pub fn update_target_indicators(
     }
 
     let Some(my_team) = local_team.0 else { return };
-
-    let indicator_mesh = meshes.add(Torus::new(6.0, 8.0));
-    let indicator_material = materials.add(StandardMaterial {
-        base_color: Color::srgba(1.0, 0.15, 0.1, 0.7),
-        emissive: LinearRgba::new(2.0, 0.3, 0.2, 1.0),
-        unlit: true,
-        alpha_mode: AlphaMode::Blend,
-        ..default()
-    });
 
     for (owner, target_designation) in &secrets_query {
         // Only show for own-team ships
@@ -191,8 +191,8 @@ pub fn update_target_indicators(
         let pos = target_transform.translation;
         commands.spawn((
             TargetIndicator { owner: owner.0 },
-            Mesh3d(indicator_mesh.clone()),
-            MeshMaterial3d(indicator_material.clone()),
+            Mesh3d(assets.mesh.clone()),
+            MeshMaterial3d(assets.material.clone()),
             Transform::from_xyz(pos.x, 1.0, pos.z),
         ));
     }

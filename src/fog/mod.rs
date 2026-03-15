@@ -62,22 +62,7 @@ fn on_enemy_ship_removed(
 
     let color = Color::srgb(1.0, 0.2, 0.2);
 
-    let ship_mesh = match class {
-        ShipClass::Battleship => meshes.add(Cuboid::new(12.0, 8.0, 28.0)),
-        ShipClass::Destroyer => meshes.add(Cone {
-            radius: 8.0,
-            height: 20.0,
-        }),
-        ShipClass::Scout => meshes.add(Sphere::new(1.0).mesh().uv(16, 16)),
-    };
-
-    let mesh_transform = match class {
-        ShipClass::Battleship => Transform::IDENTITY,
-        ShipClass::Destroyer => {
-            Transform::from_rotation(Quat::from_rotation_x(-std::f32::consts::FRAC_PI_2))
-        }
-        ShipClass::Scout => Transform::from_scale(Vec3::new(4.0, 3.0, 7.0)),
-    };
+    let (ship_mesh, mesh_transform) = class.create_mesh(&mut meshes);
 
     let material = materials.add(StandardMaterial {
         base_color: color.with_alpha(1.0),

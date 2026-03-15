@@ -96,10 +96,10 @@ fn check_projectile_hits(
     >,
     mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health), With<Ship>>,
 ) {
-    for (proj_entity, proj_transform, damage, owner) in &projectile_query {
+    for (proj_entity, proj_transform, _damage, owner) in &projectile_query {
         let proj_xz = Vec2::new(proj_transform.translation.x, proj_transform.translation.z);
 
-        for (ship_entity, ship_transform, class, mut health) in &mut ship_query {
+        for (ship_entity, ship_transform, class, mut _health) in &mut ship_query {
             // Skip the ship that fired this projectile
             if ship_entity == owner.0 {
                 continue;
@@ -156,21 +156,10 @@ mod tests {
         let speed = 150.0;
         let damage = 15;
 
-        // Spawn projectile using world commands
         let proj_entity;
         {
             let mut commands = world.commands();
-            let dir = direction.normalize_or_zero();
-            let velocity = dir * speed;
-            proj_entity = commands
-                .spawn((
-                    Projectile,
-                    ProjectileVelocity(velocity),
-                    ProjectileDamage(damage),
-                    ProjectileOwner(owner),
-                    Transform::from_translation(origin),
-                ))
-                .id();
+            proj_entity = spawn_projectile(&mut commands, origin, direction, speed, damage, owner);
         }
         world.flush();
 
@@ -201,17 +190,8 @@ mod tests {
         let proj_entity;
         {
             let mut commands = world.commands();
-            let dir = direction.normalize_or_zero();
-            let velocity = dir * speed;
-            proj_entity = commands
-                .spawn((
-                    Projectile,
-                    ProjectileVelocity(velocity),
-                    ProjectileDamage(10),
-                    ProjectileOwner(owner),
-                    Transform::from_translation(Vec3::ZERO),
-                ))
-                .id();
+            proj_entity =
+                spawn_projectile(&mut commands, Vec3::ZERO, direction, speed, 10, owner);
         }
         world.flush();
 

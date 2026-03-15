@@ -68,6 +68,7 @@ impl Plugin for ClientNetPlugin {
         app.add_server_event::<GameResult>(Channel::Ordered);
 
         // Systems
+        app.add_systems(Startup, super::materializer::init_target_indicator_assets);
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
         app.add_systems(OnEnter(GameState::Playing), client_setup_scene);
         app.add_systems(

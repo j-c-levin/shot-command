@@ -1,7 +1,11 @@
+use std::collections::{HashMap, HashSet};
+
 use bevy::prelude::*;
 use bevy::time::Timer;
+use bevy_replicon::prelude::*;
 
 use crate::game::{Destroyed, DestroyTimer, GameState, Health, Team};
+use crate::net::commands::GameResult;
 use crate::ship::{Ship, ShipSecrets, ShipSecretsOwner};
 
 pub struct DamagePlugin;
@@ -62,14 +66,8 @@ fn check_win_condition(
     mut next_state: ResMut<NextState<GameState>>,
     ships: Query<(&Team, Option<&Destroyed>), With<Ship>>,
 ) {
-    use std::collections::HashMap;
-
-    use bevy_replicon::prelude::*;
-
-    use crate::net::commands::GameResult;
-
     let mut alive_counts: HashMap<u8, u32> = HashMap::new();
-    let mut teams_seen: std::collections::HashSet<u8> = std::collections::HashSet::new();
+    let mut teams_seen: HashSet<u8> = HashSet::new();
 
     for (team, destroyed) in &ships {
         teams_seen.insert(team.0);
