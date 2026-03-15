@@ -4,21 +4,29 @@ use std::time::SystemTime;
 
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
+use bevy_replicon::server::visibility::{
+    client_visibility::ClientVisibility,
+    filters_mask::FilterBit,
+    registry::FilterRegistry,
+};
 use bevy_replicon::shared::message::client_message::FromClient;
+use bevy_replicon::shared::replication::registry::ReplicationRegistry;
 use bevy_replicon_renet::{
     RenetChannelsExt, RenetServer,
     netcode::{NetcodeServerTransport, ServerAuthentication, ServerConfig as NetcodeServerConfig},
     renet::ConnectionConfig,
 };
 
+use crate::fog::is_in_los;
 use crate::game::{GameState, Health, Team};
-use crate::map::MapBounds;
+use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
     FacingLockCommand, FacingUnlockCommand, MoveCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue, spawn_server_ship,
+    FacingLocked, FacingTarget, Ship, ShipClass, Velocity, WaypointQueue, ship_xz_position,
+    spawn_server_ship,
 };
 
 /// Resource containing the bind address string, inserted before the plugin runs.
@@ -29,6 +37,24 @@ pub struct ServerBindAddress(pub String);
 #[derive(Resource, Debug, Default)]
 pub struct ClientTeams {
     pub map: HashMap<Entity, Team>,
+}
+
+/// A [`FilterBit`] for entity-level LOS visibility.
+///
+/// Registered via [`FilterRegistry::register_scope`] so we can manually call
+/// [`ClientVisibility::set`] each frame based on line-of-sight calculations.
+#[derive(Resource, Deref)]
+pub struct LosBit(FilterBit);
+
+impl FromWorld for LosBit {
+    fn from_world(world: &mut World) -> Self {
+        let bit = world.resource_scope(|world, mut filter_registry: Mut<FilterRegistry>| {
+            world.resource_scope(|world, mut registry: Mut<ReplicationRegistry>| {
+                filter_registry.register_scope::<Entity>(world, &mut registry)
+            })
+        });
+        Self(bit)
+    }
 }
 
 pub struct ServerNetPlugin;
@@ -56,6 +82,7 @@ impl Plugin for ServerNetPlugin {
 
         // Init resources
         app.init_resource::<ClientTeams>();
+        app.init_resource::<LosBit>();
 
         // Systems
         app.add_systems(
@@ -65,6 +92,12 @@ impl Plugin for ServerNetPlugin {
 
         // Server game setup: spawn fleets when entering Playing state
         app.add_systems(OnEnter(GameState::Playing), server_setup_game);
+
+        // LOS-based visibility filtering each frame during gameplay
+        app.add_systems(
+            Update,
+            server_update_visibility.run_if(in_state(GameState::Playing)),
+        );
 
         // Observer for new client connections
         app.add_observer(on_client_connected);
@@ -325,4 +358,54 @@ fn handle_facing_unlock_command(
     commands.entity(cmd.ship).remove::<FacingLocked>();
 
     info!("FacingUnlockCommand applied: ship {:?}", cmd.ship);
+}
+
+/// Each frame, compute LOS per-client and update replicon visibility.
+///
+/// For each connected client (which has an assigned team):
+/// - Friendly ships are always visible to that client.
+/// - Enemy ships are only visible if at least one friendly ship has LOS on them.
+///
+/// // TODO: per-component visibility — currently if an enemy ship is visible,
+/// // ALL its replicated components are sent (including Velocity, WaypointQueue, etc.).
+fn server_update_visibility(
+    los_bit: Res<LosBit>,
+    client_teams: Res<ClientTeams>,
+    ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
+    mut clients: Query<(Entity, &mut ClientVisibility), With<ConnectedClient>>,
+) {
+    // Build asteroid list for LOS checks (will be empty if server has no asteroids spawned)
+    let asteroids: Vec<(Vec2, f32)> = asteroid_query
+        .iter()
+        .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
+        .collect();
+
+    // Collect all ships into a vec for cross-referencing
+    let all_ships: Vec<(Entity, Vec2, f32, Team)> = ships
+        .iter()
+        .map(|(e, t, class, team)| {
+            (e, ship_xz_position(t), class.profile().vision_range, *team)
+        })
+        .collect();
+
+    for (client_entity, mut client_visibility) in &mut clients {
+        let Some(client_team) = client_teams.map.get(&client_entity) else {
+            continue;
+        };
+
+        for &(ship_entity, ship_pos, _vision_range, ship_team) in &all_ships {
+            if ship_team == *client_team {
+                // Friendly ship: always visible to this client
+                client_visibility.set(ship_entity, **los_bit, true);
+            } else {
+                // Enemy ship: visible only if any friendly ship has LOS on it
+                let seen = all_ships.iter().any(|&(_, friendly_pos, friendly_range, friendly_team)| {
+                    friendly_team == *client_team
+                        && is_in_los(friendly_pos, ship_pos, friendly_range, &asteroids)
+                });
+                client_visibility.set(ship_entity, **los_bit, seen);
+            }
+        }
+    }
 }
