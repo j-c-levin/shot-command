@@ -11,14 +11,18 @@ use bevy_replicon::prelude::*;
 use crate::game::{Health, Team};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, GameResult, MoveCommand,
-    TargetCommand, TeamAssignment,
+    CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
+    FireMissileCommand, GameResult, MoveCommand, TargetCommand, TeamAssignment,
 };
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
     WaypointQueue,
 };
 use crate::weapon::{MissileQueue, Mounts};
+use crate::weapon::missile::{
+    FlightPhase, Missile, MissileDamage, MissileFuel, MissileHealth, MissileOwner, MissileTarget,
+    MissileVelocity,
+};
 use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 pub struct SharedReplicationPlugin;
@@ -43,6 +47,16 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<ProjectileOwner>()
             .replicate::<CwisRound>();
 
+        // Missile components
+        app.replicate::<Missile>()
+            .replicate::<MissileTarget>()
+            .replicate::<MissileVelocity>()
+            .replicate::<MissileHealth>()
+            .replicate::<MissileDamage>()
+            .replicate::<MissileOwner>()
+            .replicate::<MissileFuel>()
+            .replicate::<FlightPhase>();
+
         // ShipSecrets entity components (team-private state)
         app.replicate::<ShipSecrets>()
             .replicate::<ShipSecretsOwner>()
@@ -57,7 +71,9 @@ impl Plugin for SharedReplicationPlugin {
             .add_mapped_client_event::<FacingLockCommand>(Channel::Ordered)
             .add_mapped_client_event::<FacingUnlockCommand>(Channel::Ordered)
             .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
-            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered);
+            .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered)
+            .add_mapped_client_event::<FireMissileCommand>(Channel::Ordered)
+            .add_mapped_client_event::<CancelMissilesCommand>(Channel::Ordered);
 
         // ── Server→client triggers ─────────────────────────────────────
         app.add_server_event::<TeamAssignment>(Channel::Ordered);

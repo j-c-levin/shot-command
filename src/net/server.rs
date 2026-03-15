@@ -22,15 +22,16 @@ use crate::fog::is_in_los;
 use crate::game::{GameState, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
-    ClearTargetCommand, FacingLockCommand, FacingUnlockCommand, MoveCommand,
-    TargetCommand, TeamAssignment,
+    CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
+    FireMissileCommand, MoveCommand, TargetCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
     WaypointQueue, ship_xz_position, spawn_server_ship,
 };
-use crate::weapon::MissileQueue;
+use crate::weapon::missile::Missile;
+use crate::weapon::{MissileQueue, MissileQueueEntry};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
 
 /// Resource containing the bind address string, inserted before the plugin runs.
@@ -107,6 +108,8 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_facing_unlock_command);
         app.add_observer(handle_target_command);
         app.add_observer(handle_clear_target_command);
+        app.add_observer(handle_fire_missile);
+        app.add_observer(handle_cancel_missiles);
 
         // Disconnection observer
         app.add_observer(on_client_disconnected);
@@ -490,6 +493,74 @@ fn handle_clear_target_command(
     info!("ClearTargetCommand applied: ship {:?}", cmd.ship);
 }
 
+/// Observer: handle `FireMissileCommand` from clients.
+fn handle_fire_missile(
+    trigger: On<FromClient<FireMissileCommand>>,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    mut queue_query: Query<&mut MissileQueue, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "FireMissileCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    let Ok(mut queue) = queue_query.get_mut(cmd.ship) else {
+        return;
+    };
+
+    queue.0.push(MissileQueueEntry {
+        target_point: cmd.target_point,
+        target_entity: cmd.target_entity,
+    });
+
+    info!(
+        "FireMissileCommand applied: ship {:?} queued missile at ({}, {})",
+        cmd.ship, cmd.target_point.x, cmd.target_point.y
+    );
+}
+
+/// Observer: handle `CancelMissilesCommand` from clients.
+fn handle_cancel_missiles(
+    trigger: On<FromClient<CancelMissilesCommand>>,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    mut queue_query: Query<&mut MissileQueue, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "CancelMissilesCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    let Ok(mut queue) = queue_query.get_mut(cmd.ship) else {
+        return;
+    };
+
+    queue.0.clear();
+
+    info!("CancelMissilesCommand applied: ship {:?}", cmd.ship);
+}
+
 /// Each frame, check if targeted enemies are still visible to the targeting ship's team.
 /// If no friendly ship has LOS on the target, clear the TargetDesignation.
 fn clear_lost_targets(
@@ -626,6 +697,7 @@ fn server_update_visibility(
     client_teams: Res<ClientTeams>,
     ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
     secrets_query: Query<(Entity, &ShipSecretsOwner), With<ShipSecrets>>,
+    missile_query: Query<(Entity, &Transform), With<Missile>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
     mut clients: Query<(Entity, &mut ClientVisibility), With<ConnectedClient>>,
 ) {
@@ -675,6 +747,21 @@ fn server_update_visibility(
                 let visible = *ship_team == *client_team;
                 client_visibility.set(secrets_entity, **los_bit, visible);
             }
+        }
+
+        // Missile entity visibility (LOS-based, same as enemy ships)
+        for (missile_entity, missile_transform) in &missile_query {
+            let missile_pos = Vec2::new(
+                missile_transform.translation.x,
+                missile_transform.translation.z,
+            );
+            let seen = all_ships.iter().any(
+                |&(_, friendly_pos, friendly_range, ship_team)| {
+                    ship_team == *client_team
+                        && is_in_los(friendly_pos, missile_pos, friendly_range, &asteroids)
+                },
+            );
+            client_visibility.set(missile_entity, **los_bit, seen);
         }
     }
 }
