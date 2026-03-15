@@ -1,5 +1,6 @@
 pub mod damage;
 pub mod firing;
+pub mod missile;
 pub mod projectile;
 
 use bevy::prelude::*;
