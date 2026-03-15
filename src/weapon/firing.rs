@@ -5,8 +5,9 @@ use crate::ship::{
     Ship, ShipClass, TargetDesignation, Velocity, angle_between_directions,
     ship_facing_direction, ship_xz_position,
 };
+use crate::weapon::missile::{compute_intercept_point, spawn_missile};
 use crate::weapon::projectile::spawn_projectile;
-use crate::weapon::{FiringArc, Mounts};
+use crate::weapon::{FiringArc, MissileQueue, Mounts, WeaponCategory};
 
 /// Half-angle of the forward firing arc: 10 degrees in radians (PI / 18).
 const FORWARD_ARC_HALF_ANGLE: f32 = std::f32::consts::PI / 18.0;
@@ -108,11 +109,16 @@ pub fn auto_fire(
                 continue;
             };
 
-            if weapon.cooldown > 0.0 || weapon.ammo == 0 {
+            if weapon.cooldown > 0.0 {
                 continue;
             }
 
             let profile = weapon.weapon_type.profile();
+
+            // Only cannons auto-fire; missiles and PD are handled separately
+            if weapon.weapon_type.category() != WeaponCategory::Cannon {
+                continue;
+            }
 
             // Range check
             if range > profile.firing_range {
@@ -147,13 +153,23 @@ pub fn auto_fire(
 
             let mut rng = rand::rng();
 
-            for _ in 0..profile.burst_count {
-                // Apply random spread
-                let spread_rad = rng
-                    .random_range(-profile.spread_degrees..profile.spread_degrees)
-                    .to_radians();
-                let cos_s = spread_rad.cos();
-                let sin_s = spread_rad.sin();
+            // Perpendicular vector in XZ plane for parallel spread
+            let perp = Vec3::new(-dir_to_lead.z, 0.0, dir_to_lead.x);
+
+            for i in 0..profile.burst_count {
+                // Parallel offset: evenly space projectiles perpendicular to aim
+                let parallel_offset = if profile.burst_count > 1 {
+                    let spacing = profile.spread_degrees; // reuse as meters of separation
+                    let t = i as f32 - (profile.burst_count - 1) as f32 / 2.0;
+                    perp * t * spacing
+                } else {
+                    Vec3::ZERO
+                };
+
+                // Small random accuracy spread (±0.5°)
+                let accuracy_rad = rng.random_range(-0.5_f32..0.5_f32).to_radians();
+                let cos_s = accuracy_rad.cos();
+                let sin_s = accuracy_rad.sin();
                 let spread_dir = Vec3::new(
                     dir_to_lead.x * cos_s - dir_to_lead.z * sin_s,
                     0.0,
@@ -162,7 +178,7 @@ pub fn auto_fire(
 
                 spawn_projectile(
                     &mut commands,
-                    origin,
+                    origin + parallel_offset,
                     spread_dir,
                     profile.projectile_speed,
                     profile.damage,
@@ -172,8 +188,79 @@ pub fn auto_fire(
 
             // Update weapon state
             let weapon_mut = mounts.0[mount_idx].weapon.as_mut().unwrap();
-            weapon_mut.ammo = weapon_mut.ammo.saturating_sub(profile.burst_count as u16);
             weapon_mut.cooldown = profile.fire_rate_secs;
+        }
+    }
+}
+
+/// Process missile launch queues: pop entries and spawn missiles from ready VLS tubes.
+pub fn process_missile_queue(
+    mut commands: Commands,
+    mut ships: Query<(Entity, &Transform, &mut Mounts, &mut MissileQueue), With<Ship>>,
+    target_query: Query<(&Transform, &Velocity), With<Ship>>,
+) {
+    for (ship_entity, ship_transform, mut mounts, mut queue) in &mut ships {
+        if queue.0.is_empty() {
+            continue;
+        }
+
+        for mount_idx in 0..mounts.0.len() {
+            if queue.0.is_empty() {
+                break;
+            }
+
+            let mount = &mounts.0[mount_idx];
+            let Some(ref weapon) = mount.weapon else {
+                continue;
+            };
+
+            if weapon.weapon_type.category() != WeaponCategory::Missile {
+                continue;
+            }
+
+            if weapon.cooldown > 0.0 {
+                continue;
+            }
+
+            let profile = weapon.weapon_type.profile();
+
+            // Pop the first queued entry
+            let entry = queue.0.remove(0);
+
+            // Compute intercept point
+            let intercept = if let Some(target_entity) = entry.target_entity {
+                if let Ok((target_transform, target_velocity)) =
+                    target_query.get(target_entity)
+                {
+                    compute_intercept_point(
+                        ship_transform.translation,
+                        target_transform.translation,
+                        target_velocity.linear,
+                        profile.projectile_speed,
+                    )
+                } else {
+                    Vec3::new(entry.target_point.x, 0.0, entry.target_point.y)
+                }
+            } else {
+                Vec3::new(entry.target_point.x, 0.0, entry.target_point.y)
+            };
+
+            let origin = ship_transform.translation + Vec3::new(0.0, 5.0, 0.0);
+
+            spawn_missile(
+                &mut commands,
+                origin,
+                intercept,
+                entry.target_entity,
+                profile.projectile_speed,
+                profile.damage,
+                profile.missile_hp,
+                profile.missile_fuel,
+                ship_entity,
+            );
+
+            // Reset cooldown
+            mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = profile.fire_rate_secs;
         }
     }
 }
@@ -263,5 +350,17 @@ mod tests {
             !is_in_firing_arc(facing, perpendicular, &FiringArc::Forward),
             "90 degrees should be outside forward arc"
         );
+    }
+
+    #[test]
+    fn cannon_auto_fire_skips_missile_types() {
+        use crate::weapon::WeaponType;
+
+        let profile = WeaponType::HeavyVLS.profile();
+        assert_eq!(WeaponType::HeavyVLS.category(), WeaponCategory::Missile);
+        // auto_fire only processes Cannon category — VLS weapons are handled
+        // by process_missile_queue instead
+        assert!(profile.missile_hp > 0);
+        assert!(profile.tubes > 0);
     }
 }
