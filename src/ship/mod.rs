@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use std::collections::VecDeque;
 
 use crate::game::{EnemyVisibility, Health, Team};
-use crate::map::{Asteroid, AsteroidSize, MapBounds};
+use crate::map::MapBounds;
 
 pub struct ShipPlugin;
 
