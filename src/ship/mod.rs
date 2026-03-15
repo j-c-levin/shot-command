@@ -74,49 +74,81 @@ pub struct ShipProfile {
 }
 
 impl ShipClass {
-    /// Returns the default mount loadout for this ship class.
-    /// Weapons are initialized with full ammo and zero cooldown.
-    pub fn default_mounts(&self) -> Vec<Mount> {
-        fn armed(size: MountSize, offset: Vec2, weapon_type: WeaponType) -> Mount {
-            let profile = weapon_type.profile();
-            Mount {
-                size,
-                offset,
-                weapon: Some(WeaponState {
-                    weapon_type,
-                    ammo: profile.max_ammo,
-                    cooldown: 0.0,
-                }),
-            }
-        }
-        fn empty(size: MountSize, offset: Vec2) -> Mount {
-            Mount {
-                size,
-                offset,
-                weapon: None,
-            }
-        }
-
+    /// Fixed mount layout for this ship class — sizes and positions.
+    /// This defines what slots exist; weapons are assigned separately.
+    fn mount_layout(&self) -> Vec<(MountSize, Vec2)> {
         match self {
             ShipClass::Battleship => vec![
-                armed(MountSize::Large, Vec2::new(-8.0, 6.0), WeaponType::HeavyCannon),
-                empty(MountSize::Large, Vec2::new(8.0, 6.0)),
-                empty(MountSize::Medium, Vec2::new(-5.0, 0.0)),
-                empty(MountSize::Medium, Vec2::new(5.0, 0.0)),
-                empty(MountSize::Small, Vec2::new(-3.0, -6.0)),
-                empty(MountSize::Small, Vec2::new(3.0, -6.0)),
+                (MountSize::Large, Vec2::new(-8.0, 6.0)),
+                (MountSize::Large, Vec2::new(8.0, 6.0)),
+                (MountSize::Medium, Vec2::new(-5.0, 0.0)),
+                (MountSize::Medium, Vec2::new(5.0, 0.0)),
+                (MountSize::Small, Vec2::new(-3.0, -6.0)),
+                (MountSize::Small, Vec2::new(3.0, -6.0)),
             ],
             ShipClass::Destroyer => vec![
-                armed(MountSize::Large, Vec2::new(0.0, 6.0), WeaponType::Railgun),
-                empty(MountSize::Medium, Vec2::new(-4.0, 0.0)),
-                empty(MountSize::Medium, Vec2::new(4.0, 0.0)),
-                empty(MountSize::Small, Vec2::new(0.0, -5.0)),
+                (MountSize::Large, Vec2::new(0.0, 6.0)),
+                (MountSize::Medium, Vec2::new(-4.0, 0.0)),
+                (MountSize::Medium, Vec2::new(4.0, 0.0)),
+                (MountSize::Small, Vec2::new(0.0, -5.0)),
             ],
             ShipClass::Scout => vec![
-                armed(MountSize::Medium, Vec2::new(0.0, 3.0), WeaponType::Cannon),
-                empty(MountSize::Small, Vec2::new(0.0, -3.0)),
+                (MountSize::Medium, Vec2::new(0.0, 3.0)),
+                (MountSize::Small, Vec2::new(0.0, -3.0)),
             ],
         }
+    }
+
+    /// Default weapon loadout for this ship class.
+    /// Each entry is an Option<WeaponType> matching the mount layout by index.
+    /// `None` means the slot is empty. Edit this to test different loadouts.
+    ///
+    /// Battleship: 2 Large, 2 Medium, 2 Small
+    /// Destroyer:  1 Large, 2 Medium, 1 Small
+    /// Scout:      1 Medium, 1 Small
+    fn default_loadout(&self) -> Vec<Option<WeaponType>> {
+        match self {
+            ShipClass::Battleship => vec![
+                Some(WeaponType::HeavyCannon), // Large
+                None,                          // Large
+                None,                          // Medium
+                None,                          // Medium
+                None,                          // Small
+                None,                          // Small
+            ],
+            ShipClass::Destroyer => vec![
+                Some(WeaponType::Railgun),     // Large
+                None,                          // Medium
+                None,                          // Medium
+                None,                          // Small
+            ],
+            ShipClass::Scout => vec![
+                Some(WeaponType::Cannon),      // Medium
+                None,                          // Small
+            ],
+        }
+    }
+
+    /// Builds the mount list by combining the fixed layout with the default loadout.
+    pub fn default_mounts(&self) -> Vec<Mount> {
+        let layout = self.mount_layout();
+        let loadout = self.default_loadout();
+        layout
+            .into_iter()
+            .zip(loadout)
+            .map(|((size, offset), weapon_type)| Mount {
+                size,
+                offset,
+                weapon: weapon_type.map(|wt| {
+                    let profile = wt.profile();
+                    WeaponState {
+                        weapon_type: wt,
+                        ammo: profile.max_ammo,
+                        cooldown: 0.0,
+                    }
+                }),
+            })
+            .collect()
     }
 
     pub fn profile(&self) -> ShipProfile {
