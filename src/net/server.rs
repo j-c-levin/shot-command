@@ -164,9 +164,11 @@ fn setup_renet_server(
     info!("Server listening on {}", addr);
 }
 
-/// Observer that fires when a new ConnectedClient component is added to an entity.
+/// Observer that fires when a client is authorized (protocol check passed).
+/// We use `AuthorizedClient` instead of `ConnectedClient` because the client
+/// can only receive messages and replication after authorization.
 fn on_client_connected(
-    trigger: On<Add, ConnectedClient>,
+    trigger: On<Add, AuthorizedClient>,
     mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
     mut next_state: ResMut<NextState<GameState>>,
