@@ -22,6 +22,7 @@ use crate::ship::{
     WaypointQueue,
 };
 use crate::weapon::Mounts;
+use crate::weapon::projectile::{Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -41,7 +42,11 @@ impl Plugin for ClientNetPlugin {
             .replicate::<Health>()
             .replicate::<Mounts>()
             .replicate::<Asteroid>()
-            .replicate::<AsteroidSize>();
+            .replicate::<AsteroidSize>()
+            .replicate::<Projectile>()
+            .replicate::<ProjectileVelocity>()
+            .replicate::<ProjectileDamage>()
+            .replicate::<ProjectileOwner>();
 
         // ShipSecrets child entity components (team-private state)
         app.replicate::<ShipSecrets>()
@@ -70,6 +75,8 @@ impl Plugin for ClientNetPlugin {
             (
                 super::materializer::materialize_ships,
                 super::materializer::materialize_asteroids,
+                super::materializer::materialize_projectiles,
+                super::materializer::update_target_indicators,
             )
                 .run_if(in_state(GameState::Playing)),
         );

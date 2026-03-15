@@ -4,7 +4,8 @@ use crate::game::Team;
 use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
-use crate::ship::{Ship, ShipClass};
+use crate::ship::{Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation};
+use crate::weapon::projectile::Projectile;
 
 /// System that watches for newly replicated ship entities (via `Added<Ship>` filter)
 /// and spawns the appropriate mesh + material as a child entity.
@@ -103,5 +104,96 @@ pub fn materialize_asteroids(
             ));
 
         info!("Materialized asteroid with radius {}", size.radius);
+    }
+}
+
+/// System that watches for newly replicated projectile entities and spawns
+/// a small glowing sphere mesh as a child entity.
+pub fn materialize_projectiles(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<Entity, Added<Projectile>>,
+) {
+    for entity in &query {
+        let projectile_mesh = meshes.add(Sphere::new(0.5).mesh().uv(8, 8));
+        let projectile_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(1.0, 0.7, 0.1),
+            emissive: LinearRgba::new(4.0, 2.8, 0.4, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Opaque,
+            ..default()
+        });
+
+        commands
+            .entity(entity)
+            .insert(Visibility::Visible)
+            .with_child((
+                Mesh3d(projectile_mesh),
+                MeshMaterial3d(projectile_material),
+                Transform::IDENTITY,
+            ));
+    }
+}
+
+// ── Targeting Indicators ────────────────────────────────────────────────
+
+/// Marker component for target indicator entities (client-only visuals).
+#[derive(Component)]
+pub struct TargetIndicator {
+    pub owner: Entity,
+}
+
+/// System that renders a red torus at the position of each targeted enemy ship.
+/// Only shows targets for the local player's team.
+pub fn update_target_indicators(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    local_team: Res<LocalTeam>,
+    secrets_query: Query<
+        (&ShipSecretsOwner, &TargetDesignation),
+        With<ShipSecrets>,
+    >,
+    ship_query: Query<(&Transform, &Team), With<Ship>>,
+    indicator_query: Query<(Entity, &TargetIndicator)>,
+) {
+    // Despawn all existing target indicators
+    for (entity, _) in &indicator_query {
+        commands.entity(entity).despawn();
+    }
+
+    let Some(my_team) = local_team.0 else { return };
+
+    let indicator_mesh = meshes.add(Torus::new(6.0, 8.0));
+    let indicator_material = materials.add(StandardMaterial {
+        base_color: Color::srgba(1.0, 0.15, 0.1, 0.7),
+        emissive: LinearRgba::new(2.0, 0.3, 0.2, 1.0),
+        unlit: true,
+        alpha_mode: AlphaMode::Blend,
+        ..default()
+    });
+
+    for (owner, target_designation) in &secrets_query {
+        // Only show for own-team ships
+        let Ok((_, team)) = ship_query.get(owner.0) else {
+            continue;
+        };
+        if *team != my_team {
+            continue;
+        }
+
+        // Look up the target ship's position
+        let Ok((target_transform, _)) = ship_query.get(target_designation.0) else {
+            continue;
+        };
+
+        let pos = target_transform.translation;
+        commands.spawn((
+            TargetIndicator { owner: owner.0 },
+            Mesh3d(indicator_mesh.clone()),
+            MeshMaterial3d(indicator_material.clone()),
+            Transform::from_xyz(pos.x, 1.0, pos.z),
+        ));
     }
 }
