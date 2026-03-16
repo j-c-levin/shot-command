@@ -18,6 +18,8 @@ pub enum GameState {
     WaitingForPlayers,
     /// Client: connecting to server, waiting for team assignment
     Connecting,
+    /// Both: fleet composition screen (loadout selection before game starts)
+    FleetComposition,
     Playing,
     GameOver,
 }
@@ -85,6 +87,7 @@ mod tests {
             GameState::Setup,
             GameState::WaitingForPlayers,
             GameState::Connecting,
+            GameState::FleetComposition,
             GameState::Playing,
             GameState::GameOver,
         ];
@@ -95,6 +98,15 @@ mod tests {
                 }
             }
         }
+    }
+
+    #[test]
+    fn game_state_has_fleet_composition() {
+        // FleetComposition is a distinct state between Connecting and Playing
+        let fc = GameState::FleetComposition;
+        assert_ne!(fc, GameState::Connecting);
+        assert_ne!(fc, GameState::Playing);
+        assert_ne!(fc, GameState::Setup);
     }
 
     #[test]
