@@ -17,6 +17,7 @@ cargo run --bin client -- --connect 1.2.3.4:5000  # client to remote server
 cargo check                           # quick compilation check
 cargo test                            # unit tests only (pure function + World-level, no full App)
 cargo build --release --bin server    # optimized server for deployment
+./run_game.sh                         # quick dev: launches server + client in background
 ```
 
 Requires **nightly Rust** (`rust-toolchain.toml`). The `.cargo/config.toml` uses `-Z` flags
@@ -38,19 +39,20 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 87 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 110 tests:
 
-| Module | What's tested |
-|---|---|
-| `src/game/mod.rs` | Team constants, GameState default/variants, EnemyVisibility default, Health damage/saturation |
-| `src/map/mod.rs` | MapBounds contains/clamp/size |
-| `src/ship/mod.rs` | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class |
-| `src/fog/mod.rs` | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
-| `src/weapon/mod.rs` | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS values), mount size mapping, weapon categories |
-| `src/weapon/projectile.rs` | Projectile spawning, direction normalization, advancement, bounds despawn |
-| `src/weapon/firing.rs` | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone) |
-| `src/weapon/missile.rs` | Intercept point (stationary, moving, zero speed), seeker cone (inside/outside/ahead/behind), spawn_missile components+velocity, flight phase transitions (climb/cruise/dive/terminal) |
-| `src/weapon/pd.rs` | PD cylinder detection (inside/outside), altitude-independent cylinder check |
+| Module | # | What's tested |
+|---|---|---|
+| `src/ship/mod.rs` | 28 | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class |
+| `src/weapon/missile.rs` | 18 | Intercept point (stationary, moving, zero speed), seeker cone (inside/outside/ahead/behind), spawn_missile components+velocity, flat flight, seeker acquisition, asteroid collision |
+| `src/camera/mod.rs` | 14 | CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), camera pan controls |
+| `src/fog/mod.rs` | 11 | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
+| `src/weapon/mod.rs` | 10 | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS values), mount size mapping, weapon categories, VLS tube reload |
+| `src/game/mod.rs` | 7 | Team constants, GameState default/variants, EnemyVisibility default, Health damage/saturation |
+| `src/weapon/firing.rs` | 7 | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone) |
+| `src/weapon/projectile.rs` | 6 | Projectile spawning, direction normalization, advancement, bounds despawn |
+| `src/map/mod.rs` | 6 | MapBounds contains/clamp/size |
+| `src/weapon/pd.rs` | 3 | PD cylinder detection (inside/outside), altitude-independent cylinder check |
 
 ## Architecture
 
@@ -65,21 +67,21 @@ Library crate (`src/lib.rs`) with two binaries:
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
 - `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship
 - `src/weapon/` — Weapon system:
-  - `mod.rs` — MountSize, WeaponType (HeavyCannon/Cannon/Railgun/HeavyVLS/LightVLS/LaserPD/CWIS), WeaponCategory (Cannon/Missile/PointDefense), FiringArc, WeaponProfile, WeaponState, Mount, Mounts component, MissileQueue/MissileQueueEntry
+  - `mod.rs` — MountSize, WeaponType (HeavyCannon/Cannon/Railgun/HeavyVLS/LightVLS/LaserPD/CWIS), WeaponCategory (Cannon/Missile/PointDefense), FiringArc, WeaponProfile, WeaponState (incl. tubes_loaded, tube_reload_timer for VLS), Mount, Mounts component, MissileQueue/MissileQueueEntry
   - `projectile.rs` — Projectile/ProjectileVelocity/ProjectileDamage/ProjectileOwner/CwisRound components, spawn_projectile, ProjectilePlugin (advance, bounds, hit detection, CWIS hit detection)
   - `firing.rs` — compute_lead_position, is_in_firing_arc, tick_weapon_cooldowns, auto_fire system
-  - `missile.rs` — Missile/MissileTarget/MissileVelocity/MissileHealth/MissileDamage/MissileOwner/MissileFuel/FlightPhase components, compute_intercept_point, is_in_seeker_cone, spawn_missile, MissilePlugin (flight systems: advance, phase transitions, terminal seeker, collision, fuel/bounds cleanup)
-  - `pd.rs` — Point defense systems: is_in_pd_cylinder (vertical cylinder check), laser_pd_fire (instant hit), cwis_fire (projectile-based), PdPlugin
+  - `missile.rs` — Missile/MissileTarget/MissileVelocity/MissileDamage/MissileOwner components, compute_intercept_point, is_in_seeker_cone, spawn_missile, MissilePlugin (flat flight, seeker cone acquisition, asteroid collision, ship collision, bounds cleanup). Simplified: no altitude phases, flat flight with seeker cone, destroyed by asteroids.
+  - `pd.rs` — Point defense systems: is_in_pd_cylinder (vertical cylinder check), probability-based kills (no missile HP), LaserBeam/LaserBeamTarget/LaserBeamTimer entities (visible beam tracking missile in real-time, delayed kill 0.15s after beam appears), CWIS visual tracers. LaserPD range 300m, CWIS 100m kill / 150m visual. 0.2s retarget delay. PdPlugin
   - `damage.rs` — DamagePlugin: mark_destroyed (with 1s delay timer), despawn_destroyed (cleanup ShipSecrets), check_win_condition (broadcast GameResult)
-- `src/camera/` — Free camera (WASD pan, scroll zoom, middle-mouse orbit)
-- `src/input/` — Ship selection (left-click), move commands (right-click), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target, M toggle missile mode (M+right-click ground = missile at point, M+click enemy = missile at entity). All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, MissileCommand).
+- `src/camera/` — CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), WASD pan (S is stop-only, not camera pan), middle-mouse orbit
+- `src/input/` — Ship selection (left-click, left-click ground = deselect), move commands (right-click in all modes), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target, M toggle missile mode (M gated by VLS presence, right-click ground = missile at point, click enemy = missile at entity). Selecting new ship resets modes. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, MissileCommand).
 - `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
 - `src/net/` — Networking module:
   - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
   - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand (client→server with MapEntities), TeamAssignment, GameResult (server→client)
   - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target), LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting), target visibility clearing, disconnection handling
   - `client.rs` — ClientNetPlugin: renet transport, team assignment observer, ground plane setup, materializer/asteroid registration
-  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system.
+  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system. Selection indicator (green, larger, at ship center Y). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking.
 
 ### System ordering (Update schedule)
 
@@ -89,9 +91,9 @@ Library crate (`src/lib.rs`) with two binaries:
 
 **Server — Missiles:** process_missile_queue (after auto_fire in weapon chain)
 
-**Server — Missile flight:** advance_missiles → update_missile_flight → terminal_seeker_scan → check_missile_hits → despawn_spent_missiles → despawn_destroyed_missiles → check_missile_bounds
+**Server — Missile flight:** advance_missiles → seeker_scan → check_missile_asteroid_hits → check_missile_hits → check_missile_bounds
 
-**Server — Point Defense:** laser_pd_fire, cwis_fire (parallel)
+**Server — Point Defense:** laser_pd_fire → update_laser_beams (track + delayed kill), cwis_fire
 
 **Server — Projectiles:** advance_projectiles → check_projectile_bounds → check_projectile_hits → check_cwis_hits
 
@@ -116,9 +118,12 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Facing lock/unlock**: Unlocked ships auto-face waypoint. Locked ships maintain player-set facing. Alt+right-click to lock, alt+click-ship or L to unlock.
 - **Waypoint queue**: Right-click = clear + single waypoint. Shift+right-click = append.
 - **Team component** uses `u8` id for multiplayer. First client = Team(0), second = Team(1).
-- **Uniform vision range**: 200m for all ship classes. Sensor/radar differentiation is Phase 4.
-- **Weapon system**: Mounts are sized slots (Large/Medium/Small) per ship class. Weapons auto-fire at designated targets when in range+arc. Projectiles are independent server entities with velocity — no hitscan. Cooldown ticks every frame regardless of targeting. Lead calculation predicts target position. Railguns require forward-facing (±10°). Missile launchers (HeavyVLS/LightVLS) fire from MissileQueue. Point defense (LaserPD/CWIS) auto-engages incoming missiles within a vertical cylinder.
-- **Missile system**: M key toggles missile mode. M+right-click ground fires missiles at a point. M+click enemy fires missiles at an entity (with tracking). Missiles follow a 4-phase flight: Climb → Cruise (at altitude) → Dive → Terminal (seeker cone re-acquisition). Missiles have HP and can be shot down by point defense. MissileQueue lives on Ship entities and syncs to ShipSecrets.
+- **Uniform vision range**: 400m for all ship classes. Sensor/radar differentiation is Phase 4.
+- **Weapon system**: Mounts are sized slots (Large/Medium/Small) per ship class. Weapons auto-fire at designated targets when in range+arc. Projectiles are independent server entities with velocity — no hitscan. Cooldown ticks every frame regardless of targeting. Lead calculation predicts target position. Railguns require forward-facing (±10°). Missile launchers (HeavyVLS/LightVLS) fire from MissileQueue. VLS uses tubes_loaded + tube_reload_timer on WeaponState (10s per-tube reload, queue capped at loaded tubes). Point defense (LaserPD/CWIS) auto-engages incoming missiles — probability-based kills, no missile HP.
+- **Missile system**: M key toggles missile mode (gated by VLS presence). Right-click ground fires missiles at a point, click enemy fires at entity (with tracking). Simplified flat flight with seeker cone acquisition — no altitude/avoidance phases. Missiles destroyed by asteroid collision. MissileQueue lives on Ship entities and syncs to ShipSecrets.
+- **Point defense**: LaserPD range 300m with visible beam (LaserBeam/LaserBeamTarget/LaserBeamTimer entities track missile in real-time, delayed kill 0.15s after beam appears). CWIS 100m kill radius / 150m visual tracer range. Probability-based kills. 0.2s retarget delay between engagements.
+- **Ground plane**: Invisible (transparent), 3x map bounds for click targeting.
+- **Explosions**: Two sizes — ship impact (large) vs PD kill (small).
 - **Targeting**: K+left-click enemy designates target. K again clears. Target auto-clears when enemy leaves LOS. TargetDesignation synced via ShipSecrets (team-private).
 - **Destruction**: Ships at 0 HP get Destroyed marker + 1s delay timer, then despawn (ship + ShipSecrets). Ghost fade-out fires on despawn. Win condition: all enemy ships destroyed → GameResult broadcast → GameOver state.
 
@@ -173,10 +178,11 @@ cannon, railgun), K-key targeting, simulated projectile entities, HP damage,
 ship destruction with delayed despawn, win/lose condition. See design doc at
 `docs/plans/2026-03-15-phase3a-weapons-design.md`.
 
-**Phase 3b: Missiles & Point Defense — COMPLETE.** Missile launchers (HeavyVLS/LightVLS),
-4-phase missile flight (climb/cruise/dive/terminal), seeker cone re-acquisition, missile HP,
-point defense (LaserPD instant-hit, CWIS projectile-based), M-key missile mode input,
-MissileQueue command channel, missile materializer. See design doc at
+**Phase 3b: Missiles & Point Defense — COMPLETE.** Missile launchers (HeavyVLS/LightVLS)
+with per-tube reload (10s), simplified flat-flight missiles with seeker cone, asteroid
+collision, probability-based PD (LaserPD 300m with visible beam tracking + delayed kill,
+CWIS 100m kill / 150m visual), M-key missile mode, explosion effects, F3 debug visuals,
+strategic camera zoom, selection indicator improvements. See design doc at
 `docs/plans/2026-03-15-phase3b-missiles-pd-design.md`.
 
 **Next up: Phase 3c — Fleet Composition Screen** (pre-game loadout with point budget)
