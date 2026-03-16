@@ -4,6 +4,7 @@ use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
 use nebulous_shot_command::camera::CameraPlugin;
+use nebulous_shot_command::fleet::FleetPlugin;
 use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::input::InputPlugin;
@@ -44,6 +45,7 @@ fn main() {
             RepliconRenetPlugins,
             SharedReplicationPlugin,
             GamePlugin,
+            FleetPlugin,
             CameraPlugin,
             ShipVisualsPlugin,
             FogClientPlugin,

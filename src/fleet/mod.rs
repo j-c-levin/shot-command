@@ -1,8 +1,20 @@
+pub mod lobby;
+
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::ship::ShipClass;
 use crate::weapon::{MountSize, WeaponType};
+
+/// No-op plugin that wires the fleet module into the app.
+/// Systems will be added in future tasks.
+pub struct FleetPlugin;
+
+impl Plugin for FleetPlugin {
+    fn build(&self, _app: &mut App) {
+        // No systems yet — lobby and fleet builder coming in later tasks.
+    }
+}
 
 /// Total point budget each player has to build their fleet.
 pub const FLEET_BUDGET: u16 = 1000;

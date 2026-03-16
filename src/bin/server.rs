@@ -3,6 +3,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
+use nebulous_shot_command::fleet::FleetPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::net::server::{ServerBindAddress, ServerNetPlugin};
 use nebulous_shot_command::net::SharedReplicationPlugin;
@@ -34,6 +35,7 @@ fn main() {
             RepliconRenetPlugins,
             SharedReplicationPlugin,
             GamePlugin,
+            FleetPlugin,
             ShipPhysicsPlugin,
             ProjectilePlugin,
             MissilePlugin,
