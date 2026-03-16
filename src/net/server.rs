@@ -27,8 +27,8 @@ use crate::net::commands::{
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
-    SquadMember, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, SquadMember,
+    TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
 use crate::weapon::missile::{Missile, MissileOwner};
@@ -111,6 +111,13 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_clear_target_command);
         app.add_observer(handle_fire_missile);
         app.add_observer(handle_cancel_missiles);
+        app.add_observer(handle_join_squad);
+
+        // Orphan cleanup: remove SquadMember when leader is destroyed/despawned
+        app.add_systems(
+            Update,
+            cleanup_orphan_squad_members.run_if(in_state(GameState::Playing)),
+        );
 
         // Disconnection observer
         app.add_observer(on_client_disconnected);
@@ -350,11 +357,16 @@ fn validate_ownership(
 }
 
 /// Observer: handle `MoveCommand` from clients.
+/// If the target ship is a squad leader, propagate the move to all followers
+/// with their offset applied. If the target ship is a follower receiving a
+/// direct order, break formation (remove SquadMember).
 fn handle_move_command(
     trigger: On<FromClient<MoveCommand>>,
+    mut commands: Commands,
     client_teams: Res<ClientTeams>,
     team_query: Query<&Team, With<Ship>>,
-    mut waypoint_query: Query<&mut WaypointQueue, With<Ship>>,
+    mut waypoint_query: Query<(&mut WaypointQueue, Option<&SquadMember>), With<Ship>>,
+    follower_query: Query<(Entity, &SquadMember), With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -365,17 +377,56 @@ fn handle_move_command(
         return;
     }
 
-    let Ok(mut waypoints) = waypoint_query.get_mut(cmd.ship) else {
-        return;
-    };
+    // If this ship is a follower, break formation (direct move order)
+    {
+        let Ok((_, squad)) = waypoint_query.get(cmd.ship) else {
+            return;
+        };
+        if squad.is_some() {
+            commands.entity(cmd.ship).remove::<SquadMember>();
+            info!("Ship {:?} received direct move — leaving squad", cmd.ship);
+        }
+    }
 
-    if cmd.append {
-        waypoints.waypoints.push_back(cmd.destination);
-        waypoints.braking = false;
-    } else {
-        waypoints.waypoints.clear();
-        waypoints.waypoints.push_back(cmd.destination);
-        waypoints.braking = false;
+    // Apply the move to the target ship
+    {
+        let Ok((mut waypoints, _)) = waypoint_query.get_mut(cmd.ship) else {
+            return;
+        };
+        if cmd.append {
+            waypoints.waypoints.push_back(cmd.destination);
+            waypoints.braking = false;
+        } else {
+            waypoints.waypoints.clear();
+            waypoints.waypoints.push_back(cmd.destination);
+            waypoints.braking = false;
+        }
+    }
+
+    // Propagate to squad followers (if this ship is a leader)
+    for (follower_entity, squad_member) in &follower_query {
+        if squad_member.leader != cmd.ship {
+            continue;
+        }
+        let offset = squad_member.offset;
+        let follower_dest = cmd.destination + offset;
+
+        let Ok((mut follower_waypoints, _)) = waypoint_query.get_mut(follower_entity) else {
+            continue;
+        };
+        if cmd.append {
+            follower_waypoints.waypoints.push_back(follower_dest);
+            follower_waypoints.braking = false;
+        } else {
+            follower_waypoints.waypoints.clear();
+            follower_waypoints.waypoints.push_back(follower_dest);
+            follower_waypoints.braking = false;
+        }
+
+        info!(
+            "Squad propagated: follower {:?} -> ({:.0}, {:.0})",
+            follower_entity, follower_dest.x, follower_dest.y
+        );
     }
 
     info!(
@@ -611,6 +662,91 @@ fn handle_cancel_missiles(
     queue.0.clear();
 
     info!("CancelMissilesCommand applied: ship {:?}", cmd.ship);
+}
+
+/// Observer: handle `JoinSquadCommand` from clients.
+/// Validates both ships are on the same team, then adds SquadMember to the follower.
+fn handle_join_squad(
+    trigger: On<FromClient<JoinSquadCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    transform_query: Query<&Transform, With<Ship>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "JoinSquadCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    // Validate leader exists and is on the same team
+    let Ok(ship_team) = team_query.get(cmd.ship) else {
+        return;
+    };
+    let Ok(leader_team) = team_query.get(cmd.leader) else {
+        warn!("JoinSquadCommand: leader {:?} not found", cmd.leader);
+        return;
+    };
+    if *ship_team != *leader_team {
+        warn!("JoinSquadCommand: ship and leader are on different teams");
+        return;
+    }
+
+    // Don't join self
+    if cmd.ship == cmd.leader {
+        return;
+    }
+
+    // Compute offset from positions
+    let Ok(ship_tf) = transform_query.get(cmd.ship) else {
+        return;
+    };
+    let Ok(leader_tf) = transform_query.get(cmd.leader) else {
+        return;
+    };
+
+    let ship_pos = ship_xz_position(ship_tf);
+    let leader_pos = ship_xz_position(leader_tf);
+    let offset = ship_pos - leader_pos;
+
+    commands.entity(cmd.ship).insert(SquadMember {
+        leader: cmd.leader,
+        offset,
+    });
+
+    info!(
+        "JoinSquadCommand applied: ship {:?} joined squad of {:?} with offset ({:.0}, {:.0})",
+        cmd.ship, cmd.leader, offset.x, offset.y
+    );
+}
+
+/// Remove SquadMember from ships whose leader no longer exists or is destroyed.
+fn cleanup_orphan_squad_members(
+    mut commands: Commands,
+    squad_query: Query<(Entity, &SquadMember), With<Ship>>,
+    ship_query: Query<Entity, With<Ship>>,
+    destroyed_query: Query<Entity, With<crate::game::Destroyed>>,
+) {
+    for (entity, squad) in &squad_query {
+        let leader_gone = ship_query.get(squad.leader).is_err();
+        let leader_destroyed = destroyed_query.get(squad.leader).is_ok();
+        if leader_gone || leader_destroyed {
+            commands.entity(entity).remove::<SquadMember>();
+            info!(
+                "Orphan cleanup: ship {:?} lost leader {:?}",
+                entity, squad.leader
+            );
+        }
+    }
 }
 
 /// Each frame, check if targeted enemies are still visible to the targeting ship's team.

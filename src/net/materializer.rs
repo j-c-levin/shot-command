@@ -5,7 +5,7 @@ use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
-    Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, SquadMember, TargetDesignation,
+    Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, TargetDesignation,
 };
 use crate::weapon::missile::{
     Explosion, Missile, MissileVelocity, SEEKER_HALF_ANGLE, SEEKER_MAX_RANGE,
