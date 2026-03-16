@@ -5,12 +5,12 @@ use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, MoveCommand, TargetCommand,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, TargetCommand,
 };
 use crate::net::LocalTeam;
 use crate::ship::{
-    FacingLocked, Selected, SelectionIndicator, Ship, ShipSecrets, ShipSecretsOwner,
-    TargetDesignation,
+    FacingLocked, Selected, SelectionIndicator, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    SquadMember, TargetDesignation,
 };
 use crate::weapon::{Mounts, WeaponCategory};
 
@@ -28,6 +28,14 @@ pub struct TargetMode(pub bool);
 #[derive(Resource, Default)]
 pub struct MissileMode(pub bool);
 
+/// Resource: when true, next click on friendly ship or number-key assigns squad
+#[derive(Resource, Default)]
+pub struct JoinMode(pub bool);
+
+/// Marker for ships highlighted as squad followers of the selected leader.
+#[derive(Component)]
+pub struct SquadHighlight;
+
 /// Marker for the weapon range indicator ring.
 #[derive(Component)]
 struct RangeIndicator;
@@ -37,6 +45,7 @@ impl Plugin for InputPlugin {
         app.init_resource::<LockMode>()
             .init_resource::<TargetMode>()
             .init_resource::<MissileMode>()
+            .init_resource::<JoinMode>()
             .add_systems(
                 Startup,
                 (
@@ -45,6 +54,7 @@ impl Plugin for InputPlugin {
                     setup_lock_mode_hud,
                     setup_target_mode_hud,
                     setup_missile_mode_hud,
+                    setup_join_mode_hud,
                 ),
             )
             .add_systems(
@@ -53,9 +63,12 @@ impl Plugin for InputPlugin {
                     update_selection_indicator,
                     update_range_indicator,
                     handle_keyboard,
+                    handle_number_keys,
+                    update_squad_highlights,
                     update_lock_mode_hud,
                     update_target_mode_hud,
                     update_missile_mode_hud,
+                    update_join_mode_hud,
                 ),
             );
     }
@@ -89,6 +102,7 @@ pub fn on_ship_clicked(
     mut lock_mode: ResMut<LockMode>,
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
+    mut join_mode: ResMut<JoinMode>,
     ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
@@ -142,6 +156,20 @@ pub fn on_ship_clicked(
         return;
     }
 
+    // Join mode: left-click on friendly ship assigns squad
+    if join_mode.0 && *team == my_team {
+        for selected_ship in &selected_query {
+            if selected_ship != entity {
+                commands.client_trigger(JoinSquadCommand {
+                    ship: selected_ship,
+                    leader: entity,
+                });
+            }
+        }
+        join_mode.0 = false;
+        return;
+    }
+
     if *team != my_team {
         return;
     }
@@ -153,6 +181,7 @@ pub fn on_ship_clicked(
     lock_mode.0 = false;
     target_mode.0 = false;
     missile_mode.0 = false;
+    join_mode.0 = false;
 
     commands.entity(entity).insert(Selected);
 }
@@ -164,6 +193,7 @@ pub fn on_ground_clicked(
     mut lock_mode: ResMut<LockMode>,
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
+    mut join_mode: ResMut<JoinMode>,
     local_team: Res<LocalTeam>,
     ground_query: Query<Entity, With<GroundPlane>>,
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
@@ -243,6 +273,7 @@ pub fn on_ground_clicked(
         lock_mode.0 = false;
         target_mode.0 = false;
         missile_mode.0 = false;
+        join_mode.0 = false;
         return;
     }
 
@@ -294,6 +325,7 @@ fn handle_keyboard(
     mut lock_mode: ResMut<LockMode>,
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
+    mut join_mode: ResMut<JoinMode>,
     selected_query: Query<(Entity, &Transform), With<Selected>>,
     locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&TargetDesignation>), With<ShipSecrets>>,
@@ -311,25 +343,24 @@ fn handle_keyboard(
         lock_mode.0 = false;
         target_mode.0 = false;
         missile_mode.0 = false;
+        join_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyL) {
         if locked_query.iter().next().is_some() {
-            // Some selected ships are locked — unlock them via network trigger
             for entity in &locked_query {
                 commands.client_trigger(FacingUnlockCommand { ship: entity });
             }
             lock_mode.0 = false;
         } else {
-            // No selected ships locked — toggle lock mode
             lock_mode.0 = !lock_mode.0;
         }
         target_mode.0 = false;
         missile_mode.0 = false;
+        join_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyK) {
-        // Check if selected ship already has a target — if so, clear it
         let mut has_target = false;
         for (selected_entity, _) in &selected_query {
             for (owner, target) in &secrets_query {
@@ -342,17 +373,16 @@ fn handle_keyboard(
             }
         }
         if !has_target {
-            // No target — toggle target mode
             target_mode.0 = !target_mode.0;
         } else {
             target_mode.0 = false;
         }
         lock_mode.0 = false;
         missile_mode.0 = false;
+        join_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyM) {
-        // Only enter missile mode if selected ship has a VLS mount
         let has_vls = mounts_query.iter().any(|mounts| {
             mounts.0.iter().any(|m| {
                 m.weapon
@@ -367,9 +397,22 @@ fn handle_keyboard(
         }
         lock_mode.0 = false;
         target_mode.0 = false;
+        join_mode.0 = false;
     }
 
-    // S key: full stop — clear waypoints (move to self), unlock facing, clear target, cancel missiles
+    if keys.just_pressed(KeyCode::KeyJ) {
+        // Toggle join mode (only if a ship is selected)
+        if selected_query.iter().next().is_some() {
+            join_mode.0 = !join_mode.0;
+        } else {
+            join_mode.0 = false;
+        }
+        lock_mode.0 = false;
+        target_mode.0 = false;
+        missile_mode.0 = false;
+    }
+
+    // S key: full stop
     if keys.just_pressed(KeyCode::KeyS) {
         for (entity, transform) in &selected_query {
             let pos = Vec2::new(transform.translation.x, transform.translation.z);
@@ -385,6 +428,7 @@ fn handle_keyboard(
         lock_mode.0 = false;
         target_mode.0 = false;
         missile_mode.0 = false;
+        join_mode.0 = false;
     }
 }
 
@@ -592,4 +636,163 @@ fn update_missile_mode_hud(
     } else {
         Visibility::Hidden
     };
+}
+
+// ── Join Mode HUD ────────────────────────────────────────────────────────
+
+#[derive(Component)]
+struct JoinModeHud;
+
+fn setup_join_mode_hud(mut commands: Commands) {
+    commands.spawn((
+        JoinModeHud,
+        Text::new("JOIN MODE — Click friendly ship or press its number"),
+        TextFont {
+            font_size: 24.0,
+            ..default()
+        },
+        TextColor(Color::srgba(0.3, 1.0, 0.8, 0.9)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(110.0),
+            width: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            ..default()
+        },
+        Visibility::Hidden,
+    ));
+}
+
+fn update_join_mode_hud(
+    join_mode: Res<JoinMode>,
+    mut query: Query<&mut Visibility, With<JoinModeHud>>,
+) {
+    let Ok(mut vis) = query.single_mut() else {
+        return;
+    };
+    *vis = if join_mode.0 {
+        Visibility::Visible
+    } else {
+        Visibility::Hidden
+    };
+}
+
+// ── Number-Key Ship Selection ────────────────────────────────────────────
+
+/// Maps digit key codes to ship numbers (1-9).
+fn digit_key_to_number(key: KeyCode) -> Option<u8> {
+    match key {
+        KeyCode::Digit1 => Some(1),
+        KeyCode::Digit2 => Some(2),
+        KeyCode::Digit3 => Some(3),
+        KeyCode::Digit4 => Some(4),
+        KeyCode::Digit5 => Some(5),
+        KeyCode::Digit6 => Some(6),
+        KeyCode::Digit7 => Some(7),
+        KeyCode::Digit8 => Some(8),
+        KeyCode::Digit9 => Some(9),
+        _ => None,
+    }
+}
+
+/// System that handles 1-9 key presses to select ships by their ShipNumber.
+/// In join mode, the number key targets a ship for the join command instead.
+fn handle_number_keys(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut commands: Commands,
+    local_team: Res<LocalTeam>,
+    mut lock_mode: ResMut<LockMode>,
+    mut target_mode: ResMut<TargetMode>,
+    mut missile_mode: ResMut<MissileMode>,
+    mut join_mode: ResMut<JoinMode>,
+    ship_query: Query<(Entity, &Team, &ShipNumber), With<Ship>>,
+    selected_query: Query<Entity, With<Selected>>,
+    secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
+) {
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+
+    let digit_keys = [
+        KeyCode::Digit1, KeyCode::Digit2, KeyCode::Digit3,
+        KeyCode::Digit4, KeyCode::Digit5, KeyCode::Digit6,
+        KeyCode::Digit7, KeyCode::Digit8, KeyCode::Digit9,
+    ];
+
+    for &key in &digit_keys {
+        if !keys.just_pressed(key) {
+            continue;
+        }
+        let Some(number) = digit_key_to_number(key) else {
+            continue;
+        };
+
+        // Find the ship on our team with this number.
+        // First try direct Ship entities (which have ShipNumber on server).
+        // On client, ShipNumber is replicated via ShipSecrets, so look there.
+        let target_ship = secrets_query
+            .iter()
+            .find(|(_, sn)| sn.0 == number)
+            .and_then(|(owner, _)| {
+                let (entity, team, _) = ship_query.get(owner.0).ok()?;
+                if *team == my_team { Some(entity) } else { None }
+            });
+
+        let Some(target_ship) = target_ship else {
+            continue;
+        };
+
+        // In join mode: assign squad instead of selecting
+        if join_mode.0 {
+            for selected_ship in &selected_query {
+                if selected_ship != target_ship {
+                    commands.client_trigger(JoinSquadCommand {
+                        ship: selected_ship,
+                        leader: target_ship,
+                    });
+                }
+            }
+            join_mode.0 = false;
+            return;
+        }
+
+        // Normal mode: select this ship
+        for prev in &selected_query {
+            commands.entity(prev).remove::<Selected>();
+        }
+        lock_mode.0 = false;
+        target_mode.0 = false;
+        missile_mode.0 = false;
+        join_mode.0 = false;
+
+        commands.entity(target_ship).insert(Selected);
+        return;
+    }
+}
+
+// ── Squad Highlights ─────────────────────────────────────────────────────
+
+/// System that marks squad followers of the selected leader with SquadHighlight.
+fn update_squad_highlights(
+    mut commands: Commands,
+    selected_query: Query<Entity, With<Selected>>,
+    highlight_query: Query<Entity, With<SquadHighlight>>,
+    secrets_query: Query<(&ShipSecretsOwner, &SquadMember), With<ShipSecrets>>,
+) {
+    // Remove all existing highlights
+    for entity in &highlight_query {
+        commands.entity(entity).remove::<SquadHighlight>();
+    }
+
+    // Get the currently selected ship
+    let Some(selected) = selected_query.iter().next() else {
+        return;
+    };
+
+    // Find followers whose leader is the selected ship (via ShipSecrets)
+    for (owner, squad) in &secrets_query {
+        if squad.leader == selected {
+            commands.entity(owner.0).insert(SquadHighlight);
+        }
+    }
 }
