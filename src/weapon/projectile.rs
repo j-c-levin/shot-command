@@ -6,7 +6,6 @@ use serde::{Deserialize, Serialize};
 use crate::game::{GameState, Health};
 use crate::map::MapBounds;
 use crate::ship::{Ship, ShipClass};
-use crate::weapon::missile::{Missile, MissileHealth};
 
 // ── Components ──────────────────────────────────────────────────────────
 
@@ -122,33 +121,6 @@ fn check_projectile_hits(
     }
 }
 
-/// Collision radius for missiles when checking CIWS hits.
-const MISSILE_COLLISION_RADIUS: f32 = 3.0;
-
-/// Check CIWS projectile-to-missile collisions. One hit per projectile per frame.
-fn check_cwis_hits(
-    mut commands: Commands,
-    cwis_query: Query<
-        (Entity, &Transform, &ProjectileDamage),
-        (With<Projectile>, With<CwisRound>),
-    >,
-    mut missile_query: Query<(Entity, &Transform, &mut MissileHealth), With<Missile>>,
-) {
-    for (proj_entity, proj_transform, damage) in &cwis_query {
-        let proj_pos = proj_transform.translation;
-
-        for (_missile_entity, missile_transform, mut health) in &mut missile_query {
-            let dist = (proj_pos - missile_transform.translation).length();
-
-            if dist < MISSILE_COLLISION_RADIUS {
-                health.0 = health.0.saturating_sub(damage.0);
-                commands.entity(proj_entity).despawn();
-                break;
-            }
-        }
-    }
-}
-
 // ── Plugin ──────────────────────────────────────────────────────────────
 
 pub struct ProjectilePlugin;
@@ -163,7 +135,6 @@ impl Plugin for ProjectilePlugin {
                     advance_projectiles,
                     check_projectile_bounds,
                     check_projectile_hits,
-                    check_cwis_hits,
                 )
                     .chain()
                     .run_if(in_state(GameState::Playing)),

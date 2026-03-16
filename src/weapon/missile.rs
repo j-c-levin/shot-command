@@ -3,23 +3,39 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 
-use crate::game::{GameState, Health};
-use crate::map::MapBounds;
+use crate::fog::ray_blocked_by_asteroid;
+use crate::game::{GameState, Health, Team};
+use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::ship::{Ship, ShipClass, Velocity};
+
+/// Marker for explosion visual entities. Server spawns these, client materializes.
+#[derive(Component, Serialize, Deserialize)]
+pub struct Explosion;
+
+/// Timer that controls how long the explosion is visible before despawning.
+#[derive(Component, Serialize, Deserialize)]
+pub struct ExplosionTimer(pub f32);
 
 // ── Constants ──────────────────────────────────────────────────────────
 
-/// Altitude missiles reach during cruise phase (meters).
-pub const CRUISE_ALTITUDE: f32 = 60.0;
-
-/// Climb angle in radians (~45 degrees).
-pub const CLIMB_ANGLE: f32 = std::f32::consts::FRAC_PI_4;
-
-/// XZ distance to intercept point at which the missile begins diving.
-pub const DIVE_DISTANCE: f32 = 50.0;
-
-/// Half-angle of the terminal seeker cone (~30 degrees).
+/// Half-angle of the seeker cone (~30 degrees).
 pub const SEEKER_HALF_ANGLE: f32 = 0.5236;
+
+/// Maximum turn rate for missile steering (radians per second).
+/// ~90°/s gives smooth arcing turns.
+const MISSILE_TURN_RATE: f32 = std::f32::consts::FRAC_PI_2;
+
+/// Ship-level altitude that missiles cruise at.
+const SHIP_LEVEL_Y: f32 = 5.0;
+
+/// How far ahead to check for asteroid obstacles (meters).
+const OBSTACLE_LOOKAHEAD: f32 = 50.0;
+
+/// Extra clearance above asteroid radius when avoiding (meters).
+const AVOIDANCE_MARGIN: f32 = 10.0;
+
+/// Rate at which missiles correct back to ship level (Y correction factor).
+const Y_CORRECTION_RATE: f32 = 0.1;
 
 // ── Components ─────────────────────────────────────────────────────────
 
@@ -68,22 +84,22 @@ pub struct MissileFuel(pub f32);
 /// Current phase of missile flight.
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum FlightPhase {
-    /// Initial launch — climbing at ~45 degrees to cruise altitude.
-    Climb,
-    /// Level flight at cruise altitude toward intercept XZ position.
-    Cruise,
-    /// Pitching down toward ground-level intercept point.
-    Dive,
-    /// Final approach — seeker active, homing on target.
-    Terminal,
+    /// Normal forward flight at ship level, steering toward intercept point.
+    /// Arcs over asteroids in path.
+    Cruising,
+    /// Arcing over an obstacle — temporary upward trajectory.
+    Avoiding,
 }
+
+/// Height the missile must reach to clear an obstacle during avoidance.
+#[derive(Component, Serialize, Deserialize, Clone)]
+pub struct AvoidanceHeight(pub f32);
 
 // ── Pure functions ─────────────────────────────────────────────────────
 
 /// Predict where the target will be when a missile arrives.
 ///
-/// Similar to projectile lead, but accounts for ~1.3x path length due to the
-/// climb-cruise-dive arc. Uses two-iteration linear prediction.
+/// Uses two-iteration linear prediction. Path is mostly flat so arc factor is 1.0.
 pub fn compute_intercept_point(
     shooter_pos: Vec3,
     target_pos: Vec3,
@@ -94,8 +110,8 @@ pub fn compute_intercept_point(
         return target_pos;
     }
 
-    // Arc multiplier: missiles travel ~1.3x straight-line distance
-    let arc_factor = 1.3;
+    // Flat flight — no arc multiplier
+    let arc_factor = 1.0;
 
     // First estimate
     let dist = (shooter_pos - target_pos).length();
@@ -115,6 +131,40 @@ pub fn compute_intercept_point(
 /// Check whether a target position falls within a 3D seeker cone.
 ///
 /// `missile_forward` should be the normalized direction the missile is traveling.
+/// Rotate `current` direction toward `desired` direction by at most `max_angle` radians.
+/// Returns the new direction at the same speed.
+pub fn steer_toward(current: Vec3, desired: Vec3, max_angle: f32) -> Vec3 {
+    let cur_norm = current.normalize_or_zero();
+    let des_norm = desired.normalize_or_zero();
+    if cur_norm == Vec3::ZERO || des_norm == Vec3::ZERO {
+        return current;
+    }
+
+    let dot = cur_norm.dot(des_norm).clamp(-1.0, 1.0);
+    let angle = dot.acos();
+
+    if angle <= max_angle || angle < 0.001 {
+        return des_norm * current.length();
+    }
+
+    let axis = cur_norm.cross(des_norm);
+    if axis.length_squared() < 1e-8 {
+        // Nearly anti-parallel — pick an arbitrary perpendicular axis
+        let perp = if cur_norm.x.abs() < 0.9 {
+            Vec3::X
+        } else {
+            Vec3::Y
+        };
+        let axis = cur_norm.cross(perp).normalize();
+        let rotation = Quat::from_axis_angle(axis, max_angle);
+        return (rotation * cur_norm) * current.length();
+    }
+
+    let axis = axis.normalize();
+    let rotation = Quat::from_axis_angle(axis, max_angle);
+    (rotation * cur_norm) * current.length()
+}
+
 /// Returns true if the angle between forward and the direction to target is
 /// less than `cone_half_angle`.
 pub fn is_in_seeker_cone(
@@ -135,7 +185,7 @@ pub fn is_in_seeker_cone(
 
 // ── Spawning ───────────────────────────────────────────────────────────
 
-/// Spawn a replicated missile entity with initial climb velocity.
+/// Spawn a replicated missile entity with flat initial velocity at ship level.
 ///
 /// `origin` — world-space launch position.
 /// `intercept_point` — predicted ground-level intercept point.
@@ -156,21 +206,17 @@ pub fn spawn_missile(
     fuel: f32,
     owner: Entity,
 ) -> Entity {
-    // Initial climb velocity: forward XZ toward intercept + upward at climb angle
+    // Flat velocity toward intercept point at ship level
     let xz_dir = Vec2::new(
         intercept_point.x - origin.x,
         intercept_point.z - origin.z,
     )
     .normalize_or_zero();
 
-    let climb_speed_xz = speed * CLIMB_ANGLE.cos();
-    let climb_speed_y = speed * CLIMB_ANGLE.sin();
+    let velocity = Vec3::new(xz_dir.x * speed, 0.0, xz_dir.y * speed);
 
-    let velocity = Vec3::new(
-        xz_dir.x * climb_speed_xz,
-        climb_speed_y,
-        xz_dir.y * climb_speed_xz,
-    );
+    // Spawn at ship level Y
+    let spawn_pos = Vec3::new(origin.x, SHIP_LEVEL_Y, origin.z);
 
     commands
         .spawn((
@@ -184,8 +230,8 @@ pub fn spawn_missile(
             MissileDamage(damage),
             MissileOwner(owner),
             MissileFuel(fuel),
-            FlightPhase::Climb,
-            Transform::from_translation(origin),
+            FlightPhase::Cruising,
+            Transform::from_translation(spawn_pos),
             Replicated,
         ))
         .id()
@@ -206,165 +252,180 @@ fn advance_missiles(
     }
 }
 
-/// Update missile flight phases and velocities.
+/// Update missile flight: obstacle avoidance, seeker scanning, and physics-based steering.
+///
+/// Each tick, for each missile:
+/// 1. Determine desired direction based on phase (Cruising or Avoiding)
+/// 2. Check for asteroids in forward path (Cruising only) — switch to Avoiding
+/// 3. Check for Avoiding→Cruising transition when above clearance height
+/// 4. Run seeker cone on all enemy ships — acquire closest target
+/// 5. Track existing target entity if alive
+/// 6. Apply steer_toward with MISSILE_TURN_RATE * dt
 fn update_missile_flight(
-    mut query: Query<
+    mut commands: Commands,
+    time: Res<Time>,
+    mut missile_query: Query<
         (
+            Entity,
             &Transform,
             &mut MissileVelocity,
             &mut FlightPhase,
-            &MissileTarget,
+            &mut MissileTarget,
+            &MissileOwner,
+            Option<&AvoidanceHeight>,
         ),
         With<Missile>,
     >,
+    ship_query: Query<(Entity, &Transform, &Velocity, &Team), With<Ship>>,
+    team_query: Query<&Team>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
-    for (transform, mut vel, mut phase, target) in &mut query {
+    let dt = time.delta_secs();
+    let max_turn = MISSILE_TURN_RATE * dt;
+
+    // Build asteroid list for ray checks
+    let asteroids: Vec<(Vec2, f32)> = asteroid_query
+        .iter()
+        .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
+        .collect();
+
+    for (entity, transform, mut vel, mut phase, mut m_target, m_owner, avoidance) in
+        &mut missile_query
+    {
         let pos = transform.translation;
         let speed = vel.0.length();
         if speed < 0.001 {
             continue;
         }
+        let missile_forward = vel.0 / speed;
 
+        // Get missile owner's team for IFF
+        let owner_team = team_query.get(m_owner.0).ok();
+
+        // ── Phase transitions ──────────────────────────────────────────
         match *phase {
-            FlightPhase::Climb => {
-                // Transition to Cruise when reaching cruise altitude
-                if pos.y >= CRUISE_ALTITUDE {
-                    *phase = FlightPhase::Cruise;
-                    // Set level flight toward intercept XZ
-                    let xz_dir = Vec2::new(
-                        target.intercept_point.x - pos.x,
-                        target.intercept_point.z - pos.z,
-                    )
-                    .normalize_or_zero();
-                    vel.0 = Vec3::new(xz_dir.x * speed, 0.0, xz_dir.y * speed);
+            FlightPhase::Cruising => {
+                // Check for asteroid in forward path
+                let missile_xz = Vec2::new(pos.x, pos.z);
+                let forward_xz =
+                    Vec2::new(missile_forward.x, missile_forward.z).normalize_or_zero();
+                if forward_xz != Vec2::ZERO {
+                    let projected = missile_xz + forward_xz * OBSTACLE_LOOKAHEAD;
+                    if ray_blocked_by_asteroid(missile_xz, projected, &asteroids) {
+                        // Find the blocking asteroid's radius for clearance height
+                        let mut max_radius: f32 = 10.0;
+                        for &(center, radius) in &asteroids {
+                            // Check if this asteroid is roughly in our path
+                            let to_center = center - missile_xz;
+                            let proj_dist = to_center.dot(forward_xz);
+                            if proj_dist > 0.0 && proj_dist < OBSTACLE_LOOKAHEAD {
+                                let closest = missile_xz + forward_xz * proj_dist;
+                                let perp_dist = (closest - center).length();
+                                if perp_dist < radius {
+                                    max_radius = max_radius.max(radius);
+                                }
+                            }
+                        }
+                        *phase = FlightPhase::Avoiding;
+                        commands
+                            .entity(entity)
+                            .insert(AvoidanceHeight(max_radius + AVOIDANCE_MARGIN));
+                    }
                 }
             }
-            FlightPhase::Cruise => {
-                // Transition to Dive when within DIVE_DISTANCE XZ of intercept
-                let xz_dist = Vec2::new(
-                    target.intercept_point.x - pos.x,
-                    target.intercept_point.z - pos.z,
-                )
-                .length();
-
-                if xz_dist <= DIVE_DISTANCE {
-                    *phase = FlightPhase::Dive;
-                    // Pitch down toward ground-level intercept
-                    let to_intercept = Vec3::new(
-                        target.intercept_point.x - pos.x,
-                        target.intercept_point.y - pos.y,
-                        target.intercept_point.z - pos.z,
-                    )
-                    .normalize_or_zero();
-                    vel.0 = to_intercept * speed;
-                } else {
-                    // Maintain level flight, adjust XZ heading toward intercept
-                    let xz_dir = Vec2::new(
-                        target.intercept_point.x - pos.x,
-                        target.intercept_point.z - pos.z,
-                    )
-                    .normalize_or_zero();
-                    vel.0 = Vec3::new(xz_dir.x * speed, 0.0, xz_dir.y * speed);
+            FlightPhase::Avoiding => {
+                // Transition back to Cruising once above clearance height
+                let clearance = avoidance.map(|a| a.0).unwrap_or(20.0);
+                if pos.y >= clearance {
+                    *phase = FlightPhase::Cruising;
+                    commands.entity(entity).remove::<AvoidanceHeight>();
                 }
             }
-            FlightPhase::Dive => {
-                // Transition to Terminal at half DIVE_DISTANCE
-                let xz_dist = Vec2::new(
-                    target.intercept_point.x - pos.x,
-                    target.intercept_point.z - pos.z,
-                )
-                .length();
-
-                if xz_dist <= DIVE_DISTANCE * 0.5 {
-                    *phase = FlightPhase::Terminal;
-                } else {
-                    // Continue pitching toward intercept point
-                    let to_intercept = Vec3::new(
-                        target.intercept_point.x - pos.x,
-                        target.intercept_point.y - pos.y,
-                        target.intercept_point.z - pos.z,
-                    )
-                    .normalize_or_zero();
-                    vel.0 = to_intercept * speed;
-                }
-            }
-            FlightPhase::Terminal => {
-                // If we have a target entity, aim toward current target position
-                // (handled by terminal_seeker_scan updating the intercept_point)
-                let to_intercept = Vec3::new(
-                    target.intercept_point.x - pos.x,
-                    target.intercept_point.y - pos.y,
-                    target.intercept_point.z - pos.z,
-                )
-                .normalize_or_zero();
-                vel.0 = to_intercept * speed;
-            }
-        }
-    }
-}
-
-/// Terminal seeker: for missiles in Terminal phase, scan for ships in seeker cone.
-/// If the missile has a target_entity that still exists, update intercept_point to
-/// track current position. Otherwise, acquire the closest valid target in cone.
-fn terminal_seeker_scan_system(
-    mut missile_query: Query<
-        (
-            &Transform,
-            &MissileVelocity,
-            &mut MissileTarget,
-            &MissileOwner,
-            &FlightPhase,
-        ),
-        With<Missile>,
-    >,
-    ship_query: Query<(Entity, &Transform, &Velocity), With<Ship>>,
-) {
-    for (m_transform, m_vel, mut m_target, m_owner, phase) in &mut missile_query {
-        if *phase != FlightPhase::Terminal {
-            continue;
         }
 
-        let missile_pos = m_transform.translation;
-        let speed = m_vel.0.length();
-        if speed < 0.001 {
-            continue;
-        }
-        let missile_forward = m_vel.0 / speed;
-
-        // Check if existing target entity is still alive
+        // ── Seeker cone — active entire flight ─────────────────────────
+        // If we have an existing target, check if it's still alive and update
         if let Some(target_entity) = m_target.target_entity {
-            if let Ok((_, ship_transform, _)) = ship_query.get(target_entity) {
-                m_target.intercept_point = ship_transform.translation;
-                continue;
+            if let Ok((_, ship_tf, ship_vel, _)) = ship_query.get(target_entity) {
+                // Update intercept point to track the target
+                m_target.intercept_point = compute_intercept_point(
+                    pos,
+                    ship_tf.translation,
+                    ship_vel.linear,
+                    speed,
+                );
             } else {
+                // Target no longer exists
                 m_target.target_entity = None;
             }
         }
 
-        // No valid target — scan for closest ship in seeker cone
-        let mut closest_dist = f32::MAX;
-        let mut closest_entity = None;
-        let mut closest_pos = Vec3::ZERO;
+        // If no target, scan for closest enemy ship in seeker cone
+        if m_target.target_entity.is_none() {
+            let mut closest_dist = f32::MAX;
+            let mut closest_entity = None;
+            let mut closest_pos = Vec3::ZERO;
+            let mut closest_vel = Vec2::ZERO;
 
-        for (ship_entity, ship_transform, _) in &ship_query {
-            if ship_entity == m_owner.0 {
-                continue;
+            for (ship_entity, ship_tf, ship_vel, ship_team) in &ship_query {
+                // Skip own ship
+                if ship_entity == m_owner.0 {
+                    continue;
+                }
+                // Skip same-team ships
+                if let Some(ot) = owner_team {
+                    if ot == ship_team {
+                        continue;
+                    }
+                }
+
+                let ship_pos = ship_tf.translation;
+                if is_in_seeker_cone(pos, missile_forward, ship_pos, SEEKER_HALF_ANGLE) {
+                    let dist = (ship_pos - pos).length();
+                    if dist < closest_dist {
+                        closest_dist = dist;
+                        closest_entity = Some(ship_entity);
+                        closest_pos = ship_pos;
+                        closest_vel = ship_vel.linear;
+                    }
+                }
             }
 
-            let ship_pos = ship_transform.translation;
-            if is_in_seeker_cone(missile_pos, missile_forward, ship_pos, SEEKER_HALF_ANGLE) {
-                let dist = (ship_pos - missile_pos).length();
-                if dist < closest_dist {
-                    closest_dist = dist;
-                    closest_entity = Some(ship_entity);
-                    closest_pos = ship_pos;
-                }
+            if let Some(e) = closest_entity {
+                m_target.target_entity = Some(e);
+                m_target.intercept_point =
+                    compute_intercept_point(pos, closest_pos, closest_vel, speed);
             }
         }
 
-        if let Some(entity) = closest_entity {
-            m_target.target_entity = Some(entity);
-            m_target.intercept_point = closest_pos;
+        // ── Compute desired direction ──────────────────────────────────
+        let desired_dir = match *phase {
+            FlightPhase::Cruising => {
+                // Toward intercept point with gentle Y correction back to ship level
+                let to_target = m_target.intercept_point - pos;
+                let mut dir = to_target.normalize_or_zero();
+                // Gently correct Y toward ship level
+                let y_error = SHIP_LEVEL_Y - pos.y;
+                dir.y += y_error * Y_CORRECTION_RATE;
+                dir.normalize_or_zero()
+            }
+            FlightPhase::Avoiding => {
+                // Upward + forward to clear the obstacle
+                let forward_xz =
+                    Vec2::new(missile_forward.x, missile_forward.z).normalize_or_zero();
+                Vec3::new(forward_xz.x, 1.0, forward_xz.y).normalize_or_zero()
+            }
+        };
+
+        // Apply physics-based steering: rotate velocity toward desired at limited rate
+        if desired_dir != Vec3::ZERO {
+            vel.0 = steer_toward(vel.0, desired_dir * speed, max_turn);
+        }
+
+        // Maintain constant speed via thrust (re-normalize to missile speed)
+        let current_speed = vel.0.length();
+        if current_speed > 0.001 {
+            vel.0 = vel.0 * (speed / current_speed);
         }
     }
 }
@@ -379,12 +440,11 @@ fn check_missile_hits(
     >,
     mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health), With<Ship>>,
 ) {
-    for (missile_entity, missile_transform, damage, owner) in &missile_query {
+    for (missile_entity, missile_transform, _damage, owner) in &missile_query {
         let missile_pos = missile_transform.translation;
-        // Use XZ distance for collision (missiles come in from above)
         let missile_xz = Vec2::new(missile_pos.x, missile_pos.z);
 
-        for (ship_entity, ship_transform, class, mut health) in &mut ship_query {
+        for (ship_entity, ship_transform, class, _health) in &mut ship_query {
             if ship_entity == owner.0 {
                 continue;
             }
@@ -392,11 +452,11 @@ fn check_missile_hits(
             let ship_xz = Vec2::new(ship_transform.translation.x, ship_transform.translation.z);
             let dist = (missile_xz - ship_xz).length();
 
-            // Also check Y — missile must be near ground level to hit
             let y_dist = (missile_pos.y - ship_transform.translation.y).abs();
 
             if dist < class.profile().collision_radius && y_dist < class.profile().collision_radius {
-                health.hp = health.hp.saturating_sub(damage.0);
+                // TODO: re-enable damage: health.hp = health.hp.saturating_sub(damage.0);
+                spawn_explosion(&mut commands, missile_pos);
                 commands.entity(missile_entity).despawn();
                 break;
             }
@@ -404,13 +464,14 @@ fn check_missile_hits(
     }
 }
 
-/// Despawn missiles that have run out of fuel.
+/// Despawn missiles that have run out of fuel (detonate at end of range).
 fn despawn_spent_missiles(
     mut commands: Commands,
-    query: Query<(Entity, &MissileFuel), With<Missile>>,
+    query: Query<(Entity, &Transform, &MissileFuel), With<Missile>>,
 ) {
-    for (entity, fuel) in &query {
+    for (entity, transform, fuel) in &query {
         if fuel.0 <= 0.0 {
+            spawn_explosion(&mut commands, transform.translation);
             commands.entity(entity).despawn();
         }
     }
@@ -419,10 +480,11 @@ fn despawn_spent_missiles(
 /// Despawn missiles that have been destroyed by point defense.
 fn despawn_destroyed_missiles(
     mut commands: Commands,
-    query: Query<(Entity, &MissileHealth), With<Missile>>,
+    query: Query<(Entity, &Transform, &MissileHealth), With<Missile>>,
 ) {
-    for (entity, health) in &query {
+    for (entity, transform, health) in &query {
         if health.0 == 0 {
+            spawn_explosion(&mut commands, transform.translation);
             commands.entity(entity).despawn();
         }
     }
@@ -442,6 +504,33 @@ fn check_missile_bounds(
     }
 }
 
+// ── Explosions ────────────────────────────────────────────────────────
+
+/// Spawn a short-lived explosion marker at the given position.
+fn spawn_explosion(commands: &mut Commands, position: Vec3) {
+    commands.spawn((
+        Explosion,
+        ExplosionTimer(0.4),
+        Transform::from_translation(position),
+        Replicated,
+    ));
+}
+
+/// Tick explosion timers and despawn when expired.
+fn tick_explosions(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut ExplosionTimer), With<Explosion>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut timer) in &mut query {
+        timer.0 -= dt;
+        if timer.0 <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 // ── Plugin ─────────────────────────────────────────────────────────────
 
 pub struct MissilePlugin;
@@ -454,7 +543,6 @@ impl Plugin for MissilePlugin {
             (
                 advance_missiles,
                 update_missile_flight,
-                terminal_seeker_scan_system,
                 check_missile_hits,
                 despawn_spent_missiles,
                 despawn_destroyed_missiles,
@@ -462,6 +550,10 @@ impl Plugin for MissilePlugin {
             )
                 .chain()
                 .run_if(in_state(GameState::Playing)),
+        );
+        app.add_systems(
+            Update,
+            tick_explosions.run_if(in_state(GameState::Playing)),
         );
     }
 }
@@ -620,7 +712,7 @@ mod tests {
         assert!(world.get::<Transform>(missile_entity).is_some());
 
         let phase = world.get::<FlightPhase>(missile_entity).unwrap();
-        assert_eq!(*phase, FlightPhase::Climb);
+        assert_eq!(*phase, FlightPhase::Cruising);
 
         let dmg = world.get::<MissileDamage>(missile_entity).unwrap();
         assert_eq!(dmg.0, 30);
@@ -634,12 +726,15 @@ mod tests {
         let m_owner = world.get::<MissileOwner>(missile_entity).unwrap();
         assert_eq!(m_owner.0, owner);
 
+        // Spawns at ship level Y
         let transform = world.get::<Transform>(missile_entity).unwrap();
-        assert!((transform.translation - origin).length() < 0.01);
+        assert!((transform.translation.x - origin.x).abs() < 0.01);
+        assert!((transform.translation.y - SHIP_LEVEL_Y).abs() < 0.01);
+        assert!((transform.translation.z - origin.z).abs() < 0.01);
     }
 
     #[test]
-    fn spawn_missile_has_upward_velocity() {
+    fn spawn_missile_has_flat_velocity() {
         let mut world = World::new();
         let owner = world.spawn_empty().id();
 
@@ -664,10 +759,10 @@ mod tests {
         world.flush();
 
         let vel = world.get::<MissileVelocity>(missile_entity).unwrap();
-        // Should have positive Y (climbing)
+        // Should have zero Y (flat flight)
         assert!(
-            vel.0.y > 0.0,
-            "missile should have upward velocity during climb, got {:?}",
+            vel.0.y.abs() < 0.01,
+            "missile should have flat velocity (Y ≈ 0), got {:?}",
             vel.0
         );
         // Should have positive X (toward intercept)
@@ -685,59 +780,40 @@ mod tests {
         );
     }
 
-    // ── Flight phase transitions ───────────────────────────────────────
+    // ── steer_toward ──────────────────────────────────────────────────
 
     #[test]
-    fn climb_to_cruise_transition_at_altitude() {
-        // A missile at cruise altitude should transition
-        let pos_below = Vec3::new(0.0, CRUISE_ALTITUDE - 1.0, 0.0);
-        let pos_at = Vec3::new(0.0, CRUISE_ALTITUDE, 0.0);
-        let pos_above = Vec3::new(0.0, CRUISE_ALTITUDE + 1.0, 0.0);
+    fn steer_toward_small_angle_reaches_target() {
+        let current = Vec3::new(80.0, 0.0, 0.0);
+        let desired = Vec3::new(79.0, 0.0, 10.0).normalize() * 80.0;
+        let max_angle = 0.5; // ~28 degrees, more than enough
 
-        assert!(
-            pos_below.y < CRUISE_ALTITUDE,
-            "below cruise altitude: no transition"
-        );
-        assert!(
-            pos_at.y >= CRUISE_ALTITUDE,
-            "at cruise altitude: should transition"
-        );
-        assert!(
-            pos_above.y >= CRUISE_ALTITUDE,
-            "above cruise altitude: should transition"
-        );
+        let result = steer_toward(current, desired, max_angle);
+        let result_dir = result.normalize();
+        let desired_dir = desired.normalize();
+        assert!((result_dir - desired_dir).length() < 0.01);
     }
 
     #[test]
-    fn cruise_to_dive_transition_at_distance() {
-        let intercept = Vec3::new(100.0, 0.0, 0.0);
+    fn steer_toward_large_angle_is_clamped() {
+        let current = Vec3::new(80.0, 0.0, 0.0); // facing +X
+        let desired = Vec3::new(0.0, 0.0, 80.0); // facing +Z (90 degrees away)
+        let max_angle = 0.1; // ~5.7 degrees
 
-        // Far away: no transition
-        let pos_far = Vec3::new(0.0, CRUISE_ALTITUDE, 0.0);
-        let xz_dist_far = Vec2::new(intercept.x - pos_far.x, intercept.z - pos_far.z).length();
-        assert!(xz_dist_far > DIVE_DISTANCE, "far away: no transition");
-
-        // Within dive distance
-        let pos_close = Vec3::new(60.0, CRUISE_ALTITUDE, 0.0);
-        let xz_dist_close =
-            Vec2::new(intercept.x - pos_close.x, intercept.z - pos_close.z).length();
-        assert!(
-            xz_dist_close <= DIVE_DISTANCE,
-            "within dive distance: should transition"
-        );
+        let result = steer_toward(current, desired, max_angle);
+        // Should have turned, but not reached desired
+        let angle_to_desired = result.normalize().dot(desired.normalize()).acos();
+        assert!(angle_to_desired > 0.05, "should not have reached desired direction");
+        // But should have turned from original
+        let angle_from_original = result.normalize().dot(current.normalize()).acos();
+        assert!((angle_from_original - max_angle).abs() < 0.01, "should have turned exactly max_angle");
     }
 
     #[test]
-    fn dive_to_terminal_at_half_dive_distance() {
-        let intercept = Vec3::new(100.0, 0.0, 0.0);
-
-        // At half dive distance
-        let threshold = DIVE_DISTANCE * 0.5;
-        let pos = Vec3::new(100.0 - threshold + 1.0, 30.0, 0.0);
-        let xz_dist = Vec2::new(intercept.x - pos.x, intercept.z - pos.z).length();
-        assert!(
-            xz_dist <= threshold,
-            "within half dive distance: should transition to terminal"
-        );
+    fn steer_toward_preserves_speed() {
+        let current = Vec3::new(80.0, 0.0, 0.0);
+        let desired = Vec3::new(0.0, 80.0, 0.0);
+        let result = steer_toward(current, desired, 0.2);
+        assert!((result.length() - 80.0).abs() < 0.1);
     }
 }

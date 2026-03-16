@@ -20,8 +20,8 @@ use crate::ship::{
 };
 use crate::weapon::{MissileQueue, Mounts};
 use crate::weapon::missile::{
-    FlightPhase, Missile, MissileDamage, MissileFuel, MissileHealth, MissileOwner, MissileTarget,
-    MissileVelocity,
+    AvoidanceHeight, Explosion, ExplosionTimer, FlightPhase, Missile, MissileDamage, MissileFuel,
+    MissileHealth, MissileOwner, MissileTarget, MissileVelocity,
 };
 use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
@@ -55,7 +55,10 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<MissileDamage>()
             .replicate::<MissileOwner>()
             .replicate::<MissileFuel>()
-            .replicate::<FlightPhase>();
+            .replicate::<FlightPhase>()
+            .replicate::<AvoidanceHeight>()
+            .replicate::<Explosion>()
+            .replicate::<ExplosionTimer>();
 
         // ShipSecrets entity components (team-private state)
         app.replicate::<ShipSecrets>()
