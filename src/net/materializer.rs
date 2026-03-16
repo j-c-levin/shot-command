@@ -5,7 +5,24 @@ use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation};
-use crate::weapon::missile::{Explosion, Missile, MissileVelocity};
+use crate::weapon::missile::{
+    Explosion, Missile, MissileVelocity, SEEKER_HALF_ANGLE, SEEKER_MAX_RANGE,
+};
+
+/// Toggle for debug visualizations (seeker cones, PD ranges, etc).
+/// Press F3 to toggle at runtime.
+#[derive(Resource)]
+pub struct DebugVisuals(pub bool);
+
+impl Default for DebugVisuals {
+    fn default() -> Self {
+        Self(false)
+    }
+}
+
+/// Marker for the seeker cone visual child.
+#[derive(Component)]
+pub struct SeekerConeVisual;
 use crate::weapon::pd::{LaserBeam, LaserBeamTarget};
 use crate::weapon::projectile::Projectile;
 
@@ -234,6 +251,88 @@ pub fn materialize_explosions(
                 MeshMaterial3d(material),
                 Transform::IDENTITY,
             ));
+    }
+}
+
+// ── Debug Visuals ───────────────────────────────────────────────────────
+
+/// Toggle debug visuals on F3.
+pub fn toggle_debug_visuals(keys: Res<ButtonInput<KeyCode>>, mut dbg_vis: ResMut<DebugVisuals>) {
+    if keys.just_pressed(KeyCode::F3) {
+        dbg_vis.0 = !dbg_vis.0;
+        info!("Debug visuals: {}", if dbg_vis.0 { "ON" } else { "OFF" });
+    }
+}
+
+/// Spawn seeker cone children on new missiles when debug visuals are enabled.
+pub fn spawn_debug_seeker_cones(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    dbg_vis: Res<DebugVisuals>,
+    query: Query<(Entity, &MissileVelocity), Added<Missile>>,
+) {
+    if !dbg_vis.0 {
+        return;
+    }
+
+    for (entity, velocity) in &query {
+        let cone_radius = SEEKER_HALF_ANGLE.tan() * SEEKER_MAX_RANGE;
+        let seeker_mesh = meshes.add(Cone {
+            radius: cone_radius,
+            height: SEEKER_MAX_RANGE,
+        });
+        let seeker_material = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.0, 1.0, 0.5, 0.08),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            cull_mode: None,
+            ..default()
+        });
+
+        let vel_dir = velocity.0.normalize_or_zero();
+        let rotation = if vel_dir != Vec3::ZERO {
+            Quat::from_rotation_arc(Vec3::NEG_Y, vel_dir)
+        } else {
+            Quat::IDENTITY
+        };
+
+        commands.entity(entity).with_child((
+            SeekerConeVisual,
+            Mesh3d(seeker_mesh),
+            MeshMaterial3d(seeker_material),
+            Transform {
+                translation: vel_dir * (SEEKER_MAX_RANGE / 2.0),
+                rotation,
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+    }
+}
+
+/// Update seeker cone orientation to match parent missile's velocity each frame.
+pub fn update_debug_seeker_cones(
+    dbg_vis: Res<DebugVisuals>,
+    missile_query: Query<(&MissileVelocity, &Children), With<Missile>>,
+    mut cone_query: Query<&mut Transform, With<SeekerConeVisual>>,
+) {
+    if !dbg_vis.0 {
+        return;
+    }
+
+    for (vel, children) in &missile_query {
+        let dir = vel.0.normalize_or_zero();
+        if dir == Vec3::ZERO {
+            continue;
+        }
+        let flip = Quat::from_rotation_arc(Vec3::NEG_Y, dir);
+        for child in children.iter() {
+            if let Ok(mut tf) = cone_query.get_mut(child) {
+                tf.rotation = flip;
+                tf.translation = dir * (SEEKER_MAX_RANGE / 2.0);
+            }
+        }
     }
 }
 
