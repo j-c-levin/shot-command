@@ -184,24 +184,57 @@ pub fn compute_zoom(
 }
 
 /// Zoom system: adjusts camera height and re-orients to maintain look-at point.
-/// Uses the explicit CameraLookAt resource (not forward vector) to avoid drift.
+/// Zoom in targets the cursor ground point. Zoom out uses existing look-at.
 fn camera_zoom(
     scroll: Res<AccumulatedMouseScroll>,
     settings: Res<CameraSettings>,
+    windows: Query<&Window>,
     mut look_at: ResMut<CameraLookAt>,
-    mut query: Query<&mut Transform, With<GameCamera>>,
+    mut cam_query: Query<(&mut Transform, &Camera, &GlobalTransform), With<GameCamera>>,
 ) {
     if scroll.delta.y.abs() < 0.001 {
         return;
     }
 
-    let Ok(mut transform) = query.single_mut() else {
+    let Ok((mut transform, camera, global_tf)) = cam_query.single_mut() else {
         return;
+    };
+
+    let zooming_in = scroll.delta.y > 0.0;
+
+    // For zoom-in: use cursor ground point as the anchor (zoom toward mouse)
+    // For zoom-out: use current look-at (zoom out centers on map via compute_zoom)
+    let anchor = if zooming_in {
+        let cursor_ground = windows
+            .single()
+            .ok()
+            .and_then(|w| w.cursor_position())
+            .and_then(|cursor_pos| {
+                camera.viewport_to_world(global_tf, cursor_pos).ok()
+            })
+            .and_then(|ray| {
+                let dir = ray.direction.as_vec3();
+                if dir.y.abs() < 0.001 {
+                    return None;
+                }
+                let t = -ray.origin.y / dir.y;
+                if t < 0.0 {
+                    return None;
+                }
+                Some(Vec3::new(
+                    ray.origin.x + dir.x * t,
+                    0.0,
+                    ray.origin.z + dir.z * t,
+                ))
+            });
+        cursor_ground.unwrap_or(look_at.0)
+    } else {
+        look_at.0
     };
 
     let Some((new_pos, new_look)) = compute_zoom(
         transform.translation,
-        look_at.0,
+        anchor,
         scroll.delta.y,
         settings.min_zoom,
         settings.max_zoom,
