@@ -232,7 +232,7 @@ fn camera_zoom(
         look_at.0
     };
 
-    let Some((new_pos, new_look)) = compute_zoom(
+    let Some((new_pos, _)) = compute_zoom(
         transform.translation,
         anchor,
         scroll.delta.y,
@@ -242,9 +242,13 @@ fn camera_zoom(
         return;
     };
 
+    // Compute the actual ground look-at from the new position, preserving the
+    // camera's current viewing direction (forward vector stays the same).
+    let cam_forward = transform.forward().as_vec3();
     transform.translation = new_pos;
-    look_at.0 = new_look;
-    transform.look_at(new_look, Vec3::Y);
+    let actual_look = camera_look_ground(new_pos, cam_forward);
+    look_at.0 = actual_look;
+    transform.look_at(actual_look, Vec3::Y);
 }
 
 fn camera_rotate(
