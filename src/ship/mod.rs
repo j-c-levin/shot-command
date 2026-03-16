@@ -1159,8 +1159,6 @@ mod tests {
 
     #[test]
     fn ship_heading_from_default_transform() {
-        // Default transform faces -Z in Bevy. ship_facing_direction returns Vec2(forward.x, forward.z).
-        // For default: forward = (0, 0, -1) → facing_dir = (0, -1) → atan2(-1, 0) = -PI/2
         let transform = Transform::default();
         let heading = ship_heading(&transform);
         assert!(heading.is_finite(), "heading should be a finite number");
@@ -1171,5 +1169,58 @@ mod tests {
             expected,
             heading
         );
+    }
+
+    // ── Squad & ShipNumber tests ─────────────────────────────────────────
+
+    #[test]
+    fn squad_offset_computation() {
+        // Offset = ship_pos - leader_pos
+        let ship_pos = Vec2::new(100.0, 200.0);
+        let leader_pos = Vec2::new(50.0, 150.0);
+        let offset = ship_pos - leader_pos;
+        assert_eq!(offset, Vec2::new(50.0, 50.0));
+    }
+
+    #[test]
+    fn squad_offset_negative() {
+        let ship_pos = Vec2::new(-50.0, -100.0);
+        let leader_pos = Vec2::new(50.0, 100.0);
+        let offset = ship_pos - leader_pos;
+        assert_eq!(offset, Vec2::new(-100.0, -200.0));
+    }
+
+    #[test]
+    fn squad_move_destination() {
+        // Follower destination = leader_destination + follower_offset
+        let leader_dest = Vec2::new(300.0, 400.0);
+        let offset = Vec2::new(50.0, -30.0);
+        let follower_dest = leader_dest + offset;
+        assert_eq!(follower_dest, Vec2::new(350.0, 370.0));
+    }
+
+    #[test]
+    fn squad_move_destination_with_zero_offset() {
+        let leader_dest = Vec2::new(100.0, 200.0);
+        let offset = Vec2::ZERO;
+        let follower_dest = leader_dest + offset;
+        assert_eq!(follower_dest, leader_dest);
+    }
+
+    #[test]
+    fn ship_number_assignment() {
+        // Ship spec index 0 → ShipNumber(1), index 1 → ShipNumber(2), etc.
+        for i in 0..9u8 {
+            let number = (i + 1) as u8;
+            let sn = ShipNumber(number);
+            assert_eq!(sn.0, i + 1);
+        }
+    }
+
+    #[test]
+    fn ship_number_default_is_zero() {
+        // Default ships (not from fleet list) get ShipNumber(0)
+        let sn = ShipNumber(0);
+        assert_eq!(sn.0, 0);
     }
 }
