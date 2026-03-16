@@ -4,7 +4,9 @@ use crate::game::Team;
 use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
-use crate::ship::{Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation};
+use crate::ship::{
+    Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, SquadMember, TargetDesignation,
+};
 use crate::weapon::missile::{
     Explosion, Missile, MissileVelocity, SEEKER_HALF_ANGLE, SEEKER_MAX_RANGE,
 };
@@ -79,6 +81,72 @@ pub fn materialize_ships(
             "Materialized {:?} ship for team {} (own={})",
             class, team.0, is_own_team
         );
+    }
+}
+
+/// Marker for ship number label entities (UI text positioned via world-to-screen projection).
+#[derive(Component)]
+pub struct ShipNumberLabel {
+    pub owner: Entity,
+}
+
+/// System that creates/updates floating number labels above friendly ships.
+/// Reads ShipNumber from ShipSecrets (team-private). Uses world-to-screen
+/// projection to position UI text nodes over ship positions.
+pub fn update_ship_number_labels(
+    mut commands: Commands,
+    local_team: Res<LocalTeam>,
+    secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
+    ship_query: Query<(&Transform, &Team), With<Ship>>,
+    label_query: Query<(Entity, &ShipNumberLabel)>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    // Despawn all existing labels
+    for (entity, _) in &label_query {
+        commands.entity(entity).despawn();
+    }
+
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+
+    let Ok((camera, camera_gt)) = camera_query.single() else {
+        return;
+    };
+
+    for (owner, ship_number) in &secrets_query {
+        if ship_number.0 == 0 {
+            continue;
+        }
+        let Ok((transform, team)) = ship_query.get(owner.0) else {
+            continue;
+        };
+        if *team != my_team {
+            continue;
+        }
+
+        // Project world position to screen coordinates (label floats above ship)
+        let world_pos = transform.translation + Vec3::Y * 20.0;
+        let Ok(screen_pos) = camera.world_to_viewport(camera_gt, world_pos) else {
+            continue;
+        };
+
+        commands.spawn((
+            ShipNumberLabel { owner: owner.0 },
+            Text::new(format!("{}", ship_number.0)),
+            TextFont {
+                font_size: 22.0,
+                ..default()
+            },
+            TextColor(Color::srgba(0.8, 0.95, 1.0, 0.85)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(screen_pos.x - 6.0),
+                top: Val::Px(screen_pos.y - 14.0),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
     }
 }
 

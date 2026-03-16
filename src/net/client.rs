@@ -42,6 +42,7 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::materialize_laser_beams,
                 super::materializer::update_laser_beam_meshes,
                 super::materializer::update_target_indicators,
+                super::materializer::update_ship_number_labels,
                 super::materializer::toggle_debug_visuals,
                 super::materializer::spawn_debug_seeker_cones,
                 super::materializer::update_debug_seeker_cones,
