@@ -13,11 +13,11 @@ use crate::map::{Asteroid, AsteroidSize};
 use crate::net::commands::{
     CancelMissilesCommand, CancelSubmission, ClearTargetCommand, FacingLockCommand,
     FacingUnlockCommand, FireMissileCommand, FleetSubmission, GameResult, GameStarted,
-    LobbyStatus, MoveCommand, TargetCommand, TeamAssignment,
+    JoinSquadCommand, LobbyStatus, MoveCommand, TargetCommand, TeamAssignment,
 };
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
-    WaypointQueue,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    SquadMember, TargetDesignation, WaypointQueue,
 };
 use crate::weapon::{MissileQueue, Mounts};
 use crate::weapon::missile::{
@@ -69,7 +69,9 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<FacingTarget>()
             .replicate::<FacingLocked>()
             .replicate::<TargetDesignation>()
-            .replicate::<MissileQueue>();
+            .replicate::<MissileQueue>()
+            .replicate::<ShipNumber>()
+            .replicate::<SquadMember>();
 
         // ── Client→server triggers ─────────────────────────────────────
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
@@ -79,6 +81,7 @@ impl Plugin for SharedReplicationPlugin {
             .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered)
             .add_mapped_client_event::<FireMissileCommand>(Channel::Ordered)
             .add_mapped_client_event::<CancelMissilesCommand>(Channel::Ordered)
+            .add_mapped_client_event::<JoinSquadCommand>(Channel::Ordered)
             .add_mapped_client_event::<FleetSubmission>(Channel::Ordered)
             .add_mapped_client_event::<CancelSubmission>(Channel::Ordered);
 

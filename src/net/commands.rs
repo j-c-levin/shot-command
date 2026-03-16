@@ -69,6 +69,15 @@ pub struct CancelMissilesCommand {
     pub ship: Entity,
 }
 
+/// Client → server: join a ship to a squad led by another ship.
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
+pub struct JoinSquadCommand {
+    #[entities]
+    pub ship: Entity,
+    #[entities]
+    pub leader: Entity,
+}
+
 /// Server → client: tells the client which team it controls.
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct TeamAssignment {

@@ -250,6 +250,25 @@ pub struct FacingLocked;
 #[derive(Component, Clone, Debug, Serialize, Deserialize, MapEntities)]
 pub struct TargetDesignation(#[entities] pub Entity);
 
+/// Numeric identifier for a ship within its team (1-9).
+/// Used for number-key selection. Replicated via ShipSecrets.
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct ShipNumber(pub u8);
+
+/// Marks a ship as a squad follower. The `leader` entity is the squad leader,
+/// and `offset` is the XZ position offset from the leader at the time of joining.
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+pub struct SquadMember {
+    pub leader: Entity,
+    pub offset: Vec2,
+}
+
+impl MapEntities for SquadMember {
+    fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, mapper: &mut M) {
+        self.leader = mapper.get_mapped(self.leader);
+    }
+}
+
 #[derive(Component)]
 pub struct Selected;
 
@@ -718,6 +737,7 @@ pub fn spawn_server_ship(
     position: Vec2,
     team: Team,
     spec: &crate::fleet::ShipSpec,
+    ship_number: u8,
 ) -> Entity {
     let class = spec.class;
     let layout = class.mount_layout();
@@ -751,6 +771,7 @@ pub fn spawn_server_ship(
             Velocity::default(),
             WaypointQueue::default(),
             MissileQueue::default(),
+            ShipNumber(ship_number),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: class.profile().hp },
             Mounts(mounts),
@@ -765,6 +786,7 @@ pub fn spawn_server_ship(
         Replicated,
         WaypointQueue::default(),
         MissileQueue::default(),
+        ShipNumber(ship_number),
     ));
 
     ship_entity
@@ -782,7 +804,7 @@ pub fn spawn_server_ship_default(
         class,
         loadout: class.default_loadout(),
     };
-    spawn_server_ship(commands, position, team, &spec)
+    spawn_server_ship(commands, position, team, &spec, 0)
 }
 
 // ── Visual Indicators ───────────────────────────────────────────────────

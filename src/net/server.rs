@@ -23,12 +23,13 @@ use crate::game::{GameState, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, MoveCommand, TargetCommand, TeamAssignment,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, TargetCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
-    WaypointQueue, ship_xz_position, spawn_server_ship, spawn_server_ship_default,
+    FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    SquadMember, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
+    spawn_server_ship_default,
 };
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
@@ -239,7 +240,7 @@ fn server_setup_game(
             for (i, spec) in specs.iter().enumerate() {
                 let offset = perp * (i as f32 - (specs.len() as f32 - 1.0) / 2.0) * ship_spacing;
                 let pos = *corner + offset;
-                let entity = spawn_server_ship(&mut commands, pos, *team, spec);
+                let entity = spawn_server_ship(&mut commands, pos, *team, spec, (i + 1) as u8);
                 info!(
                     "Spawned {:?} for Team {} at ({:.0}, {:.0}): {:?}",
                     spec.class, team.0, pos.x, pos.y, entity
@@ -253,6 +254,7 @@ fn server_setup_game(
                     perp * (i as f32 - (default_classes.len() as f32 - 1.0) / 2.0) * ship_spacing;
                 let pos = *corner + offset;
                 let entity = spawn_server_ship_default(&mut commands, pos, *team, *class);
+                // Note: default ships get ShipNumber(0) via spawn_server_ship_default
                 info!(
                     "Spawned default {:?} for Team {} at ({:.0}, {:.0}): {:?}",
                     class, team.0, pos.x, pos.y, entity
@@ -688,6 +690,7 @@ fn sync_ship_secrets(
             Option<&FacingLocked>,
             Option<&TargetDesignation>,
             &MissileQueue,
+            Option<&SquadMember>,
         ),
         With<Ship>,
     >,
@@ -697,7 +700,7 @@ fn sync_ship_secrets(
     >,
 ) {
     for (secrets_entity, owner, mut secrets_waypoints, mut secrets_missiles) in &mut secrets_query {
-        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles)) =
+        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles, ship_squad)) =
             ship_query.get(owner.0)
         else {
             continue;
@@ -730,6 +733,13 @@ fn sync_ship_secrets(
             commands
                 .entity(secrets_entity)
                 .remove::<TargetDesignation>();
+        }
+
+        // Sync SquadMember: insert or remove on the ShipSecrets entity
+        if let Some(squad) = ship_squad {
+            commands.entity(secrets_entity).insert(squad.clone());
+        } else {
+            commands.entity(secrets_entity).remove::<SquadMember>();
         }
     }
 }
