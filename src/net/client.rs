@@ -40,6 +40,7 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::materialize_missiles,
                 super::materializer::materialize_explosions,
                 super::materializer::materialize_laser_beams,
+                super::materializer::update_laser_beam_meshes,
                 super::materializer::update_target_indicators,
                 super::materializer::toggle_debug_visuals,
                 super::materializer::spawn_debug_seeker_cones,

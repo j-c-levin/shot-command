@@ -105,35 +105,63 @@ fn camera_pan(
 }
 
 /// Supreme Commander-style zoom: scroll zooms toward the point on the ground
-/// plane (Y=0) under the camera's look target. Zoom in moves toward that point,
-/// zoom out pulls back from it.
+/// plane (Y=0) under the mouse cursor. Zoom in pulls toward cursor, zoom out
+/// pushes away from cursor.
 fn camera_zoom(
     scroll: Res<AccumulatedMouseScroll>,
     settings: Res<CameraSettings>,
-    mut query: Query<&mut Transform, With<GameCamera>>,
+    windows: Query<&Window>,
+    mut cam_query: Query<(&mut Transform, &Camera, &GlobalTransform), With<GameCamera>>,
 ) {
     if scroll.delta.y.abs() < 0.001 {
         return;
     }
 
-    let Ok(mut transform) = query.single_mut() else {
+    let Ok(window) = windows.single() else {
+        return;
+    };
+    let Ok((mut transform, camera, global_tf)) = cam_query.single_mut() else {
         return;
     };
 
-    // Find where the camera ray hits the ground plane (Y=0)
-    let forward = transform.forward().as_vec3();
-    let ground_target = if forward.y.abs() > 0.001 {
-        let dist = transform.translation.y / (-forward.y).max(0.001);
-        transform.translation + forward * dist
-    } else {
-        Vec3::ZERO
-    };
+    // Get mouse cursor position → ray → ground plane intersection
+    let cursor_pos = window.cursor_position().unwrap_or(Vec2::new(
+        window.width() / 2.0,
+        window.height() / 2.0,
+    ));
+
+    let ground_target = camera
+        .viewport_to_world(global_tf, cursor_pos)
+        .ok()
+        .and_then(|ray| {
+            // Intersect ray with Y=0 plane
+            let ray_origin = ray.origin;
+            let ray_dir = ray.direction.as_vec3();
+            if ray_dir.y.abs() < 0.001 {
+                return None;
+            }
+            let t = -ray_origin.y / ray_dir.y;
+            if t < 0.0 {
+                return None;
+            }
+            Some(ray_origin + ray_dir * t)
+        })
+        .unwrap_or_else(|| {
+            // Fallback: use camera forward intersection with ground
+            let forward = transform.forward().as_vec3();
+            if forward.y.abs() > 0.001 {
+                let dist = transform.translation.y / (-forward.y).max(0.001);
+                transform.translation + forward * dist
+            } else {
+                Vec3::ZERO
+            }
+        });
 
     // Zoom factor — multiplicative for smooth feel at all distances
     let zoom_factor = 1.0 - scroll.delta.y * 0.1;
     let zoom_factor = zoom_factor.clamp(0.8, 1.2);
 
-    // Move camera toward/away from ground target
+    // Move camera toward/away from cursor ground point
     let offset = transform.translation - ground_target;
     let new_offset = offset * zoom_factor;
     let new_pos = ground_target + new_offset;

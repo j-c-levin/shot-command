@@ -182,23 +182,20 @@ pub fn materialize_missiles(
     }
 }
 
-/// Materialize laser beam entities as thin bright lines from origin to target.
+/// Marker for the laser beam mesh child so we can update it each frame.
+#[derive(Component)]
+pub struct LaserBeamMesh;
+
+/// Materialize laser beam entities with a unit cuboid that gets scaled each frame.
 pub fn materialize_laser_beams(
     mut commands: Commands,
     mut meshes: ResMut<Assets<Mesh>>,
     mut materials: ResMut<Assets<StandardMaterial>>,
-    query: Query<(Entity, &Transform, &LaserBeamTarget), Added<LaserBeam>>,
+    query: Query<Entity, Added<LaserBeam>>,
 ) {
-    for (entity, transform, beam_target) in &query {
-        let origin = transform.translation;
-        let target = beam_target.0;
-        let midpoint = (origin + target) / 2.0;
-        let diff = target - origin;
-        let length = diff.length();
-        let dir = diff.normalize_or_zero();
-
-        // Thin cuboid stretched between the two points
-        let beam_mesh = meshes.add(Cuboid::new(0.3, 0.3, length));
+    for entity in &query {
+        // Unit-length cuboid — scaled to beam length each frame
+        let beam_mesh = meshes.add(Cuboid::new(0.3, 0.3, 1.0));
         let beam_material = materials.add(StandardMaterial {
             base_color: Color::srgb(0.5, 1.0, 0.5),
             emissive: LinearRgba::new(2.0, 8.0, 2.0, 1.0),
@@ -206,22 +203,45 @@ pub fn materialize_laser_beams(
             ..default()
         });
 
-        // Orient the cuboid (Z-axis by default) to point along the beam direction
-        let rotation = if dir != Vec3::ZERO {
-            Quat::from_rotation_arc(Vec3::Z, dir)
-        } else {
-            Quat::IDENTITY
-        };
-
         commands
             .entity(entity)
             .insert(Visibility::Visible)
             .with_child((
+                LaserBeamMesh,
                 Mesh3d(beam_mesh),
                 MeshMaterial3d(beam_material),
-                Transform::from_translation(midpoint - origin).with_rotation(rotation),
+                Transform::IDENTITY,
                 Pickable::IGNORE,
             ));
+    }
+}
+
+/// Update laser beam mesh to stretch between origin (parent Transform) and target each frame.
+pub fn update_laser_beam_meshes(
+    beam_query: Query<(&Transform, &LaserBeamTarget, &Children), With<LaserBeam>>,
+    mut mesh_query: Query<&mut Transform, (With<LaserBeamMesh>, Without<LaserBeam>)>,
+) {
+    for (beam_tf, beam_target, children) in &beam_query {
+        let origin = beam_tf.translation;
+        let target = beam_target.0;
+        let diff = target - origin;
+        let length = diff.length();
+        let dir = diff.normalize_or_zero();
+
+        if length < 0.01 || dir == Vec3::ZERO {
+            continue;
+        }
+
+        let rotation = Quat::from_rotation_arc(Vec3::Z, dir);
+        let midpoint_offset = dir * (length / 2.0);
+
+        for child in children.iter() {
+            if let Ok(mut mesh_tf) = mesh_query.get_mut(child) {
+                mesh_tf.translation = midpoint_offset;
+                mesh_tf.rotation = rotation;
+                mesh_tf.scale = Vec3::new(1.0, 1.0, length);
+            }
+        }
     }
 }
 

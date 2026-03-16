@@ -19,6 +19,14 @@ pub struct LaserBeamTarget(pub Vec3);
 /// Remaining time before the beam despawns.
 #[derive(Component, Serialize, Deserialize, Clone)]
 pub struct LaserBeamTimer(pub f32);
+
+/// Server-only: the missile entity this beam is tracking (not replicated).
+#[derive(Component)]
+pub struct LaserBeamTracking(pub Entity);
+
+/// Server-only: the ship entity the beam originates from (not replicated).
+#[derive(Component)]
+pub struct LaserBeamOrigin(pub Entity);
 use crate::weapon::projectile::{
     CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity,
 };
@@ -108,12 +116,14 @@ fn laser_pd_fire(
             if let Some(target_entity) = closest_entity {
                 let target_pos = missile_query.get(target_entity).unwrap().1.translation;
 
-                // Spawn visible laser beam from ship to missile
+                // Spawn visible laser beam from ship to missile (tracks both endpoints)
                 let beam_origin = ship_pos + Vec3::new(0.0, 5.0, 0.0);
                 commands.spawn((
                     LaserBeam,
                     LaserBeamTarget(target_pos),
                     LaserBeamTimer(0.3),
+                    LaserBeamTracking(target_entity),
+                    LaserBeamOrigin(ship_entity),
                     Transform::from_translation(beam_origin),
                     Replicated,
                 ));
@@ -253,6 +263,30 @@ fn cwis_fire(
     }
 }
 
+/// Update laser beam endpoints to track the missile and ship each frame.
+fn update_laser_beams(
+    mut commands: Commands,
+    mut beam_query: Query<
+        (Entity, &mut Transform, &mut LaserBeamTarget, &LaserBeamTracking, &LaserBeamOrigin),
+        With<LaserBeam>,
+    >,
+    transform_query: Query<&Transform, Without<LaserBeam>>,
+) {
+    for (beam_entity, mut beam_tf, mut beam_target, tracking, origin) in &mut beam_query {
+        // Update origin to ship's current position
+        if let Ok(ship_tf) = transform_query.get(origin.0) {
+            beam_tf.translation = ship_tf.translation + Vec3::new(0.0, 5.0, 0.0);
+        }
+        // Update target to missile's current position (if still alive)
+        if let Ok(missile_tf) = transform_query.get(tracking.0) {
+            beam_target.0 = missile_tf.translation;
+        } else {
+            // Missile gone — despawn beam
+            commands.entity(beam_entity).despawn();
+        }
+    }
+}
+
 /// Tick laser beam timers and despawn expired beams.
 fn tick_laser_beams(
     mut commands: Commands,
@@ -282,7 +316,9 @@ impl Plugin for PdPlugin {
         );
         app.add_systems(
             Update,
-            tick_laser_beams.run_if(in_state(GameState::Playing)),
+            (update_laser_beams, tick_laser_beams)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
         );
     }
 }
