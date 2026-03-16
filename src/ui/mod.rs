@@ -24,6 +24,7 @@ impl Plugin for FleetUiPlugin {
                     handle_add_ship_button,
                     handle_ship_entry_click,
                     handle_remove_ship_button,
+                    handle_clone_ship_button,
                     handle_ship_picker_option,
                     handle_change_weapon_button,
                     handle_remove_weapon_button,

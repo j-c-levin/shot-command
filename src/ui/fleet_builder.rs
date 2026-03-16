@@ -90,6 +90,9 @@ pub struct ShipEntry(pub usize);
 pub struct RemoveShipButton(pub usize);
 
 #[derive(Component)]
+pub struct CloneShipButton(pub usize);
+
+#[derive(Component)]
 pub struct ShipPickerOption(pub ShipClass);
 
 #[derive(Component)]
@@ -317,7 +320,7 @@ pub fn rebuild_fleet_list(
                 ))
                 .with_children(|entry| {
                     entry.spawn((
-                        Text::new(format!("{:?} ({}pts)", spec.class, cost)),
+                        Text::new(format!("{}. {:?} ({}pts)", i + 1, spec.class, cost)),
                         TextFont {
                             font_size: 16.0,
                             ..default()
@@ -325,25 +328,51 @@ pub fn rebuild_fleet_list(
                         TextColor(TEXT_WHITE),
                     ));
 
-                    // Remove button (small X)
+                    // Button group (clone + remove)
                     entry
-                        .spawn((
-                            RemoveShipButton(i),
-                            Button,
-                            Node {
-                                padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
-                                ..default()
-                            },
-                            BackgroundColor(Color::srgb(0.6, 0.15, 0.15)),
-                        ))
-                        .with_child((
-                            Text::new("X"),
-                            TextFont {
-                                font_size: 14.0,
-                                ..default()
-                            },
-                            TextColor(TEXT_WHITE),
-                        ));
+                        .spawn(Node {
+                            column_gap: Val::Px(4.0),
+                            ..default()
+                        })
+                        .with_children(|btns| {
+                            // Clone button
+                            btns.spawn((
+                                CloneShipButton(i),
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.2, 0.3, 0.5)),
+                            ))
+                            .with_child((
+                                Text::new("C"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(TEXT_WHITE),
+                            ));
+
+                            // Remove button (small X)
+                            btns.spawn((
+                                RemoveShipButton(i),
+                                Button,
+                                Node {
+                                    padding: UiRect::axes(Val::Px(8.0), Val::Px(4.0)),
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.6, 0.15, 0.15)),
+                            ))
+                            .with_child((
+                                Text::new("X"),
+                                TextFont {
+                                    font_size: 14.0,
+                                    ..default()
+                                },
+                                TextColor(TEXT_WHITE),
+                            ));
+                        });
                 });
         }
 
@@ -840,6 +869,21 @@ pub fn handle_remove_ship_button(
                     }
                     _ => {}
                 }
+            }
+        }
+    }
+}
+
+pub fn handle_clone_ship_button(
+    query: Query<(&Interaction, &CloneShipButton), (Changed<Interaction>, With<Button>)>,
+    mut state: ResMut<FleetBuilderState>,
+) {
+    for (interaction, btn) in &query {
+        if *interaction == Interaction::Pressed && !state.submitted {
+            let idx = btn.0;
+            if let Some(spec) = state.ships.get(idx).cloned() {
+                state.ships.push(spec);
+                state.selected_ship = Some(state.ships.len() - 1);
             }
         }
     }
