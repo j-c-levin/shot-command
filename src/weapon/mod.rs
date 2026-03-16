@@ -15,6 +15,23 @@ pub enum MountSize {
     Small,
 }
 
+impl MountSize {
+    /// Numeric rank for size comparison: Large=2, Medium=1, Small=0.
+    pub fn rank(self) -> u8 {
+        match self {
+            MountSize::Large => 2,
+            MountSize::Medium => 1,
+            MountSize::Small => 0,
+        }
+    }
+
+    /// Returns true if this mount slot can hold a weapon of the given size.
+    /// A slot fits weapons of its own size or smaller.
+    pub fn fits(self, weapon_size: MountSize) -> bool {
+        self.rank() >= weapon_size.rank()
+    }
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WeaponCategory {
     Cannon,
@@ -314,6 +331,27 @@ mod tests {
         assert_eq!(WeaponType::LightVLS.mount_size(), MountSize::Medium);
         assert_eq!(WeaponType::LaserPD.mount_size(), MountSize::Medium);
         assert_eq!(WeaponType::CWIS.mount_size(), MountSize::Small);
+    }
+
+    #[test]
+    fn mount_size_fits_same_size() {
+        assert!(MountSize::Large.fits(MountSize::Large));
+        assert!(MountSize::Medium.fits(MountSize::Medium));
+        assert!(MountSize::Small.fits(MountSize::Small));
+    }
+
+    #[test]
+    fn mount_size_fits_smaller() {
+        assert!(MountSize::Large.fits(MountSize::Medium));
+        assert!(MountSize::Large.fits(MountSize::Small));
+        assert!(MountSize::Medium.fits(MountSize::Small));
+    }
+
+    #[test]
+    fn mount_size_rejects_larger() {
+        assert!(!MountSize::Small.fits(MountSize::Medium));
+        assert!(!MountSize::Small.fits(MountSize::Large));
+        assert!(!MountSize::Medium.fits(MountSize::Large));
     }
 
     #[test]
