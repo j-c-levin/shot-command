@@ -35,12 +35,12 @@ const ALL_SHIP_CLASSES: [ShipClass; 3] = [
 ];
 
 const ALL_WEAPONS: [WeaponType; 7] = [
-    WeaponType::HeavyCannon,
-    WeaponType::Cannon,
     WeaponType::Railgun,
     WeaponType::HeavyVLS,
-    WeaponType::LightVLS,
+    WeaponType::HeavyCannon,
     WeaponType::LaserPD,
+    WeaponType::LightVLS,
+    WeaponType::Cannon,
     WeaponType::CWIS,
 ];
 

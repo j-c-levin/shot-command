@@ -22,22 +22,22 @@ pub const FLEET_BUDGET: u16 = 1000;
 /// Point cost of a ship hull (no weapons).
 pub fn hull_cost(class: ShipClass) -> u16 {
     match class {
-        ShipClass::Battleship => 375,
-        ShipClass::Destroyer => 150,
-        ShipClass::Scout => 45,
+        ShipClass::Battleship => 450,
+        ShipClass::Destroyer => 200,
+        ShipClass::Scout => 140,
     }
 }
 
 /// Point cost of a single weapon.
 pub fn weapon_cost(weapon: WeaponType) -> u16 {
     match weapon {
-        WeaponType::HeavyCannon => 30,
-        WeaponType::Cannon => 15,
-        WeaponType::Railgun => 40,
-        WeaponType::HeavyVLS => 35,
-        WeaponType::LightVLS => 20,
-        WeaponType::LaserPD => 25,
-        WeaponType::CWIS => 10,
+        WeaponType::HeavyCannon => 40,
+        WeaponType::Cannon => 20,
+        WeaponType::Railgun => 50,
+        WeaponType::HeavyVLS => 45,
+        WeaponType::LightVLS => 25,
+        WeaponType::LaserPD => 30,
+        WeaponType::CWIS => 15,
     }
 }
 
@@ -124,57 +124,57 @@ mod tests {
 
     #[test]
     fn hull_cost_battleship() {
-        assert_eq!(hull_cost(ShipClass::Battleship), 375);
+        assert_eq!(hull_cost(ShipClass::Battleship), 450);
     }
 
     #[test]
     fn hull_cost_destroyer() {
-        assert_eq!(hull_cost(ShipClass::Destroyer), 150);
+        assert_eq!(hull_cost(ShipClass::Destroyer), 200);
     }
 
     #[test]
     fn hull_cost_scout() {
-        assert_eq!(hull_cost(ShipClass::Scout), 45);
+        assert_eq!(hull_cost(ShipClass::Scout), 140);
     }
 
     #[test]
     fn weapon_cost_heavy_cannon() {
-        assert_eq!(weapon_cost(WeaponType::HeavyCannon), 30);
+        assert_eq!(weapon_cost(WeaponType::HeavyCannon), 40);
     }
 
     #[test]
     fn weapon_cost_railgun() {
-        assert_eq!(weapon_cost(WeaponType::Railgun), 40);
+        assert_eq!(weapon_cost(WeaponType::Railgun), 50);
     }
 
     #[test]
     fn weapon_cost_heavy_vls() {
-        assert_eq!(weapon_cost(WeaponType::HeavyVLS), 35);
+        assert_eq!(weapon_cost(WeaponType::HeavyVLS), 45);
     }
 
     #[test]
     fn weapon_cost_cannon() {
-        assert_eq!(weapon_cost(WeaponType::Cannon), 15);
+        assert_eq!(weapon_cost(WeaponType::Cannon), 20);
     }
 
     #[test]
     fn weapon_cost_light_vls() {
-        assert_eq!(weapon_cost(WeaponType::LightVLS), 20);
+        assert_eq!(weapon_cost(WeaponType::LightVLS), 25);
     }
 
     #[test]
     fn weapon_cost_laser_pd() {
-        assert_eq!(weapon_cost(WeaponType::LaserPD), 25);
+        assert_eq!(weapon_cost(WeaponType::LaserPD), 30);
     }
 
     #[test]
     fn weapon_cost_cwis() {
-        assert_eq!(weapon_cost(WeaponType::CWIS), 10);
+        assert_eq!(weapon_cost(WeaponType::CWIS), 15);
     }
 
     #[test]
     fn ship_spec_cost_full_destroyer() {
-        // Destroyer(150) + Railgun(40) + Cannon(15) + LaserPD(25) + CWIS(10) = 240
+        // Destroyer(200) + Railgun(50) + Cannon(20) + LaserPD(30) + CWIS(15) = 315
         let spec = ShipSpec {
             class: ShipClass::Destroyer,
             loadout: vec![
@@ -184,22 +184,22 @@ mod tests {
                 Some(WeaponType::CWIS),
             ],
         };
-        assert_eq!(ship_spec_cost(&spec), 240);
+        assert_eq!(ship_spec_cost(&spec), 315);
     }
 
     #[test]
     fn ship_spec_cost_empty_slots() {
-        // Scout(45) with no weapons
+        // Scout(140) with no weapons
         let spec = ShipSpec {
             class: ShipClass::Scout,
             loadout: vec![None, None],
         };
-        assert_eq!(ship_spec_cost(&spec), 45);
+        assert_eq!(ship_spec_cost(&spec), 140);
     }
 
     #[test]
     fn fleet_cost_multiple_ships() {
-        // Battleship(375) + Scout(45) with Cannon(15) + CWIS(10) = 445
+        // Battleship(450) + Scout(140) with Cannon(20) + CWIS(15) = 625
         let specs = vec![
             ShipSpec {
                 class: ShipClass::Battleship,
@@ -210,7 +210,7 @@ mod tests {
                 loadout: vec![Some(WeaponType::Cannon), Some(WeaponType::CWIS)],
             },
         ];
-        assert_eq!(fleet_cost(&specs), 445);
+        assert_eq!(fleet_cost(&specs), 625);
     }
 
     #[test]
@@ -235,16 +235,15 @@ mod tests {
 
     #[test]
     fn validate_over_budget() {
-        // 4 battleships = 4 * 375 = 1500 > 1000
+        // 3 battleships = 3 * 450 = 1350 > 1000
         let specs = vec![
-            ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
             ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
             ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
             ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
         ];
         assert_eq!(
             validate_fleet(&specs),
-            Err(FleetError::OverBudget { cost: 1500, budget: 1000 })
+            Err(FleetError::OverBudget { cost: 1350, budget: 1000 })
         );
     }
 
