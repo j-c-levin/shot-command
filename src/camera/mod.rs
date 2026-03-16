@@ -104,77 +104,67 @@ fn camera_pan(
     }
 }
 
-/// Supreme Commander-style zoom: scroll zooms toward the point on the ground
-/// plane (Y=0) under the mouse cursor. Zoom in pulls toward cursor, zoom out
-/// pushes away from cursor.
+/// Supreme Commander-style zoom:
+/// - Scroll up: zoom in toward the ground point under the cursor
+/// - Scroll down: zoom out, pulling toward map center so max zoom sees everything
+///
+/// Algorithm: record ground point under cursor BEFORE zoom, change camera height,
+/// then pan so the same ground point stays under the cursor (zoom in only).
 fn camera_zoom(
     scroll: Res<AccumulatedMouseScroll>,
     settings: Res<CameraSettings>,
-    windows: Query<&Window>,
-    mut cam_query: Query<(&mut Transform, &Camera, &GlobalTransform), With<GameCamera>>,
+    mut query: Query<&mut Transform, With<GameCamera>>,
 ) {
     if scroll.delta.y.abs() < 0.001 {
         return;
     }
 
-    let Ok(window) = windows.single() else {
-        return;
-    };
-    let Ok((mut transform, camera, global_tf)) = cam_query.single_mut() else {
+    let Ok(mut transform) = query.single_mut() else {
         return;
     };
 
-    // Get mouse cursor position → ray → ground plane intersection
-    let cursor_pos = window.cursor_position().unwrap_or(Vec2::new(
-        window.width() / 2.0,
-        window.height() / 2.0,
-    ));
-
-    let ground_target = camera
-        .viewport_to_world(global_tf, cursor_pos)
-        .ok()
-        .and_then(|ray| {
-            // Intersect ray with Y=0 plane
-            let ray_origin = ray.origin;
-            let ray_dir = ray.direction.as_vec3();
-            if ray_dir.y.abs() < 0.001 {
-                return None;
-            }
-            let t = -ray_origin.y / ray_dir.y;
-            if t < 0.0 {
-                return None;
-            }
-            Some(ray_origin + ray_dir * t)
-        })
-        .unwrap_or_else(|| {
-            // Fallback: use camera forward intersection with ground
-            let forward = transform.forward().as_vec3();
-            if forward.y.abs() > 0.001 {
-                let dist = transform.translation.y / (-forward.y).max(0.001);
-                transform.translation + forward * dist
-            } else {
-                Vec3::ZERO
-            }
-        });
-
-    // Zoom factor — multiplicative for smooth feel at all distances
-    let zoom_factor = 1.0 - scroll.delta.y * 0.1;
-    let zoom_factor = zoom_factor.clamp(0.8, 1.2);
-
-    // Zoom in: toward cursor. Zoom out: toward map center (so max zoom shows whole map).
     let zooming_in = scroll.delta.y > 0.0;
-    let anchor = if zooming_in {
-        ground_target
+
+    // Current height and look-at point (where camera forward hits Y=0)
+    let forward = transform.forward().as_vec3();
+    let look_ground = if forward.y.abs() > 0.001 {
+        let t = transform.translation.y / (-forward.y);
+        if t > 0.0 {
+            transform.translation + forward * t
+        } else {
+            Vec3::ZERO
+        }
     } else {
-        Vec3::ZERO // map center
+        Vec3::ZERO
     };
 
-    let offset = transform.translation - anchor;
-    let new_offset = offset * zoom_factor;
-    let new_pos = anchor + new_offset;
+    // Zoom: adjust height by a percentage
+    let zoom_speed = if zooming_in { 0.85 } else { 1.15 };
+    let old_height = transform.translation.y;
+    let new_height = (old_height * zoom_speed).clamp(settings.min_zoom, settings.max_zoom);
 
-    if new_pos.y > settings.min_zoom && new_pos.y < settings.max_zoom {
-        transform.translation = new_pos;
+    if (new_height - old_height).abs() < 0.01 {
+        return;
+    }
+
+    let height_ratio = new_height / old_height;
+
+    if zooming_in {
+        // Zoom in: keep the look-at ground point fixed, move camera closer to it
+        // Camera XZ moves toward look_ground by the same ratio as height shrinks
+        let new_x = look_ground.x + (transform.translation.x - look_ground.x) * height_ratio;
+        let new_z = look_ground.z + (transform.translation.z - look_ground.z) * height_ratio;
+        transform.translation = Vec3::new(new_x, new_height, new_z);
+    } else {
+        // Zoom out: pull camera XZ toward map center (0, 0) so max zoom centers the map
+        // Blend toward center: as we zoom out, gradually pull XZ toward origin
+        // so max zoom centers on the map
+        let center_blend = ((new_height - settings.min_zoom)
+            / (settings.max_zoom - settings.min_zoom))
+            .clamp(0.0, 1.0);
+        let final_x = transform.translation.x * (1.0 - center_blend * 0.1);
+        let final_z = transform.translation.z * (1.0 - center_blend * 0.1);
+        transform.translation = Vec3::new(final_x, new_height, final_z);
     }
 }
 
