@@ -26,9 +26,9 @@ pub struct ProjectileDamage(pub u16);
 #[derive(Component, Serialize, Deserialize, MapEntities, Clone)]
 pub struct ProjectileOwner(#[entities] pub Entity);
 
-/// Marker for CIWS rounds. These only damage missiles, not ships.
+/// CWIS tracer round with remaining lifetime in seconds. These only damage missiles, not ships.
 #[derive(Component, Serialize, Deserialize)]
-pub struct CwisRound;
+pub struct CwisRound(pub f32);
 
 // ── Spawning ────────────────────────────────────────────────────────────
 
@@ -72,6 +72,21 @@ fn advance_projectiles(
     let dt = time.delta_secs();
     for (mut transform, vel) in &mut query {
         transform.translation += vel.0 * dt;
+    }
+}
+
+/// Despawn CWIS tracer rounds after their lifetime expires.
+fn despawn_cwis_rounds(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut CwisRound), With<Projectile>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut round) in &mut query {
+        round.0 -= dt;
+        if round.0 <= 0.0 {
+            commands.entity(entity).despawn();
+        }
     }
 }
 
@@ -133,6 +148,7 @@ impl Plugin for ProjectilePlugin {
                 Update,
                 (
                     advance_projectiles,
+                    despawn_cwis_rounds,
                     check_projectile_bounds,
                     check_projectile_hits,
                 )

@@ -3,7 +3,6 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 
-use crate::fog::ray_blocked_by_asteroid;
 use crate::game::{GameState, Health, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::ship::{Ship, ShipClass, Velocity};
@@ -21,6 +20,10 @@ pub struct ExplosionTimer(pub f32);
 /// Half-angle of the seeker cone (~30 degrees).
 pub const SEEKER_HALF_ANGLE: f32 = 0.5236;
 
+/// Maximum range at which the seeker can acquire targets (meters).
+/// Prevents missiles from locking onto distant targets immediately after launch.
+const SEEKER_MAX_RANGE: f32 = 100.0;
+
 /// Maximum turn rate for missile steering (radians per second).
 /// ~90°/s gives smooth arcing turns.
 const MISSILE_TURN_RATE: f32 = std::f32::consts::FRAC_PI_2;
@@ -29,13 +32,13 @@ const MISSILE_TURN_RATE: f32 = std::f32::consts::FRAC_PI_2;
 const SHIP_LEVEL_Y: f32 = 5.0;
 
 /// How far ahead to check for asteroid obstacles (meters).
-const OBSTACLE_LOOKAHEAD: f32 = 50.0;
+const OBSTACLE_LOOKAHEAD: f32 = 100.0;
 
 /// Extra clearance above asteroid radius when avoiding (meters).
-const AVOIDANCE_MARGIN: f32 = 10.0;
+const AVOIDANCE_MARGIN: f32 = 5.0;
 
 /// Rate at which missiles correct back to ship level (Y correction factor).
-const Y_CORRECTION_RATE: f32 = 0.1;
+const Y_CORRECTION_RATE: f32 = 0.5;
 
 // ── Components ─────────────────────────────────────────────────────────
 
@@ -80,20 +83,6 @@ pub struct MissileOwner(#[entities] pub Entity);
 /// Remaining fuel in meters of travel distance.
 #[derive(Component, Serialize, Deserialize, Clone)]
 pub struct MissileFuel(pub f32);
-
-/// Current phase of missile flight.
-#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum FlightPhase {
-    /// Normal forward flight at ship level, steering toward intercept point.
-    /// Arcs over asteroids in path.
-    Cruising,
-    /// Arcing over an obstacle — temporary upward trajectory.
-    Avoiding,
-}
-
-/// Height the missile must reach to clear an obstacle during avoidance.
-#[derive(Component, Serialize, Deserialize, Clone)]
-pub struct AvoidanceHeight(pub f32);
 
 // ── Pure functions ─────────────────────────────────────────────────────
 
@@ -183,6 +172,43 @@ pub fn is_in_seeker_cone(
     cos_angle >= cone_half_angle.cos()
 }
 
+/// Compute desired Y altitude based on proximity to asteroids.
+///
+/// Returns `SHIP_LEVEL_Y` normally, higher when near an asteroid in the forward path.
+/// Uses a smooth quadratic arc: missile gradually lifts as it approaches, peaks just
+/// above the asteroid, and settles back down after passing. No phase transitions needed.
+pub fn compute_avoidance_y(pos: Vec3, forward_xz: Vec2, asteroids: &[(Vec2, f32)]) -> f32 {
+    let missile_xz = Vec2::new(pos.x, pos.z);
+    let mut desired_y = SHIP_LEVEL_Y;
+    let fwd_norm = forward_xz.normalize_or_zero();
+    if fwd_norm == Vec2::ZERO {
+        return desired_y;
+    }
+
+    for &(center, radius) in asteroids {
+        let to_center = center - missile_xz;
+        let dist = to_center.length();
+        let clearance = radius + AVOIDANCE_MARGIN;
+
+        // Only care about asteroids we're heading toward
+        let dot = to_center.normalize_or_zero().dot(fwd_norm);
+        if dot < 0.0 {
+            continue; // behind us
+        }
+
+        if dist < clearance + OBSTACLE_LOOKAHEAD {
+            // Smooth parabolic arc: peak at asteroid center, taper at edges
+            let t = 1.0 - (dist / (clearance + OBSTACLE_LOOKAHEAD)).clamp(0.0, 1.0);
+            let arc_y = SHIP_LEVEL_Y + clearance * t * t * 4.0; // quadratic peak
+            // Cap so it doesn't go too high
+            let arc_y = arc_y.min(SHIP_LEVEL_Y + clearance);
+            desired_y = desired_y.max(arc_y);
+        }
+    }
+
+    desired_y
+}
+
 // ── Spawning ───────────────────────────────────────────────────────────
 
 /// Spawn a replicated missile entity with flat initial velocity at ship level.
@@ -230,7 +256,6 @@ pub fn spawn_missile(
             MissileDamage(damage),
             MissileOwner(owner),
             MissileFuel(fuel),
-            FlightPhase::Cruising,
             Transform::from_translation(spawn_pos),
             Replicated,
         ))
@@ -252,27 +277,21 @@ fn advance_missiles(
     }
 }
 
-/// Update missile flight: obstacle avoidance, seeker scanning, and physics-based steering.
+/// Update missile flight: reactive obstacle avoidance, seeker scanning, and physics-based steering.
 ///
 /// Each tick, for each missile:
-/// 1. Determine desired direction based on phase (Cruising or Avoiding)
-/// 2. Check for asteroids in forward path (Cruising only) — switch to Avoiding
-/// 3. Check for Avoiding→Cruising transition when above clearance height
-/// 4. Run seeker cone on all enemy ships — acquire closest target
-/// 5. Track existing target entity if alive
-/// 6. Apply steer_toward with MISSILE_TURN_RATE * dt
+/// 1. Compute desired altitude via `compute_avoidance_y` (smooth arc over nearby asteroids)
+/// 2. Run seeker cone on all enemy ships — acquire closest target
+/// 3. Track existing target entity if alive
+/// 4. Apply steer_toward with MISSILE_TURN_RATE * dt
 fn update_missile_flight(
-    mut commands: Commands,
     time: Res<Time>,
     mut missile_query: Query<
         (
-            Entity,
             &Transform,
             &mut MissileVelocity,
-            &mut FlightPhase,
             &mut MissileTarget,
             &MissileOwner,
-            Option<&AvoidanceHeight>,
         ),
         With<Missile>,
     >,
@@ -283,15 +302,13 @@ fn update_missile_flight(
     let dt = time.delta_secs();
     let max_turn = MISSILE_TURN_RATE * dt;
 
-    // Build asteroid list for ray checks
+    // Build asteroid list for avoidance checks
     let asteroids: Vec<(Vec2, f32)> = asteroid_query
         .iter()
         .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
         .collect();
 
-    for (entity, transform, mut vel, mut phase, mut m_target, m_owner, avoidance) in
-        &mut missile_query
-    {
+    for (transform, mut vel, mut m_target, m_owner) in &mut missile_query {
         let pos = transform.translation;
         let speed = vel.0.length();
         if speed < 0.001 {
@@ -301,47 +318,6 @@ fn update_missile_flight(
 
         // Get missile owner's team for IFF
         let owner_team = team_query.get(m_owner.0).ok();
-
-        // ── Phase transitions ──────────────────────────────────────────
-        match *phase {
-            FlightPhase::Cruising => {
-                // Check for asteroid in forward path
-                let missile_xz = Vec2::new(pos.x, pos.z);
-                let forward_xz =
-                    Vec2::new(missile_forward.x, missile_forward.z).normalize_or_zero();
-                if forward_xz != Vec2::ZERO {
-                    let projected = missile_xz + forward_xz * OBSTACLE_LOOKAHEAD;
-                    if ray_blocked_by_asteroid(missile_xz, projected, &asteroids) {
-                        // Find the blocking asteroid's radius for clearance height
-                        let mut max_radius: f32 = 10.0;
-                        for &(center, radius) in &asteroids {
-                            // Check if this asteroid is roughly in our path
-                            let to_center = center - missile_xz;
-                            let proj_dist = to_center.dot(forward_xz);
-                            if proj_dist > 0.0 && proj_dist < OBSTACLE_LOOKAHEAD {
-                                let closest = missile_xz + forward_xz * proj_dist;
-                                let perp_dist = (closest - center).length();
-                                if perp_dist < radius {
-                                    max_radius = max_radius.max(radius);
-                                }
-                            }
-                        }
-                        *phase = FlightPhase::Avoiding;
-                        commands
-                            .entity(entity)
-                            .insert(AvoidanceHeight(max_radius + AVOIDANCE_MARGIN));
-                    }
-                }
-            }
-            FlightPhase::Avoiding => {
-                // Transition back to Cruising once above clearance height
-                let clearance = avoidance.map(|a| a.0).unwrap_or(20.0);
-                if pos.y >= clearance {
-                    *phase = FlightPhase::Cruising;
-                    commands.entity(entity).remove::<AvoidanceHeight>();
-                }
-            }
-        }
 
         // ── Seeker cone — active entire flight ─────────────────────────
         // If we have an existing target, check if it's still alive and update
@@ -380,8 +356,11 @@ fn update_missile_flight(
                 }
 
                 let ship_pos = ship_tf.translation;
+                let dist = (ship_pos - pos).length();
+                if dist > SEEKER_MAX_RANGE {
+                    continue;
+                }
                 if is_in_seeker_cone(pos, missile_forward, ship_pos, SEEKER_HALF_ANGLE) {
-                    let dist = (ship_pos - pos).length();
                     if dist < closest_dist {
                         closest_dist = dist;
                         closest_entity = Some(ship_entity);
@@ -398,24 +377,16 @@ fn update_missile_flight(
             }
         }
 
-        // ── Compute desired direction ──────────────────────────────────
-        let desired_dir = match *phase {
-            FlightPhase::Cruising => {
-                // Toward intercept point with gentle Y correction back to ship level
-                let to_target = m_target.intercept_point - pos;
-                let mut dir = to_target.normalize_or_zero();
-                // Gently correct Y toward ship level
-                let y_error = SHIP_LEVEL_Y - pos.y;
-                dir.y += y_error * Y_CORRECTION_RATE;
-                dir.normalize_or_zero()
-            }
-            FlightPhase::Avoiding => {
-                // Upward + forward to clear the obstacle
-                let forward_xz =
-                    Vec2::new(missile_forward.x, missile_forward.z).normalize_or_zero();
-                Vec3::new(forward_xz.x, 1.0, forward_xz.y).normalize_or_zero()
-            }
-        };
+        // ── Compute desired direction with reactive avoidance ──────────
+        let forward_xz = Vec2::new(missile_forward.x, missile_forward.z).normalize_or_zero();
+        let desired_y = compute_avoidance_y(pos, forward_xz, &asteroids);
+
+        let to_target = m_target.intercept_point - pos;
+        let mut desired_dir = to_target.normalize_or_zero();
+        // Override Y component to achieve desired altitude
+        let y_error = desired_y - pos.y;
+        desired_dir.y = y_error * Y_CORRECTION_RATE;
+        desired_dir = desired_dir.normalize_or_zero();
 
         // Apply physics-based steering: rotate velocity toward desired at limited rate
         if desired_dir != Vec3::ZERO {
@@ -431,22 +402,31 @@ fn update_missile_flight(
 }
 
 /// Check missile-to-ship collisions. Apply damage and despawn missile on hit.
-/// Skips the ship that fired the missile, but friendly fire IS possible.
-fn check_missile_hits(
+/// Skips same-team ships (missiles don't friendly-fire).
+/// Public so PD systems can order themselves before this.
+pub fn check_missile_hits(
     mut commands: Commands,
     missile_query: Query<
         (Entity, &Transform, &MissileDamage, &MissileOwner),
         With<Missile>,
     >,
-    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health), With<Ship>>,
+    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health, &Team), With<Ship>>,
+    team_query: Query<&Team>,
 ) {
     for (missile_entity, missile_transform, _damage, owner) in &missile_query {
         let missile_pos = missile_transform.translation;
         let missile_xz = Vec2::new(missile_pos.x, missile_pos.z);
+        let owner_team = team_query.get(owner.0).ok();
 
-        for (ship_entity, ship_transform, class, _health) in &mut ship_query {
+        for (ship_entity, ship_transform, class, _health, ship_team) in &mut ship_query {
+            // Skip own ship and same-team ships
             if ship_entity == owner.0 {
                 continue;
+            }
+            if let Some(ot) = owner_team {
+                if ot == ship_team {
+                    continue;
+                }
             }
 
             let ship_xz = Vec2::new(ship_transform.translation.x, ship_transform.translation.z);
@@ -471,20 +451,7 @@ fn despawn_spent_missiles(
 ) {
     for (entity, transform, fuel) in &query {
         if fuel.0 <= 0.0 {
-            spawn_explosion(&mut commands, transform.translation);
-            commands.entity(entity).despawn();
-        }
-    }
-}
-
-/// Despawn missiles that have been destroyed by point defense.
-fn despawn_destroyed_missiles(
-    mut commands: Commands,
-    query: Query<(Entity, &Transform, &MissileHealth), With<Missile>>,
-) {
-    for (entity, transform, health) in &query {
-        if health.0 == 0 {
-            spawn_explosion(&mut commands, transform.translation);
+            spawn_small_explosion(&mut commands, transform.translation);
             commands.entity(entity).despawn();
         }
     }
@@ -506,12 +473,22 @@ fn check_missile_bounds(
 
 // ── Explosions ────────────────────────────────────────────────────────
 
-/// Spawn a short-lived explosion marker at the given position.
-fn spawn_explosion(commands: &mut Commands, position: Vec3) {
+/// Spawn a short-lived explosion marker at the given position (ship impact — bright, full-size).
+pub fn spawn_explosion(commands: &mut Commands, position: Vec3) {
     commands.spawn((
         Explosion,
         ExplosionTimer(0.4),
         Transform::from_translation(position),
+        Replicated,
+    ));
+}
+
+/// Spawn a smaller, dimmer explosion for PD kills and fuel depletion (mid-air destruction).
+pub fn spawn_small_explosion(commands: &mut Commands, position: Vec3) {
+    commands.spawn((
+        Explosion,
+        ExplosionTimer(0.25),
+        Transform::from_translation(position).with_scale(Vec3::splat(0.5)),
         Replicated,
     ));
 }
@@ -545,7 +522,6 @@ impl Plugin for MissilePlugin {
                 update_missile_flight,
                 check_missile_hits,
                 despawn_spent_missiles,
-                despawn_destroyed_missiles,
                 check_missile_bounds,
             )
                 .chain()
@@ -708,11 +684,7 @@ mod tests {
         assert!(world.get::<MissileDamage>(missile_entity).is_some());
         assert!(world.get::<MissileOwner>(missile_entity).is_some());
         assert!(world.get::<MissileFuel>(missile_entity).is_some());
-        assert!(world.get::<FlightPhase>(missile_entity).is_some());
         assert!(world.get::<Transform>(missile_entity).is_some());
-
-        let phase = world.get::<FlightPhase>(missile_entity).unwrap();
-        assert_eq!(*phase, FlightPhase::Cruising);
 
         let dmg = world.get::<MissileDamage>(missile_entity).unwrap();
         assert_eq!(dmg.0, 30);
@@ -807,6 +779,37 @@ mod tests {
         // But should have turned from original
         let angle_from_original = result.normalize().dot(current.normalize()).acos();
         assert!((angle_from_original - max_angle).abs() < 0.01, "should have turned exactly max_angle");
+    }
+
+    // ── compute_avoidance_y ─────────────────────────────────────────
+
+    #[test]
+    fn avoidance_y_no_asteroids_returns_ship_level() {
+        let pos = Vec3::new(50.0, SHIP_LEVEL_Y, 50.0);
+        let forward = Vec2::new(1.0, 0.0);
+        let asteroids: Vec<(Vec2, f32)> = vec![];
+        let y = compute_avoidance_y(pos, forward, &asteroids);
+        assert!((y - SHIP_LEVEL_Y).abs() < 0.01, "should return SHIP_LEVEL_Y with no asteroids");
+    }
+
+    #[test]
+    fn avoidance_y_asteroid_ahead_lifts() {
+        let pos = Vec3::new(0.0, SHIP_LEVEL_Y, 0.0);
+        let forward = Vec2::new(1.0, 0.0);
+        // Asteroid 50m ahead, radius 20
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 20.0)];
+        let y = compute_avoidance_y(pos, forward, &asteroids);
+        assert!(y > SHIP_LEVEL_Y, "should lift above SHIP_LEVEL_Y when asteroid is ahead, got {}", y);
+    }
+
+    #[test]
+    fn avoidance_y_asteroid_behind_ignored() {
+        let pos = Vec3::new(100.0, SHIP_LEVEL_Y, 0.0);
+        let forward = Vec2::new(1.0, 0.0);
+        // Asteroid behind us at x=50
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 20.0)];
+        let y = compute_avoidance_y(pos, forward, &asteroids);
+        assert!((y - SHIP_LEVEL_Y).abs() < 0.01, "should ignore asteroid behind us");
     }
 
     #[test]

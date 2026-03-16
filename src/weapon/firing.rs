@@ -224,43 +224,46 @@ pub fn process_missile_queue(
 
             let profile = weapon.weapon_type.profile();
 
-            // Pop the first queued entry
-            let entry = queue.0.remove(0);
+            // Fire 1 missile per mount per tick (rapid fire until queue drained)
+            {
+                let entry = queue.0.remove(0);
 
-            // Compute intercept point
-            let intercept = if let Some(target_entity) = entry.target_entity {
-                if let Ok((target_transform, target_velocity)) =
-                    target_query.get(target_entity)
-                {
-                    compute_intercept_point(
-                        ship_transform.translation,
-                        target_transform.translation,
-                        target_velocity.linear,
-                        profile.projectile_speed,
-                    )
+                // Compute intercept point
+                let intercept = if let Some(target_entity) = entry.target_entity {
+                    if let Ok((target_transform, target_velocity)) =
+                        target_query.get(target_entity)
+                    {
+                        compute_intercept_point(
+                            ship_transform.translation,
+                            target_transform.translation,
+                            target_velocity.linear,
+                            profile.projectile_speed,
+                        )
+                    } else {
+                        Vec3::new(entry.target_point.x, 0.0, entry.target_point.y)
+                    }
                 } else {
                     Vec3::new(entry.target_point.x, 0.0, entry.target_point.y)
-                }
-            } else {
-                Vec3::new(entry.target_point.x, 0.0, entry.target_point.y)
-            };
+                };
 
-            let origin = ship_transform.translation + Vec3::new(0.0, 5.0, 0.0);
+                let origin = ship_transform.translation + Vec3::new(0.0, 5.0, 0.0);
 
-            spawn_missile(
-                &mut commands,
-                origin,
-                intercept,
-                entry.target_entity,
-                profile.projectile_speed,
-                profile.damage,
-                profile.missile_hp,
-                profile.missile_fuel,
-                ship_entity,
-            );
+                spawn_missile(
+                    &mut commands,
+                    origin,
+                    intercept,
+                    entry.target_entity,
+                    profile.projectile_speed,
+                    profile.damage,
+                    profile.missile_hp,
+                    profile.missile_fuel,
+                    ship_entity,
+                );
+            }
 
-            // Reset cooldown
-            mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = profile.fire_rate_secs;
+            // Always use short inter-tube delay — VLS is a rapid-fire tube system
+            // with no full reload between salvos.
+            mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = 0.15;
         }
     }
 }
