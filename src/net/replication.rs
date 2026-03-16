@@ -11,8 +11,9 @@ use bevy_replicon::prelude::*;
 use crate::game::{Health, Team};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::commands::{
-    CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, GameResult, MoveCommand, TargetCommand, TeamAssignment,
+    CancelMissilesCommand, CancelSubmission, ClearTargetCommand, FacingLockCommand,
+    FacingUnlockCommand, FireMissileCommand, FleetSubmission, GameResult, GameStarted,
+    LobbyStatus, MoveCommand, TargetCommand, TeamAssignment,
 };
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
@@ -77,10 +78,14 @@ impl Plugin for SharedReplicationPlugin {
             .add_mapped_client_event::<TargetCommand>(Channel::Ordered)
             .add_mapped_client_event::<ClearTargetCommand>(Channel::Ordered)
             .add_mapped_client_event::<FireMissileCommand>(Channel::Ordered)
-            .add_mapped_client_event::<CancelMissilesCommand>(Channel::Ordered);
+            .add_mapped_client_event::<CancelMissilesCommand>(Channel::Ordered)
+            .add_mapped_client_event::<FleetSubmission>(Channel::Ordered)
+            .add_mapped_client_event::<CancelSubmission>(Channel::Ordered);
 
         // ── Server→client triggers ─────────────────────────────────────
         app.add_server_event::<TeamAssignment>(Channel::Ordered);
         app.add_server_event::<GameResult>(Channel::Ordered);
+        app.add_server_event::<LobbyStatus>(Channel::Ordered);
+        app.add_server_event::<GameStarted>(Channel::Ordered);
     }
 }
