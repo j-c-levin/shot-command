@@ -163,6 +163,7 @@ fn setup_renet_server(
 /// can only receive messages and replication after authorization.
 fn on_client_connected(
     trigger: On<Add, AuthorizedClient>,
+    mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
@@ -179,20 +180,22 @@ fn on_client_connected(
         client_teams.map.len()
     );
 
-    // Don't send TeamAssignment here — it's sent after fleet spawning in
-    // server_setup_game so clients receive it after entities are replicated.
+    // Send TeamAssignment immediately so client can transition to FleetComposition
+    commands.server_trigger(ToClients {
+        mode: SendMode::Direct(ClientId::Client(client_entity)),
+        message: TeamAssignment { team },
+    });
 
-    // After 2 clients connected, transition to Playing
+    // After 2 clients connected, transition to FleetComposition on server
     if client_teams.map.len() >= 2 {
-        info!("Both players connected, transitioning to Playing");
-        next_state.set(GameState::Playing);
+        info!("Both players connected, transitioning to FleetComposition");
+        next_state.set(GameState::FleetComposition);
     }
 }
 
 /// Spawn symmetric fleets for each team when entering Playing state.
-/// Also inserts MapBounds and sends TeamAssignment to all clients
-/// (deferred until after spawning so entities replicate before clients act).
-fn server_setup_game(mut commands: Commands, client_teams: Res<ClientTeams>) {
+/// Also inserts MapBounds. TeamAssignment is sent on connect (before fleet composition).
+fn server_setup_game(mut commands: Commands) {
     // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
     commands.insert_resource(MapBounds {
         half_extents: Vec2::splat(500.0),
@@ -258,14 +261,6 @@ fn server_setup_game(mut commands: Commands, client_teams: Res<ClientTeams>) {
             Transform::from_xyz(pos.x, 0.0, pos.y),
             Replicated,
         ));
-    }
-
-    // Send TeamAssignment to every connected client now that entities exist.
-    for (&client_entity, &team) in &client_teams.map {
-        commands.server_trigger(ToClients {
-            mode: SendMode::Direct(ClientId::Client(client_entity)),
-            message: TeamAssignment { team },
-        });
     }
 
     info!(
