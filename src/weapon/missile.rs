@@ -22,7 +22,7 @@ pub const SEEKER_HALF_ANGLE: f32 = 0.5236;
 
 /// Maximum range at which the seeker can acquire targets (meters).
 /// Prevents missiles from locking onto distant targets immediately after launch.
-const SEEKER_MAX_RANGE: f32 = 100.0;
+pub const SEEKER_MAX_RANGE: f32 = 100.0;
 
 /// Maximum turn rate for missile steering (radians per second).
 /// ~90°/s gives smooth arcing turns.
@@ -183,23 +183,32 @@ pub fn compute_avoidance_y(pos: Vec3, forward_xz: Vec2, asteroids: &[(Vec2, f32)
 
     for &(center, radius) in asteroids {
         let to_center = center - missile_xz;
-        let dist = to_center.length();
         let clearance = radius + AVOIDANCE_MARGIN;
 
-        // Only care about asteroids we're heading toward
-        let dot = to_center.normalize_or_zero().dot(fwd_norm);
-        if dot < 0.0 {
-            continue; // behind us
+        // Project asteroid center onto missile's forward path
+        let proj = to_center.dot(fwd_norm);
+
+        // Only consider asteroids ahead (not yet passed)
+        if proj < 0.0 {
+            continue;
+        }
+        // Only within lookahead range
+        if proj > OBSTACLE_LOOKAHEAD {
+            continue;
         }
 
-        if dist < clearance + OBSTACLE_LOOKAHEAD {
-            // Smooth parabolic arc: peak at asteroid center, taper at edges
-            let t = 1.0 - (dist / (clearance + OBSTACLE_LOOKAHEAD)).clamp(0.0, 1.0);
-            let arc_y = SHIP_LEVEL_Y + clearance * t * t * 4.0; // quadratic peak
-            // Cap so it doesn't go too high
-            let arc_y = arc_y.min(SHIP_LEVEL_Y + clearance);
-            desired_y = desired_y.max(arc_y);
+        // Check perpendicular distance — does our path actually intersect this asteroid?
+        let closest_point = missile_xz + fwd_norm * proj;
+        let perp_dist = (closest_point - center).length();
+        if perp_dist > clearance {
+            continue; // path doesn't intersect, no avoidance needed
         }
+
+        // Arc height based on distance to asteroid center along our path.
+        // Peak when directly at the asteroid (proj ≈ 0), taper as we approach from afar.
+        let approach_t = 1.0 - (proj / OBSTACLE_LOOKAHEAD).clamp(0.0, 1.0);
+        let arc_y = SHIP_LEVEL_Y + clearance * approach_t;
+        desired_y = desired_y.max(arc_y);
     }
 
     desired_y
@@ -375,11 +384,24 @@ fn update_missile_flight(
         let desired_y = compute_avoidance_y(pos, forward_xz, &asteroids);
 
         let to_target = m_target.intercept_point - pos;
-        let mut desired_dir = to_target.normalize_or_zero();
-        // Override Y component to achieve desired altitude
-        let y_error = desired_y - pos.y;
-        desired_dir.y = y_error * Y_CORRECTION_RATE;
-        desired_dir = desired_dir.normalize_or_zero();
+
+        // Check if we've passed the intercept point (dot product with forward is negative).
+        // If so, keep flying straight — don't loop back.
+        let past_intercept = to_target.dot(missile_forward) < 0.0;
+        let mut desired_dir = if past_intercept {
+            missile_forward // maintain current heading
+        } else {
+            to_target.normalize_or_zero()
+        };
+
+        // Only override Y when obstacle avoidance is active (desired_y above ship level).
+        // Otherwise let the natural direction toward the target determine Y —
+        // this allows missiles to dive toward ships at ground level.
+        if desired_y > SHIP_LEVEL_Y + 0.5 {
+            let y_error = desired_y - pos.y;
+            desired_dir.y = y_error * Y_CORRECTION_RATE;
+            desired_dir = desired_dir.normalize_or_zero();
+        }
 
         // Apply physics-based steering: rotate velocity toward desired at limited rate
         if desired_dir != Vec3::ZERO {
@@ -427,7 +449,8 @@ pub fn check_missile_hits(
 
             let y_dist = (missile_pos.y - ship_transform.translation.y).abs();
 
-            if dist < class.profile().collision_radius && y_dist < class.profile().collision_radius {
+            // Use generous Y tolerance — missiles fly slightly above ships
+            if dist < class.profile().collision_radius && y_dist < class.profile().collision_radius + SHIP_LEVEL_Y {
                 // TODO: re-enable damage: health.hp = health.hp.saturating_sub(damage.0);
                 spawn_explosion(&mut commands, missile_pos);
                 commands.entity(missile_entity).despawn();
@@ -799,10 +822,109 @@ mod tests {
     }
 
     #[test]
+    fn avoidance_y_asteroid_to_side_ignored() {
+        let pos = Vec3::new(0.0, SHIP_LEVEL_Y, 0.0);
+        let forward = Vec2::new(1.0, 0.0); // heading +X
+        // Asteroid 30m to the side (+Z), not in our path
+        let asteroids = vec![(Vec2::new(50.0, 30.0), 10.0)];
+        let y = compute_avoidance_y(pos, forward, &asteroids);
+        assert!(
+            (y - SHIP_LEVEL_Y).abs() < 0.01,
+            "should ignore asteroid to the side (not in path), got {}",
+            y
+        );
+    }
+
+    #[test]
+    fn avoidance_y_asteroid_beyond_lookahead_ignored() {
+        let pos = Vec3::new(0.0, SHIP_LEVEL_Y, 0.0);
+        let forward = Vec2::new(1.0, 0.0);
+        // Asteroid far ahead, beyond OBSTACLE_LOOKAHEAD (100m)
+        let asteroids = vec![(Vec2::new(200.0, 0.0), 20.0)];
+        let y = compute_avoidance_y(pos, forward, &asteroids);
+        assert!(
+            (y - SHIP_LEVEL_Y).abs() < 0.01,
+            "should ignore asteroid beyond lookahead range, got {}",
+            y
+        );
+    }
+
+    #[test]
+    fn avoidance_y_closer_asteroid_lifts_more() {
+        let forward = Vec2::new(1.0, 0.0);
+        let asteroids = vec![(Vec2::new(50.0, 0.0), 20.0)];
+
+        // Far from asteroid
+        let far_pos = Vec3::new(-30.0, SHIP_LEVEL_Y, 0.0);
+        let far_y = compute_avoidance_y(far_pos, forward, &asteroids);
+
+        // Close to asteroid
+        let close_pos = Vec3::new(30.0, SHIP_LEVEL_Y, 0.0);
+        let close_y = compute_avoidance_y(close_pos, forward, &asteroids);
+
+        assert!(
+            close_y > far_y,
+            "closer to asteroid should lift more: close={}, far={}",
+            close_y,
+            far_y
+        );
+    }
+
+    #[test]
     fn steer_toward_preserves_speed() {
         let current = Vec3::new(80.0, 0.0, 0.0);
         let desired = Vec3::new(0.0, 80.0, 0.0);
         let result = steer_toward(current, desired, 0.2);
         assert!((result.length() - 80.0).abs() < 0.1);
+    }
+
+    // ── check_missile_hits collision logic ─────────────────────────────
+
+    #[test]
+    fn missile_collision_check_xz_and_y() {
+        let missile_pos = Vec3::new(100.0, SHIP_LEVEL_Y, 50.0);
+        let ship_pos = Vec3::new(101.0, 0.0, 50.0);
+        let collision_radius = 12.0; // battleship
+
+        let xz_dist = Vec2::new(missile_pos.x - ship_pos.x, missile_pos.z - ship_pos.z).length();
+        let y_dist = (missile_pos.y - ship_pos.y).abs();
+
+        assert!(xz_dist < collision_radius, "XZ distance {} should be within collision radius {}", xz_dist, collision_radius);
+        assert!(y_dist < collision_radius + SHIP_LEVEL_Y, "Y distance {} should be within tolerance {}", y_dist, collision_radius + SHIP_LEVEL_Y);
+    }
+
+    #[test]
+    fn missile_collision_misses_when_too_far() {
+        let missile_pos = Vec3::new(100.0, SHIP_LEVEL_Y, 50.0);
+        let ship_pos = Vec3::new(130.0, 0.0, 50.0); // 30m away
+        let collision_radius = 12.0;
+
+        let xz_dist = Vec2::new(missile_pos.x - ship_pos.x, missile_pos.z - ship_pos.z).length();
+        assert!(xz_dist >= collision_radius, "XZ distance {} should be outside collision radius {}", xz_dist, collision_radius);
+    }
+
+    #[test]
+    fn missile_continues_straight_past_intercept() {
+        let missile_pos = Vec3::new(110.0, SHIP_LEVEL_Y, 0.0);
+        let missile_forward = Vec3::new(1.0, 0.0, 0.0); // heading +X
+        let intercept_point = Vec3::new(100.0, 0.0, 0.0); // behind us
+
+        let to_target = intercept_point - missile_pos;
+        let past_intercept = to_target.dot(missile_forward) < 0.0;
+
+        assert!(past_intercept, "missile should detect it has passed the intercept point");
+        // When past intercept, desired direction should be missile_forward, not to_target
+    }
+
+    #[test]
+    fn missile_steers_toward_intercept_when_ahead() {
+        let missile_pos = Vec3::new(50.0, SHIP_LEVEL_Y, 0.0);
+        let missile_forward = Vec3::new(1.0, 0.0, 0.0);
+        let intercept_point = Vec3::new(200.0, 0.0, 0.0); // ahead
+
+        let to_target = intercept_point - missile_pos;
+        let past_intercept = to_target.dot(missile_forward) < 0.0;
+
+        assert!(!past_intercept, "missile should NOT think it has passed when intercept is ahead");
     }
 }

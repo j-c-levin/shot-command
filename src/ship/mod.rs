@@ -183,7 +183,7 @@ impl ShipClass {
                 turn_rate: 0.8,
                 turn_acceleration: 0.4,
                 top_speed: 20.0,
-                vision_range: 200.0,
+                vision_range: 400.0,
                 collision_radius: 12.0,
             },
             ShipClass::Destroyer => ShipProfile {
@@ -193,7 +193,7 @@ impl ShipClass {
                 turn_rate: 1.5,
                 turn_acceleration: 1.0,
                 top_speed: 28.0,
-                vision_range: 200.0,
+                vision_range: 400.0,
                 collision_radius: 8.0,
             },
             ShipClass::Scout => ShipProfile {
@@ -203,7 +203,7 @@ impl ShipClass {
                 turn_rate: 3.0,
                 turn_acceleration: 2.0,
                 top_speed: 35.0,
-                vision_range: 200.0,
+                vision_range: 400.0,
                 collision_radius: 5.0,
             },
         }
@@ -1091,5 +1091,21 @@ mod tests {
             wq.braking = true;
         }
         assert!(wq.braking);
+    }
+
+    #[test]
+    fn ship_heading_from_default_transform() {
+        // Default transform faces -Z in Bevy. ship_facing_direction returns Vec2(forward.x, forward.z).
+        // For default: forward = (0, 0, -1) → facing_dir = (0, -1) → atan2(-1, 0) = -PI/2
+        let transform = Transform::default();
+        let heading = ship_heading(&transform);
+        assert!(heading.is_finite(), "heading should be a finite number");
+        let expected = -PI / 2.0;
+        assert!(
+            (heading - expected).abs() < 0.01,
+            "default transform faces -Z, heading should be -PI/2 (~{:.3}), got {:.3}",
+            expected,
+            heading
+        );
     }
 }

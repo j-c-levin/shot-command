@@ -308,4 +308,24 @@ mod tests {
         // Outside should be gone
         assert!(world.get_entity(outside).is_err());
     }
+
+    #[test]
+    fn projectile_hits_ship_within_collision_radius() {
+        let proj_pos = Vec2::new(100.0, 50.0);
+        let ship_pos = Vec2::new(105.0, 50.0); // 5m away
+        let collision_radius = 12.0; // battleship
+
+        let dist = (proj_pos - ship_pos).length();
+        assert!(dist < collision_radius, "projectile at {}m should hit ship with radius {}", dist, collision_radius);
+    }
+
+    #[test]
+    fn projectile_misses_ship_outside_collision_radius() {
+        let proj_pos = Vec2::new(100.0, 50.0);
+        let ship_pos = Vec2::new(120.0, 50.0); // 20m away
+        let collision_radius = 12.0;
+
+        let dist = (proj_pos - ship_pos).length();
+        assert!(dist >= collision_radius, "projectile at {}m should miss ship with radius {}", dist, collision_radius);
+    }
 }
