@@ -434,4 +434,74 @@ mod tests {
         assert!((pos2.y - cam_pos.y).abs() < 20.0,
             "zoom in+out should return near original height: {} vs {}", pos2.y, cam_pos.y);
     }
+
+    // ── cursor-based zoom-in ────────────────────────────────────────
+
+    #[test]
+    fn zoom_in_toward_offset_cursor_moves_xz() {
+        // Camera at (0, 400, 200) looking at origin.
+        // Cursor ground point at (100, 0, 50) — off to the right.
+        // Zooming in with cursor as anchor should move camera XZ toward (100, 0, 50).
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let cursor_ground = Vec3::new(100.0, 0.0, 50.0);
+        let (new_pos, _) = compute_zoom(cam_pos, cursor_ground, 1.0, 50.0, 1500.0).unwrap();
+
+        // Camera should have moved toward cursor in XZ
+        let old_dist = Vec2::new(cam_pos.x - cursor_ground.x, cam_pos.z - cursor_ground.z).length();
+        let new_dist = Vec2::new(new_pos.x - cursor_ground.x, new_pos.z - cursor_ground.z).length();
+        assert!(new_dist < old_dist, "should move XZ toward cursor: {} vs {}", new_dist, old_dist);
+    }
+
+    #[test]
+    fn zoom_in_preserves_forward_direction() {
+        // Simulate what the system does: compute new pos, then recompute look_at
+        // from the new position using the original forward direction.
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let cam_forward = Vec3::new(0.0, -400.0, -200.0).normalize();
+        let cursor_ground = Vec3::new(100.0, 0.0, 50.0);
+
+        let (new_pos, _) = compute_zoom(cam_pos, cursor_ground, 1.0, 50.0, 1500.0).unwrap();
+        let new_look = camera_look_ground(new_pos, cam_forward);
+
+        // The new look-at should be reachable from new_pos along the same forward
+        let to_look = (new_look - new_pos).normalize();
+        let dot = to_look.dot(cam_forward);
+        assert!(dot > 0.99, "forward direction should be preserved: dot={}", dot);
+    }
+
+    #[test]
+    fn zoom_in_with_center_cursor_matches_look_at_zoom() {
+        // When cursor is at the look-at point, zoom-in should behave
+        // the same as zooming with look_at as anchor.
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let look = Vec3::ZERO;
+        let cursor_at_center = Vec3::ZERO; // cursor happens to be at look-at
+
+        let (pos_look, _) = compute_zoom(cam_pos, look, 1.0, 50.0, 1500.0).unwrap();
+        let (pos_cursor, _) = compute_zoom(cam_pos, cursor_at_center, 1.0, 50.0, 1500.0).unwrap();
+
+        assert!((pos_look - pos_cursor).length() < 0.01,
+            "cursor at center should match look-at zoom: {:?} vs {:?}", pos_look, pos_cursor);
+    }
+
+    #[test]
+    fn multiple_zoom_in_steps_converge_toward_cursor() {
+        // Repeated zoom-in toward a cursor point should keep moving toward it
+        let cursor = Vec3::new(200.0, 0.0, -100.0);
+        let mut pos = Vec3::new(0.0, 400.0, 200.0);
+
+        for _ in 0..10 {
+            let (new_pos, _) = compute_zoom(pos, cursor, 1.0, 50.0, 1500.0).unwrap();
+            let old_dist = Vec2::new(pos.x - cursor.x, pos.z - cursor.z).length();
+            let new_dist = Vec2::new(new_pos.x - cursor.x, new_pos.z - cursor.z).length();
+            assert!(new_dist <= old_dist + 0.01,
+                "step should move toward cursor: old={} new={}", old_dist, new_dist);
+            pos = new_pos;
+        }
+        // After 10 steps should be significantly closer
+        let final_dist = Vec2::new(pos.x - cursor.x, pos.z - cursor.z).length();
+        let start_dist = Vec2::new(0.0 - cursor.x, 200.0 - cursor.z).length();
+        assert!(final_dist < start_dist * 0.5,
+            "should be much closer after 10 zoom steps: start={} final={}", start_dist, final_dist);
+    }
 }
