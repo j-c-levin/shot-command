@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod fleet;
 pub mod fog;
 pub mod game;
 pub mod input;
