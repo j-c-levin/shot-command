@@ -28,7 +28,7 @@ use crate::net::commands::{
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
-    WaypointQueue, ship_xz_position, spawn_server_ship,
+    WaypointQueue, ship_xz_position, spawn_server_ship, spawn_server_ship_default,
 };
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
@@ -189,38 +189,76 @@ fn on_client_connected(
     // FleetComposition phase and transition to Playing when both fleets are submitted.
 }
 
-/// Spawn symmetric fleets for each team when entering Playing state.
-/// Also inserts MapBounds. TeamAssignment is sent on connect (before fleet composition).
-fn server_setup_game(mut commands: Commands) {
+/// Spawn corners for each team's fleet.
+const TEAM0_CORNER: Vec2 = Vec2::new(-300.0, -300.0);
+const TEAM1_CORNER: Vec2 = Vec2::new(300.0, 300.0);
+
+/// Minimum distance from spawn corners for asteroid placement.
+const ASTEROID_EXCLUSION_RADIUS: f32 = 100.0;
+
+/// Check if a candidate position is within an exclusion zone around spawn corners.
+pub fn is_in_asteroid_exclusion_zone(candidate: Vec2) -> bool {
+    candidate.distance(TEAM0_CORNER) < ASTEROID_EXCLUSION_RADIUS
+        || candidate.distance(TEAM1_CORNER) < ASTEROID_EXCLUSION_RADIUS
+}
+
+/// Spawn fleets from lobby submissions when entering Playing state.
+/// Also inserts MapBounds and spawns asteroids with exclusion zones.
+fn server_setup_game(
+    mut commands: Commands,
+    lobby: Res<crate::fleet::lobby::LobbyTracker>,
+    client_teams: Res<ClientTeams>,
+) {
     // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
     commands.insert_resource(MapBounds {
         half_extents: Vec2::splat(500.0),
     });
 
-    // Team 0 fleet near (-300, -300)
-    let team0 = Team(0);
-    let team0_offsets = [
-        (Vec2::new(-300.0, -300.0), ShipClass::Battleship),
-        (Vec2::new(-270.0, -280.0), ShipClass::Destroyer),
-        (Vec2::new(-330.0, -280.0), ShipClass::Scout),
+    // Spawn fleets from lobby submissions (or default fleets as fallback)
+    let team_corners = [
+        (Team(0), TEAM0_CORNER),
+        (Team(1), TEAM1_CORNER),
     ];
 
-    for (pos, class) in &team0_offsets {
-        let entity = spawn_server_ship(&mut commands, *pos, team0, *class);
-        info!("Spawned {:?} for Team 0: {:?}", class, entity);
+    // Build a mapping: team_id -> Vec<ShipSpec>
+    let mut team_specs: HashMap<u8, Vec<crate::fleet::ShipSpec>> = HashMap::new();
+    for (&client_entity, specs) in &lobby.submissions {
+        if let Some(team) = client_teams.map.get(&client_entity) {
+            team_specs.insert(team.0, specs.clone());
+        }
     }
 
-    // Team 1 fleet mirrored near (300, 300)
-    let team1 = Team(1);
-    let team1_offsets = [
-        (Vec2::new(300.0, 300.0), ShipClass::Battleship),
-        (Vec2::new(270.0, 280.0), ShipClass::Destroyer),
-        (Vec2::new(330.0, 280.0), ShipClass::Scout),
-    ];
+    // Perpendicular direction for line formation offset:
+    // spawn diagonal is (-1,-1) to (1,1), perpendicular is (-1,1) normalized
+    let perp = Vec2::new(-1.0, 1.0).normalize();
+    let ship_spacing = 30.0;
 
-    for (pos, class) in &team1_offsets {
-        let entity = spawn_server_ship(&mut commands, *pos, team1, *class);
-        info!("Spawned {:?} for Team 1: {:?}", class, entity);
+    for (team, corner) in &team_corners {
+        if let Some(specs) = team_specs.get(&team.0) {
+            // Spawn from lobby submissions
+            for (i, spec) in specs.iter().enumerate() {
+                let offset = perp * (i as f32 - (specs.len() as f32 - 1.0) / 2.0) * ship_spacing;
+                let pos = *corner + offset;
+                let entity = spawn_server_ship(&mut commands, pos, *team, spec);
+                info!(
+                    "Spawned {:?} for Team {} at ({:.0}, {:.0}): {:?}",
+                    spec.class, team.0, pos.x, pos.y, entity
+                );
+            }
+        } else {
+            // Fallback: default fleet (1 battleship, 1 destroyer, 1 scout)
+            let default_classes = [ShipClass::Battleship, ShipClass::Destroyer, ShipClass::Scout];
+            for (i, class) in default_classes.iter().enumerate() {
+                let offset =
+                    perp * (i as f32 - (default_classes.len() as f32 - 1.0) / 2.0) * ship_spacing;
+                let pos = *corner + offset;
+                let entity = spawn_server_ship_default(&mut commands, pos, *team, *class);
+                info!(
+                    "Spawned default {:?} for Team {} at ({:.0}, {:.0}): {:?}",
+                    class, team.0, pos.x, pos.y, entity
+                );
+            }
+        }
     }
 
     // Spawn asteroids (data-only, no mesh — clients materialize visuals)
@@ -246,7 +284,9 @@ fn server_setup_game(mut commands: Commands) {
                         ..(bounds.half_extents.y - min_distance_from_edge),
                 ),
             );
-            if candidate.length() > min_distance_from_center {
+            if candidate.length() > min_distance_from_center
+                && !is_in_asteroid_exclusion_zone(candidate)
+            {
                 break candidate;
             }
         };
@@ -260,7 +300,7 @@ fn server_setup_game(mut commands: Commands) {
     }
 
     info!(
-        "Server: spawned symmetric fleets for 2 teams and {} asteroids",
+        "Server: spawned fleets for 2 teams and {} asteroids",
         asteroid_count
     );
 }
@@ -783,5 +823,43 @@ fn server_update_visibility(
             };
             client_visibility.set(missile_entity, **los_bit, visible);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn asteroid_exclusion_near_team0_corner() {
+        // Right at team 0 corner (-300, -300)
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-300.0, -300.0)));
+        // Just inside the 100m radius
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-300.0, -210.0)));
+    }
+
+    #[test]
+    fn asteroid_exclusion_near_team1_corner() {
+        // Right at team 1 corner (300, 300)
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(300.0, 300.0)));
+        // Just inside the 100m radius
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(300.0, 210.0)));
+    }
+
+    #[test]
+    fn asteroid_exclusion_outside_both_zones() {
+        // Center of the map — far from both corners
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::ZERO));
+        // Midway between corners
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(0.0, 200.0)));
+    }
+
+    #[test]
+    fn asteroid_exclusion_boundary() {
+        // Exactly at 100m from team 0 corner should be excluded (< 100)
+        // Distance from (-300,-300) to (-200,-300) = 100, which is NOT < 100
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(-200.0, -300.0)));
+        // Just barely inside
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-201.0, -300.0)));
     }
 }

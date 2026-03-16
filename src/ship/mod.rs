@@ -704,7 +704,7 @@ fn clamp_ships_to_bounds() {
 
 // ── Spawning ────────────────────────────────────────────────────────────
 
-/// Spawn a ship with only data components (no mesh, material, or visibility).
+/// Spawn a ship from a `ShipSpec` (hull class + weapon loadout).
 /// Used by the server, which has no rendering context.
 /// Also spawns a `ShipSecrets` entity that holds team-private state
 /// (WaypointQueue, FacingTarget, FacingLocked) for per-component visibility.
@@ -716,8 +716,30 @@ pub fn spawn_server_ship(
     commands: &mut Commands,
     position: Vec2,
     team: Team,
-    class: ShipClass,
+    spec: &crate::fleet::ShipSpec,
 ) -> Entity {
+    let class = spec.class;
+    let layout = class.mount_layout();
+    let mounts: Vec<Mount> = layout
+        .into_iter()
+        .zip(spec.loadout.iter())
+        .map(|((size, offset), weapon_opt)| Mount {
+            size,
+            offset,
+            weapon: weapon_opt.map(|wt| {
+                let profile = wt.profile();
+                WeaponState {
+                    weapon_type: wt,
+                    ammo: 0,
+                    cooldown: 0.0,
+                    pd_retarget_cooldown: 0.0,
+                    tubes_loaded: profile.tubes,
+                    tube_reload_timer: 0.0,
+                }
+            }),
+        })
+        .collect();
+
     let ship_entity = commands
         .spawn((
             Ship,
@@ -729,7 +751,7 @@ pub fn spawn_server_ship(
             MissileQueue::default(),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: class.profile().hp },
-            Mounts(class.default_mounts()),
+            Mounts(mounts),
         ))
         .id();
 
@@ -744,6 +766,21 @@ pub fn spawn_server_ship(
     ));
 
     ship_entity
+}
+
+/// Convenience: spawn a ship with the default loadout for its class.
+/// Used for testing and fallback scenarios.
+pub fn spawn_server_ship_default(
+    commands: &mut Commands,
+    position: Vec2,
+    team: Team,
+    class: ShipClass,
+) -> Entity {
+    let spec = crate::fleet::ShipSpec {
+        class,
+        loadout: class.default_loadout(),
+    };
+    spawn_server_ship(commands, position, team, &spec)
 }
 
 // ── Visual Indicators ───────────────────────────────────────────────────
