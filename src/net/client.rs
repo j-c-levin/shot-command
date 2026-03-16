@@ -12,7 +12,7 @@ use bevy_replicon_renet::{
 use crate::game::{GameState, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{GroundPlane, MapBounds};
-use crate::net::commands::{GameResult, TeamAssignment};
+use crate::net::commands::{GameResult, GameStarted, LobbyStatus, TeamAssignment};
 use crate::net::{LocalTeam, PROTOCOL_ID};
 
 /// Resource containing the server address to connect to.
@@ -49,8 +49,17 @@ impl Plugin for ClientNetPlugin {
                 .run_if(in_state(GameState::Playing)),
         );
 
+        // Init lobby state resource
+        app.init_resource::<CurrentLobbyState>();
+
         // Observer for team assignment from server
         app.add_observer(on_team_assignment);
+
+        // Observer for lobby status updates from server
+        app.add_observer(on_lobby_status);
+
+        // Observer for game started from server
+        app.add_observer(on_game_started);
 
         // Observer for game result from server
         app.add_observer(on_game_result);
@@ -118,8 +127,28 @@ fn on_team_assignment(
     info!("Received team assignment: Team({})", team.0);
     local_team.0 = Some(team);
 
+    next_state.set(GameState::FleetComposition);
+    info!("Transitioning to FleetComposition state");
+}
+
+/// Tracks the current lobby state as reported by the server.
+#[derive(Resource, Debug, Clone, Default)]
+pub struct CurrentLobbyState(pub Option<crate::net::commands::LobbyState>);
+
+/// Observer that fires when the server sends a LobbyStatus event.
+fn on_lobby_status(trigger: On<LobbyStatus>, mut lobby_state: ResMut<CurrentLobbyState>) {
+    let status = &*trigger;
+    info!("Lobby status update: {:?}", status.state);
+    lobby_state.0 = Some(status.state.clone());
+}
+
+/// Observer that fires when the server sends a GameStarted event.
+fn on_game_started(
+    _trigger: On<GameStarted>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    info!("Game started — transitioning to Playing");
     next_state.set(GameState::Playing);
-    info!("Transitioning to Playing state");
 }
 
 /// Sets up the client scene when entering Playing state:
