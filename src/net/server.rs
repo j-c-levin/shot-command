@@ -165,7 +165,6 @@ fn on_client_connected(
     trigger: On<Add, AuthorizedClient>,
     mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
-    mut next_state: ResMut<NextState<GameState>>,
 ) {
     let client_entity = trigger.entity;
     let team_id = client_teams.map.len() as u8;
@@ -186,11 +185,8 @@ fn on_client_connected(
         message: TeamAssignment { team },
     });
 
-    // After 2 clients connected, transition to FleetComposition on server
-    if client_teams.map.len() >= 2 {
-        info!("Both players connected, transitioning to FleetComposition");
-        next_state.set(GameState::FleetComposition);
-    }
+    // Server stays in WaitingForPlayers — lobby systems handle the
+    // FleetComposition phase and transition to Playing when both fleets are submitted.
 }
 
 /// Spawn symmetric fleets for each team when entering Playing state.
