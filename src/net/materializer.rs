@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
-use crate::input::on_ship_clicked;
+use crate::input::{on_ship_clicked, SquadHighlight};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
@@ -439,6 +439,15 @@ pub struct TargetIndicatorAssets {
     pub material: Handle<StandardMaterial>,
 }
 
+/// Cached mesh/material handles for squad highlight indicators.
+#[derive(Resource)]
+pub struct SquadIndicatorAssets {
+    pub highlight_mesh: Handle<Mesh>,
+    pub highlight_material: Handle<StandardMaterial>,
+    pub line_mesh: Handle<Mesh>,
+    pub line_material: Handle<StandardMaterial>,
+}
+
 /// Startup system that creates the torus mesh + red material for target indicators.
 pub fn init_target_indicator_assets(
     mut commands: Commands,
@@ -452,6 +461,26 @@ pub fn init_target_indicator_assets(
             emissive: LinearRgba::new(2.0, 0.3, 0.2, 1.0),
             unlit: true,
             alpha_mode: AlphaMode::Blend,
+            ..default()
+        }),
+    });
+
+    // Squad visual assets
+    commands.insert_resource(SquadIndicatorAssets {
+        // Dimmed gray torus for follower highlights
+        highlight_mesh: meshes.add(Torus::new(12.0, 14.0)),
+        highlight_material: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.5, 0.5, 0.5, 0.4),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+        // Cyan capsule for follower-to-leader connection line
+        line_mesh: meshes.add(Capsule3d::new(0.3, 1.0)),
+        line_material: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.2, 0.9, 0.9, 0.5),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
             ..default()
         }),
     });
@@ -499,4 +528,95 @@ pub fn update_target_indicators(
             Transform::from_xyz(pos.x, 1.0, pos.z),
         ));
     }
+}
+
+// ── Squad Visual Indicators ──────────────────────────────────────────────
+
+/// Marker for squad highlight torus entities (dimmed gray ring under followers).
+#[derive(Component)]
+pub struct SquadHighlightIndicator;
+
+/// Marker for squad connection line entities (cyan line from follower to leader).
+#[derive(Component)]
+pub struct SquadConnectionLine;
+
+/// System that renders dimmed gray torus rings under squad followers of the selected leader.
+pub fn update_squad_highlight_indicators(
+    mut commands: Commands,
+    assets: Res<SquadIndicatorAssets>,
+    highlight_query: Query<&Transform, With<SquadHighlight>>,
+    indicator_query: Query<Entity, With<SquadHighlightIndicator>>,
+) {
+    // Despawn all existing indicators
+    for entity in &indicator_query {
+        commands.entity(entity).despawn();
+    }
+
+    // Spawn new indicators for highlighted followers
+    for transform in &highlight_query {
+        let pos = transform.translation;
+        commands.spawn((
+            SquadHighlightIndicator,
+            Mesh3d(assets.highlight_mesh.clone()),
+            MeshMaterial3d(assets.highlight_material.clone()),
+            Transform::from_xyz(pos.x, pos.y, pos.z),
+            Pickable::IGNORE,
+        ));
+    }
+}
+
+/// System that draws a cyan connection line from a selected follower to its leader.
+pub fn update_squad_connection_lines(
+    mut commands: Commands,
+    assets: Res<SquadIndicatorAssets>,
+    selected_query: Query<(Entity, &Transform), (With<crate::ship::Selected>, With<Ship>)>,
+    secrets_query: Query<(&ShipSecretsOwner, &crate::ship::SquadMember), With<ShipSecrets>>,
+    ship_query: Query<&Transform, With<Ship>>,
+    line_query: Query<Entity, With<SquadConnectionLine>>,
+) {
+    // Despawn all existing lines
+    for entity in &line_query {
+        commands.entity(entity).despawn();
+    }
+
+    // Check if selected ship is a squad follower (via ShipSecrets)
+    let Some((selected_entity, selected_tf)) = selected_query.iter().next() else {
+        return;
+    };
+
+    let squad_member = secrets_query
+        .iter()
+        .find(|(owner, _)| owner.0 == selected_entity)
+        .map(|(_, sm)| sm);
+
+    let Some(squad) = squad_member else {
+        return;
+    };
+
+    let Ok(leader_tf) = ship_query.get(squad.leader) else {
+        return;
+    };
+
+    // Draw a cyan line from follower to leader
+    let from = Vec3::new(selected_tf.translation.x, 1.0, selected_tf.translation.z);
+    let to = Vec3::new(leader_tf.translation.x, 1.0, leader_tf.translation.z);
+    let diff = to - from;
+    let length = diff.length();
+    if length < 1.0 {
+        return;
+    }
+
+    let mid = from + diff * 0.5;
+    let dir = diff.normalize();
+    let rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+
+    commands.spawn((
+        SquadConnectionLine,
+        Mesh3d(assets.line_mesh.clone()),
+        MeshMaterial3d(assets.line_material.clone()),
+        Transform::from_translation(mid)
+            .with_rotation(rotation)
+            .with_scale(Vec3::new(1.0, length, 1.0)),
+        Pickable::IGNORE,
+    ));
 }
