@@ -27,6 +27,10 @@ pub struct LaserBeamTracking(pub Entity);
 /// Server-only: the ship entity the beam originates from (not replicated).
 #[derive(Component)]
 pub struct LaserBeamOrigin(pub Entity);
+
+/// Server-only: if present, the beam will destroy its tracked missile after this delay.
+#[derive(Component)]
+pub struct LaserBeamKill(pub f32);
 use crate::weapon::projectile::{
     CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity,
 };
@@ -116,32 +120,29 @@ fn laser_pd_fire(
             if let Some(target_entity) = closest_entity {
                 let target_pos = missile_query.get(target_entity).unwrap().1.translation;
 
+                // Roll kill chance now, but delay the actual kill so the beam is visible first
+                let killed = rng.random_range(0.0..1.0) < LASER_PD_HIT_CHANCE;
+
                 // Spawn visible laser beam from ship to missile (tracks both endpoints)
                 let beam_origin = ship_pos + Vec3::new(0.0, 5.0, 0.0);
-                commands.spawn((
+                let mut beam = commands.spawn((
                     LaserBeam,
                     LaserBeamTarget(target_pos),
-                    LaserBeamTimer(0.3),
+                    LaserBeamTimer(0.4),
                     LaserBeamTracking(target_entity),
                     LaserBeamOrigin(ship_entity),
                     Transform::from_translation(beam_origin),
                     Replicated,
                 ));
-
-                // 60% chance to destroy outright
-                let killed = rng.random_range(0.0..1.0) < LASER_PD_HIT_CHANCE;
                 if killed {
-                    crate::weapon::missile::spawn_small_explosion(
-                        &mut commands,
-                        target_pos,
-                    );
-                    commands.entity(target_entity).despawn();
+                    // Kill will happen after 0.15s delay (beam visible first, then explosion)
+                    beam.insert(LaserBeamKill(0.15));
                 }
 
                 let ws = mounts.0[mount_idx].weapon.as_mut().unwrap();
                 ws.cooldown = profile.fire_rate_secs;
                 if killed {
-                    ws.pd_retarget_cooldown = PD_RETARGET_DELAY;
+                    ws.pd_retarget_cooldown = PD_RETARGET_DELAY + 0.15; // account for kill delay
                 }
             }
         }
@@ -263,6 +264,35 @@ fn cwis_fire(
     }
 }
 
+/// Process delayed laser kills: after the beam has been visible for a short time,
+/// destroy the missile and spawn an explosion.
+fn process_laser_kills(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut beam_query: Query<
+        (Entity, &LaserBeamTracking, &mut LaserBeamKill),
+        With<LaserBeam>,
+    >,
+    transform_query: Query<&Transform>,
+) {
+    let dt = time.delta_secs();
+    for (beam_entity, tracking, mut kill) in &mut beam_query {
+        kill.0 -= dt;
+        if kill.0 <= 0.0 {
+            // Destroy the missile now
+            if let Ok(missile_tf) = transform_query.get(tracking.0) {
+                crate::weapon::missile::spawn_small_explosion(
+                    &mut commands,
+                    missile_tf.translation,
+                );
+            }
+            commands.entity(tracking.0).despawn();
+            // Remove kill marker (beam continues visually until its timer expires)
+            commands.entity(beam_entity).remove::<LaserBeamKill>();
+        }
+    }
+}
+
 /// Update laser beam endpoints to track the missile and ship each frame.
 fn update_laser_beams(
     mut commands: Commands,
@@ -316,7 +346,7 @@ impl Plugin for PdPlugin {
         );
         app.add_systems(
             Update,
-            (update_laser_beams, tick_laser_beams)
+            (process_laser_kills, update_laser_beams, tick_laser_beams)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
