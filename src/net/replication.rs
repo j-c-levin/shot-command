@@ -21,7 +21,7 @@ use crate::ship::{
 use crate::weapon::{MissileQueue, Mounts};
 use crate::weapon::missile::{
     Explosion, ExplosionTimer, Missile, MissileDamage, MissileFuel,
-    MissileHealth, MissileOwner, MissileTarget, MissileVelocity,
+    MissileOwner, MissileTarget, MissileVelocity,
 };
 use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
@@ -51,7 +51,6 @@ impl Plugin for SharedReplicationPlugin {
         app.replicate::<Missile>()
             .replicate::<MissileTarget>()
             .replicate::<MissileVelocity>()
-            .replicate::<MissileHealth>()
             .replicate::<MissileDamage>()
             .replicate::<MissileOwner>()
             .replicate::<MissileFuel>()

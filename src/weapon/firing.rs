@@ -66,6 +66,7 @@ pub fn tick_weapon_cooldowns(time: Res<Time>, mut query: Query<&mut Mounts, With
         for mount in mounts.0.iter_mut() {
             if let Some(ref mut weapon) = mount.weapon {
                 weapon.cooldown = (weapon.cooldown - dt).max(0.0);
+                weapon.pd_retarget_cooldown = (weapon.pd_retarget_cooldown - dt).max(0.0);
             }
         }
     }
@@ -255,7 +256,6 @@ pub fn process_missile_queue(
                     entry.target_entity,
                     profile.projectile_speed,
                     profile.damage,
-                    profile.missile_hp,
                     profile.missile_fuel,
                     ship_entity,
                 );
@@ -359,11 +359,10 @@ mod tests {
     fn cannon_auto_fire_skips_missile_types() {
         use crate::weapon::WeaponType;
 
-        let profile = WeaponType::HeavyVLS.profile();
         assert_eq!(WeaponType::HeavyVLS.category(), WeaponCategory::Missile);
         // auto_fire only processes Cannon category — VLS weapons are handled
         // by process_missile_queue instead
-        assert!(profile.missile_hp > 0);
+        let profile = WeaponType::HeavyVLS.profile();
         assert!(profile.tubes > 0);
     }
 }

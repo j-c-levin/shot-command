@@ -22,6 +22,9 @@ const LASER_PD_HIT_CHANCE: f32 = 0.6;
 /// Range at which CWIS starts firing visual tracers (wider than kill range).
 const CWIS_VISUAL_RANGE: f32 = 150.0;
 
+/// Seconds a PD mount must wait before engaging a new target after a kill.
+const PD_RETARGET_DELAY: f32 = 1.0;
+
 // ── Pure functions ─────────────────────────────────────────────────────
 
 /// Check if a missile is within a PD's vertical cylinder (XZ distance only).
@@ -57,7 +60,7 @@ fn laser_pd_fire(
                 continue;
             }
 
-            if weapon.cooldown > 0.0 {
+            if weapon.cooldown > 0.0 || weapon.pd_retarget_cooldown > 0.0 {
                 continue;
             }
 
@@ -90,7 +93,8 @@ fn laser_pd_fire(
 
             if let Some(target_entity) = closest_entity {
                 // 60% chance to destroy outright
-                if rng.random_range(0.0..1.0) < LASER_PD_HIT_CHANCE {
+                let killed = rng.random_range(0.0..1.0) < LASER_PD_HIT_CHANCE;
+                if killed {
                     if let Ok((_, missile_tf, _)) = missile_query.get(target_entity) {
                         crate::weapon::missile::spawn_small_explosion(
                             &mut commands,
@@ -100,7 +104,11 @@ fn laser_pd_fire(
                     commands.entity(target_entity).despawn();
                 }
 
-                mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = profile.fire_rate_secs;
+                let ws = mounts.0[mount_idx].weapon.as_mut().unwrap();
+                ws.cooldown = profile.fire_rate_secs;
+                if killed {
+                    ws.pd_retarget_cooldown = PD_RETARGET_DELAY;
+                }
             }
         }
     }
@@ -130,7 +138,7 @@ fn cwis_fire(
                 continue;
             }
 
-            if weapon.cooldown > 0.0 {
+            if weapon.cooldown > 0.0 || weapon.pd_retarget_cooldown > 0.0 {
                 continue;
             }
 
@@ -179,9 +187,9 @@ fn cwis_fire(
                 let dir_to_lead = (lead_pos - origin).normalize_or_zero();
 
                 // Only roll kill chance when missile is within actual PD kill radius
-                if closest_dist <= profile.pd_cylinder_radius
-                    && rng.random_range(0.0..1.0) < CWIS_HIT_CHANCE
-                {
+                let killed = closest_dist <= profile.pd_cylinder_radius
+                    && rng.random_range(0.0..1.0) < CWIS_HIT_CHANCE;
+                if killed {
                     crate::weapon::missile::spawn_small_explosion(
                         &mut commands,
                         target_pos,
@@ -211,7 +219,11 @@ fn cwis_fire(
                     Replicated,
                 ));
 
-                mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = profile.fire_rate_secs;
+                let ws = mounts.0[mount_idx].weapon.as_mut().unwrap();
+                ws.cooldown = profile.fire_rate_secs;
+                if killed {
+                    ws.pd_retarget_cooldown = PD_RETARGET_DELAY;
+                }
             }
         }
     }

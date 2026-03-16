@@ -50,9 +50,7 @@ pub struct WeaponProfile {
     pub projectile_speed: f32,
     pub spread_degrees: f32,
     pub arc: FiringArc,
-    pub max_ammo: u16,
     pub tubes: u8,
-    pub missile_hp: u16,
     pub missile_fuel: f32,
     pub pd_cylinder_radius: f32,
 }
@@ -78,9 +76,7 @@ impl WeaponType {
                 projectile_speed: 150.0,
                 spread_degrees: 2.0,
                 arc: FiringArc::Turret,
-                max_ammo: 60,
                 tubes: 0,
-                missile_hp: 0,
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 0.0,
             },
@@ -92,9 +88,7 @@ impl WeaponType {
                 projectile_speed: 120.0,
                 spread_degrees: 2.0,
                 arc: FiringArc::Turret,
-                max_ammo: 120,
                 tubes: 0,
-                missile_hp: 0,
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 0.0,
             },
@@ -106,9 +100,7 @@ impl WeaponType {
                 projectile_speed: 300.0,
                 spread_degrees: 0.5,
                 arc: FiringArc::Forward,
-                max_ammo: 10,
                 tubes: 0,
-                missile_hp: 0,
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 0.0,
             },
@@ -117,27 +109,23 @@ impl WeaponType {
                 burst_count: 1,
                 damage: 30,
                 firing_range: 500.0,
-                projectile_speed: 80.0,
+                projectile_speed: 150.0,
                 spread_degrees: 0.0,
                 arc: FiringArc::Turret,
-                max_ammo: 24,
                 tubes: 8,
-                missile_hp: 15,
-                missile_fuel: 500.0,
+                missile_fuel: 800.0,
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::LightVLS => WeaponProfile {
-                fire_rate_secs: 2.0,
+                fire_rate_secs: 3.0,
                 burst_count: 1,
-                damage: 20,
-                firing_range: 400.0,
-                projectile_speed: 80.0,
+                damage: 30,
+                firing_range: 500.0,
+                projectile_speed: 150.0,
                 spread_degrees: 0.0,
                 arc: FiringArc::Turret,
-                max_ammo: 12,
                 tubes: 4,
-                missile_hp: 10,
-                missile_fuel: 400.0,
+                missile_fuel: 800.0,
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::LaserPD => WeaponProfile {
@@ -148,9 +136,7 @@ impl WeaponType {
                 projectile_speed: 0.0,
                 spread_degrees: 0.0,
                 arc: FiringArc::Turret,
-                max_ammo: 0,
                 tubes: 0,
-                missile_hp: 0,
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 150.0,
             },
@@ -162,9 +148,7 @@ impl WeaponType {
                 projectile_speed: 200.0,
                 spread_degrees: 2.0,
                 arc: FiringArc::Turret,
-                max_ammo: 0,
                 tubes: 0,
-                missile_hp: 0,
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 100.0,
             },
@@ -189,6 +173,10 @@ pub struct WeaponState {
     pub weapon_type: WeaponType,
     pub ammo: u16,
     pub cooldown: f32,
+    /// Seconds before a PD mount can engage a new target after a kill.
+    /// Only meaningful for LaserPD and CWIS; always 0.0 for other weapon types.
+    #[serde(default)]
+    pub pd_retarget_cooldown: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -270,21 +258,21 @@ mod tests {
         assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 8);
-        assert_eq!(p.missile_hp, 15);
-        assert_eq!(p.missile_fuel, 500.0);
+        assert_eq!(p.projectile_speed, 150.0);
+        assert_eq!(p.missile_fuel, 800.0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 
     #[test]
     fn light_vls_profile_values() {
         let p = WeaponType::LightVLS.profile();
-        assert_eq!(p.damage, 20);
+        assert_eq!(p.damage, 30);
         assert_eq!(p.burst_count, 1);
-        assert_eq!(p.fire_rate_secs, 2.0);
-        assert_eq!(p.firing_range, 400.0);
+        assert_eq!(p.fire_rate_secs, 3.0);
+        assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 4);
-        assert_eq!(p.missile_hp, 10);
-        assert_eq!(p.missile_fuel, 400.0);
+        assert_eq!(p.projectile_speed, 150.0);
+        assert_eq!(p.missile_fuel, 800.0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 
@@ -296,7 +284,6 @@ mod tests {
         assert_eq!(p.firing_range, 150.0);
         assert_eq!(p.projectile_speed, 0.0);
         assert_eq!(p.pd_cylinder_radius, 150.0);
-        assert_eq!(p.max_ammo, 0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 
@@ -309,7 +296,6 @@ mod tests {
         assert_eq!(p.projectile_speed, 200.0);
         assert_eq!(p.spread_degrees, 2.0);
         assert_eq!(p.pd_cylinder_radius, 100.0);
-        assert_eq!(p.max_ammo, 0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 

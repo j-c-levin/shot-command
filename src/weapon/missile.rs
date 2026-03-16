@@ -68,10 +68,6 @@ impl MapEntities for MissileTarget {
 #[derive(Component, Serialize, Deserialize, Clone)]
 pub struct MissileVelocity(pub Vec3);
 
-/// Hit points — missile can be destroyed by point defense.
-#[derive(Component, Serialize, Deserialize, Clone)]
-pub struct MissileHealth(pub u16);
-
 /// Damage dealt to a ship on impact.
 #[derive(Component, Serialize, Deserialize, Clone)]
 pub struct MissileDamage(pub u16);
@@ -218,7 +214,6 @@ pub fn compute_avoidance_y(pos: Vec3, forward_xz: Vec2, asteroids: &[(Vec2, f32)
 /// `target_entity` — optional entity being targeted.
 /// `speed` — scalar missile speed.
 /// `damage` — HP dealt on ship hit.
-/// `health` — missile's hit points (for PD damage).
 /// `fuel` — max range in meters.
 /// `owner` — entity of the ship that fired.
 pub fn spawn_missile(
@@ -228,7 +223,6 @@ pub fn spawn_missile(
     target_entity: Option<Entity>,
     speed: f32,
     damage: u16,
-    health: u16,
     fuel: f32,
     owner: Entity,
 ) -> Entity {
@@ -252,7 +246,6 @@ pub fn spawn_missile(
                 target_entity,
             },
             MissileVelocity(velocity),
-            MissileHealth(health),
             MissileDamage(damage),
             MissileOwner(owner),
             MissileFuel(fuel),
@@ -657,7 +650,6 @@ mod tests {
         let intercept = Vec3::new(100.0, 0.0, -20.0);
         let speed = 80.0;
         let damage = 30;
-        let health = 5;
         let fuel = 500.0;
 
         let missile_entity;
@@ -670,7 +662,6 @@ mod tests {
                 Some(owner), // target_entity (using owner as placeholder)
                 speed,
                 damage,
-                health,
                 fuel,
                 owner,
             );
@@ -680,7 +671,6 @@ mod tests {
         assert!(world.get::<Missile>(missile_entity).is_some());
         assert!(world.get::<MissileTarget>(missile_entity).is_some());
         assert!(world.get::<MissileVelocity>(missile_entity).is_some());
-        assert!(world.get::<MissileHealth>(missile_entity).is_some());
         assert!(world.get::<MissileDamage>(missile_entity).is_some());
         assert!(world.get::<MissileOwner>(missile_entity).is_some());
         assert!(world.get::<MissileFuel>(missile_entity).is_some());
@@ -688,9 +678,6 @@ mod tests {
 
         let dmg = world.get::<MissileDamage>(missile_entity).unwrap();
         assert_eq!(dmg.0, 30);
-
-        let hp = world.get::<MissileHealth>(missile_entity).unwrap();
-        assert_eq!(hp.0, 5);
 
         let f = world.get::<MissileFuel>(missile_entity).unwrap();
         assert_eq!(f.0, 500.0);
@@ -723,7 +710,6 @@ mod tests {
                 None,
                 80.0,
                 30,
-                5,
                 500.0,
                 owner,
             );
