@@ -59,7 +59,7 @@ pub fn is_in_firing_arc(ship_facing: Vec2, target_direction: Vec2, arc: &FiringA
 
 // ── Systems ────────────────────────────────────────────────────────────
 
-/// Decrement cooldown timers on all weapon mounts every frame.
+/// Decrement cooldown timers and reload VLS tubes every frame.
 pub fn tick_weapon_cooldowns(time: Res<Time>, mut query: Query<&mut Mounts, With<Ship>>) {
     let dt = time.delta_secs();
     for mut mounts in &mut query {
@@ -67,6 +67,19 @@ pub fn tick_weapon_cooldowns(time: Res<Time>, mut query: Query<&mut Mounts, With
             if let Some(ref mut weapon) = mount.weapon {
                 weapon.cooldown = (weapon.cooldown - dt).max(0.0);
                 weapon.pd_retarget_cooldown = (weapon.pd_retarget_cooldown - dt).max(0.0);
+
+                // VLS tube reloading: each tube reloads independently
+                let max_tubes = weapon.weapon_type.profile().tubes;
+                if max_tubes > 0 && weapon.tubes_loaded < max_tubes {
+                    weapon.tube_reload_timer -= dt;
+                    if weapon.tube_reload_timer <= 0.0 {
+                        weapon.tubes_loaded += 1;
+                        // If more tubes still need reloading, reset timer
+                        if weapon.tubes_loaded < max_tubes {
+                            weapon.tube_reload_timer = weapon.weapon_type.profile().fire_rate_secs;
+                        }
+                    }
+                }
             }
         }
     }
@@ -223,6 +236,11 @@ pub fn process_missile_queue(
                 continue;
             }
 
+            // No loaded tubes — wait for reload
+            if weapon.tubes_loaded == 0 {
+                continue;
+            }
+
             let profile = weapon.weapon_type.profile();
 
             // Fire 1 missile per mount per tick (rapid fire until queue drained)
@@ -261,9 +279,14 @@ pub fn process_missile_queue(
                 );
             }
 
-            // Always use short inter-tube delay — VLS is a rapid-fire tube system
-            // with no full reload between salvos.
-            mounts.0[mount_idx].weapon.as_mut().unwrap().cooldown = 0.15;
+            let ws = mounts.0[mount_idx].weapon.as_mut().unwrap();
+            ws.tubes_loaded = ws.tubes_loaded.saturating_sub(1);
+            // Start reload timer for this tube (if not already reloading)
+            if ws.tube_reload_timer <= 0.0 {
+                ws.tube_reload_timer = profile.fire_rate_secs;
+            }
+            // Short inter-tube delay between consecutive launches
+            ws.cooldown = 0.15;
         }
     }
 }

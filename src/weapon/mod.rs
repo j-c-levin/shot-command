@@ -105,7 +105,7 @@ impl WeaponType {
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::HeavyVLS => WeaponProfile {
-                fire_rate_secs: 3.0,
+                fire_rate_secs: 10.0, // full reload time after all tubes spent
                 burst_count: 1,
                 damage: 30,
                 firing_range: 500.0,
@@ -117,7 +117,7 @@ impl WeaponType {
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::LightVLS => WeaponProfile {
-                fire_rate_secs: 3.0,
+                fire_rate_secs: 10.0, // full reload time after all tubes spent
                 burst_count: 1,
                 damage: 30,
                 firing_range: 500.0,
@@ -177,6 +177,15 @@ pub struct WeaponState {
     /// Only meaningful for LaserPD and CWIS; always 0.0 for other weapon types.
     #[serde(default)]
     pub pd_retarget_cooldown: f32,
+    /// Number of tubes currently loaded and ready to fire (VLS only).
+    /// Initialized to `profile.tubes`. Decrements on fire, individual tubes
+    /// reload after `fire_rate_secs` seconds.
+    #[serde(default)]
+    pub tubes_loaded: u8,
+    /// Time until the next tube finishes reloading (VLS only).
+    /// Counts down; when it reaches 0, one tube is reloaded (tubes_loaded += 1).
+    #[serde(default)]
+    pub tube_reload_timer: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -255,7 +264,7 @@ mod tests {
         let p = WeaponType::HeavyVLS.profile();
         assert_eq!(p.damage, 30);
         assert_eq!(p.burst_count, 1);
-        assert_eq!(p.fire_rate_secs, 3.0);
+        assert_eq!(p.fire_rate_secs, 10.0);
         assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 8);
         assert_eq!(p.projectile_speed, 150.0);
@@ -268,7 +277,7 @@ mod tests {
         let p = WeaponType::LightVLS.profile();
         assert_eq!(p.damage, 30);
         assert_eq!(p.burst_count, 1);
-        assert_eq!(p.fire_rate_secs, 3.0);
+        assert_eq!(p.fire_rate_secs, 10.0);
         assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 4);
         assert_eq!(p.projectile_speed, 150.0);

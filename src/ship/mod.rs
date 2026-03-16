@@ -140,11 +140,14 @@ impl ShipClass {
                 size,
                 offset,
                 weapon: weapon_type.map(|wt| {
+                    let profile = wt.profile();
                     WeaponState {
                         weapon_type: wt,
                         ammo: 0,
                         cooldown: 0.0,
                         pd_retarget_cooldown: 0.0,
+                        tubes_loaded: profile.tubes,
+                        tube_reload_timer: 0.0,
                     }
                 }),
             })

@@ -273,21 +273,20 @@ fn process_laser_kills(
         (Entity, &LaserBeamTracking, &mut LaserBeamKill),
         With<LaserBeam>,
     >,
-    transform_query: Query<&Transform>,
+    missile_query: Query<&Transform, With<Missile>>,
 ) {
     let dt = time.delta_secs();
     for (beam_entity, tracking, mut kill) in &mut beam_query {
         kill.0 -= dt;
         if kill.0 <= 0.0 {
-            // Destroy the missile now
-            if let Ok(missile_tf) = transform_query.get(tracking.0) {
+            // Destroy the missile now (if it still exists — CWIS may have killed it)
+            if let Ok(missile_tf) = missile_query.get(tracking.0) {
                 crate::weapon::missile::spawn_small_explosion(
                     &mut commands,
                     missile_tf.translation,
                 );
+                commands.entity(tracking.0).despawn();
             }
-            commands.entity(tracking.0).despawn();
-            // Remove kill marker (beam continues visually until its timer expires)
             commands.entity(beam_entity).remove::<LaserBeamKill>();
         }
     }
