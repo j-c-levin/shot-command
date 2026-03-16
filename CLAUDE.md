@@ -39,11 +39,11 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 137 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 145 tests:
 
 | Module | # | What's tested |
 |---|---|---|
-| `src/ship/mod.rs` | 28 | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class |
+| `src/ship/mod.rs` | 34 | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class, squad offset computation (positive/negative), squad move destination (with offset/zero), ship number assignment, ship number default |
 | `src/weapon/missile.rs` | 18 | Intercept point (stationary, moving, zero speed), seeker cone (inside/outside/ahead/behind), spawn_missile components+velocity, flat flight, seeker acquisition, asteroid collision |
 | `src/camera/mod.rs` | 14 | CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), camera pan controls |
 | `src/fog/mod.rs` | 11 | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
@@ -73,7 +73,7 @@ Library crate (`src/lib.rs`) with two binaries:
   - `fleet_builder.rs` — FleetBuilderState resource, two-panel fleet builder UI (ship list + ship detail), popup system (ship picker, weapon picker), submit/cancel toggle, budget display, lobby status text
 - `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→FleetComposition→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (u16), Destroyed marker, DestroyTimer
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
-- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship (takes &ShipSpec), spawn_server_ship_default (convenience with default loadout)
+- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipNumber(u8) (1-9 per team), SquadMember { leader, offset } (squad formation), ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship (takes &ShipSpec + ship_number), spawn_server_ship_default (convenience with default loadout)
 - `src/weapon/` — Weapon system:
   - `mod.rs` — MountSize, WeaponType (HeavyCannon/Cannon/Railgun/HeavyVLS/LightVLS/LaserPD/CWIS), WeaponCategory (Cannon/Missile/PointDefense), FiringArc, WeaponProfile, WeaponState (incl. tubes_loaded, tube_reload_timer for VLS), Mount, Mounts component, MissileQueue/MissileQueueEntry
   - `projectile.rs` — Projectile/ProjectileVelocity/ProjectileDamage/ProjectileOwner/CwisRound components, spawn_projectile, ProjectilePlugin (advance, bounds, hit detection, CWIS hit detection)
@@ -82,14 +82,14 @@ Library crate (`src/lib.rs`) with two binaries:
   - `pd.rs` — Point defense systems: is_in_pd_cylinder (vertical cylinder check), probability-based kills (no missile HP), LaserBeam/LaserBeamTarget/LaserBeamTimer entities (visible beam tracking missile in real-time, delayed kill 0.15s after beam appears), CWIS visual tracers. LaserPD range 300m, CWIS 100m kill / 150m visual. 0.2s retarget delay. PdPlugin
   - `damage.rs` — DamagePlugin: mark_destroyed (with 1s delay timer), despawn_destroyed (cleanup ShipSecrets), check_win_condition (broadcast GameResult)
 - `src/camera/` — CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), WASD pan (S is stop-only, not camera pan), middle-mouse orbit
-- `src/input/` — Ship selection (left-click, left-click ground = deselect), move commands (right-click in all modes), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target, M toggle missile mode (M gated by VLS presence, right-click ground = missile at point, click enemy = missile at entity). Selecting new ship resets modes. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, MissileCommand).
+- `src/input/` — Ship selection (left-click, left-click ground = deselect), move commands (right-click in all modes), shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target, M toggle missile mode (M gated by VLS presence, right-click ground = missile at point, click enemy = missile at entity), J toggle join mode (click friendly or press number to assign squad), 1-9 number-key ship selection (selects by ShipNumber, also highlights squad followers). SquadHighlight marker for follower visual. Selecting new ship resets modes. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, MissileCommand, JoinSquadCommand).
 - `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
 - `src/net/` — Networking module:
   - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
-  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, FleetSubmission, CancelSubmission (client→server with MapEntities), TeamAssignment, GameResult, LobbyStatus, GameStarted (server→client), LobbyState enum
-  - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target), LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting), target visibility clearing, disconnection handling
+  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, JoinSquadCommand, FleetSubmission, CancelSubmission (client→server with MapEntities), TeamAssignment, GameResult, LobbyStatus, GameStarted (server→client), LobbyState enum
+  - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target, join squad), squad move propagation (leader move → followers move with offset), orphan squad cleanup, LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting, squad), target visibility clearing, disconnection handling
   - `client.rs` — ClientNetPlugin: renet transport, team assignment observer (→FleetComposition), lobby status observer, game started observer (→Playing), ground plane setup, materializer/asteroid registration, CurrentLobbyState resource
-  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system. Selection indicator (green, larger, at ship center Y). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking.
+  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system. Selection indicator (green, larger, at ship center Y). Ship number labels (UI text via world-to-viewport projection). Squad highlight indicators (gray torus on followers), squad connection lines (cyan capsule from follower to leader). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking.
 
 ### System ordering (Update schedule)
 
@@ -138,6 +138,8 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Explosions**: Two sizes — ship impact (large) vs PD kill (small).
 - **Targeting**: K+left-click enemy designates target. K again clears. Target auto-clears when enemy leaves LOS. TargetDesignation synced via ShipSecrets (team-private).
 - **Destruction**: Ships at 0 HP get Destroyed marker + 1s delay timer, then despawn (ship + ShipSecrets). Ghost fade-out fires on despawn. Win condition: all enemy ships destroyed → GameResult broadcast → GameOver state.
+- **Squad formation**: J key enters join mode; click friendly ship or press its number to assign. SquadMember { leader, offset } on followers. Leader move orders propagate to followers with offset applied. Direct move to a follower breaks formation. Orphan cleanup removes SquadMember when leader is destroyed/despawned.
+- **Ship numbers**: ShipNumber(1-9) assigned from fleet list index. Press 1-9 to select by number. Number labels float above friendly ships via world-to-viewport projection.
 - **Fleet composition**: 1000pt budget. Hull costs: BB 375, DD 150, Scout 45. Weapon costs: 10-40pts. Downsizing allowed (smaller weapons in larger slots). Server-authoritative lobby validates and stores submissions. FleetBuilderState is client-local, reset on state exit.
 - **Lobby protocol**: FleetSubmission/CancelSubmission (client→server), LobbyStatus/GameStarted (server→client). LobbyTracker resource tracks submissions + countdown. Server stays in WaitingForPlayers throughout.
 
