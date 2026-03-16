@@ -31,7 +31,7 @@ use crate::ship::{
     WaypointQueue, ship_xz_position, spawn_server_ship,
 };
 use crate::weapon::missile::{Missile, MissileOwner};
-use crate::weapon::{MissileQueue, MissileQueueEntry};
+use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
 
 /// Resource containing the bind address string, inserted before the plugin runs.
@@ -498,7 +498,7 @@ fn handle_fire_missile(
     trigger: On<FromClient<FireMissileCommand>>,
     client_teams: Res<ClientTeams>,
     team_query: Query<&Team, With<Ship>>,
-    mut queue_query: Query<&mut MissileQueue, With<Ship>>,
+    mut ship_query: Query<(&mut MissileQueue, &Mounts), With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -515,9 +515,28 @@ fn handle_fire_missile(
         return;
     }
 
-    let Ok(mut queue) = queue_query.get_mut(cmd.ship) else {
+    let Ok((mut queue, mounts)) = ship_query.get_mut(cmd.ship) else {
         return;
     };
+
+    // Count total loaded tubes across all VLS mounts
+    let total_loaded: usize = mounts
+        .0
+        .iter()
+        .filter_map(|m| {
+            let w = m.weapon.as_ref()?;
+            if w.weapon_type.category() == WeaponCategory::Missile {
+                Some(w.tubes_loaded as usize)
+            } else {
+                None
+            }
+        })
+        .sum();
+
+    // Reject if queue already has as many entries as loaded tubes
+    if queue.0.len() >= total_loaded {
+        return;
+    }
 
     queue.0.push(MissileQueueEntry {
         target_point: cmd.target_point,
