@@ -161,10 +161,17 @@ fn camera_zoom(
     let zoom_factor = 1.0 - scroll.delta.y * 0.1;
     let zoom_factor = zoom_factor.clamp(0.8, 1.2);
 
-    // Move camera toward/away from cursor ground point
-    let offset = transform.translation - ground_target;
+    // Zoom in: toward cursor. Zoom out: toward map center (so max zoom shows whole map).
+    let zooming_in = scroll.delta.y > 0.0;
+    let anchor = if zooming_in {
+        ground_target
+    } else {
+        Vec3::ZERO // map center
+    };
+
+    let offset = transform.translation - anchor;
     let new_offset = offset * zoom_factor;
-    let new_pos = ground_target + new_offset;
+    let new_pos = anchor + new_offset;
 
     if new_pos.y > settings.min_zoom && new_pos.y < settings.max_zoom {
         transform.translation = new_pos;
