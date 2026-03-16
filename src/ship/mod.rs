@@ -148,6 +148,7 @@ impl ShipClass {
                         pd_retarget_cooldown: 0.0,
                         tubes_loaded: profile.tubes,
                         tube_reload_timer: 0.0,
+                        fire_delay: 0.0,
                     }
                 }),
             })
@@ -735,6 +736,7 @@ pub fn spawn_server_ship(
                     pd_retarget_cooldown: 0.0,
                     tubes_loaded: profile.tubes,
                     tube_reload_timer: 0.0,
+                    fire_delay: 0.0,
                 }
             }),
         })

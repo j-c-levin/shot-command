@@ -12,6 +12,9 @@ use crate::weapon::{FiringArc, MissileQueue, Mounts, WeaponCategory};
 /// Half-angle of the forward firing arc: 10 degrees in radians (PI / 18).
 const FORWARD_ARC_HALF_ANGLE: f32 = std::f32::consts::PI / 18.0;
 
+/// Delay in seconds between each cannon firing on the same ship, creating staggered volleys.
+pub const CANNON_STAGGER_DELAY: f32 = 0.5;
+
 // ── Pure functions ─────────────────────────────────────────────────────
 
 /// Predict where the target will be when a projectile arrives.
@@ -67,6 +70,7 @@ pub fn tick_weapon_cooldowns(time: Res<Time>, mut query: Query<&mut Mounts, With
             if let Some(ref mut weapon) = mount.weapon {
                 weapon.cooldown = (weapon.cooldown - dt).max(0.0);
                 weapon.pd_retarget_cooldown = (weapon.pd_retarget_cooldown - dt).max(0.0);
+                weapon.fire_delay = (weapon.fire_delay - dt).max(0.0);
 
                 // VLS tube reloading: each tube reloads independently
                 let max_tubes = weapon.weapon_type.profile().tubes;
@@ -117,6 +121,9 @@ pub fn auto_fire(
         let to_target = (target_pos_xz - ship_pos).normalize_or_zero();
         let range = (target_pos_xz - ship_pos).length();
 
+        // Track which mount indices fired this frame (for stagger delay propagation)
+        let mut fired_indices: Vec<usize> = Vec::new();
+
         for mount_idx in 0..mounts.0.len() {
             let mount = &mounts.0[mount_idx];
             let Some(ref weapon) = mount.weapon else {
@@ -131,6 +138,11 @@ pub fn auto_fire(
 
             // Only cannons auto-fire; missiles and PD are handled separately
             if weapon.weapon_type.category() != WeaponCategory::Cannon {
+                continue;
+            }
+
+            // Stagger delay: cannon must wait for its fire_delay to expire
+            if weapon.fire_delay > 0.0 {
                 continue;
             }
 
@@ -203,6 +215,31 @@ pub fn auto_fire(
             // Update weapon state
             let weapon_mut = mounts.0[mount_idx].weapon.as_mut().unwrap();
             weapon_mut.cooldown = profile.fire_rate_secs;
+
+            fired_indices.push(mount_idx);
+        }
+
+        // Apply stagger delay: each cannon that fired sets fire_delay on the
+        // next unfired cannon, naturally spacing them out across frames.
+        if !fired_indices.is_empty() {
+            let mut stagger_count = 0u32;
+            for mount_idx in 0..mounts.0.len() {
+                let Some(ref mut weapon) = mounts.0[mount_idx].weapon else {
+                    continue;
+                };
+                if weapon.weapon_type.category() != WeaponCategory::Cannon {
+                    continue;
+                }
+                if fired_indices.contains(&mount_idx) {
+                    // This one already fired — bump the stagger counter
+                    stagger_count += 1;
+                    continue;
+                }
+                // Unfired cannon after one or more fired: set stagger delay
+                if stagger_count > 0 && weapon.cooldown <= 0.0 {
+                    weapon.fire_delay = CANNON_STAGGER_DELAY * stagger_count as f32;
+                }
+            }
         }
     }
 }
@@ -387,5 +424,94 @@ mod tests {
         // by process_missile_queue instead
         let profile = WeaponType::HeavyVLS.profile();
         assert!(profile.tubes > 0);
+    }
+
+    #[test]
+    fn fire_delay_ticks_down() {
+        use crate::weapon::{WeaponState, WeaponType};
+
+        let mut weapon = WeaponState {
+            weapon_type: WeaponType::Cannon,
+            ammo: 0,
+            cooldown: 0.0,
+            pd_retarget_cooldown: 0.0,
+            tubes_loaded: 0,
+            tube_reload_timer: 0.0,
+            fire_delay: 1.0,
+        };
+
+        // Simulate tick_weapon_cooldowns logic for fire_delay
+        let dt = 0.1_f32;
+        weapon.fire_delay = (weapon.fire_delay - dt).max(0.0);
+        assert!((weapon.fire_delay - 0.9).abs() < 0.001, "fire_delay should tick down by dt");
+
+        // Tick all the way down
+        for _ in 0..9 {
+            weapon.fire_delay = (weapon.fire_delay - dt).max(0.0);
+        }
+        assert!(weapon.fire_delay.abs() < 0.001, "fire_delay should clamp at 0.0");
+    }
+
+    #[test]
+    fn cannon_stagger_sets_delay() {
+        use crate::weapon::{Mount, MountSize, WeaponState, WeaponType};
+
+        // Simulate the stagger logic: when mount 0 fires (cooldown reset),
+        // mount 1 (unfired, cooldown=0) should get fire_delay = CANNON_STAGGER_DELAY.
+        let mut mounts = vec![
+            Mount {
+                size: MountSize::Medium,
+                offset: Vec2::ZERO,
+                weapon: Some(WeaponState {
+                    weapon_type: WeaponType::Cannon,
+                    ammo: 0,
+                    cooldown: 1.0, // already fired (cooldown reset)
+                    pd_retarget_cooldown: 0.0,
+                    tubes_loaded: 0,
+                    tube_reload_timer: 0.0,
+                    fire_delay: 0.0,
+                }),
+            },
+            Mount {
+                size: MountSize::Medium,
+                offset: Vec2::ZERO,
+                weapon: Some(WeaponState {
+                    weapon_type: WeaponType::Cannon,
+                    ammo: 0,
+                    cooldown: 0.0, // ready but should be staggered
+                    pd_retarget_cooldown: 0.0,
+                    tubes_loaded: 0,
+                    tube_reload_timer: 0.0,
+                    fire_delay: 0.0,
+                }),
+            },
+        ];
+
+        // Apply stagger logic: mount 0 fired this frame
+        let fired_indices = vec![0usize];
+        let mut stagger_count = 0u32;
+        for mount_idx in 0..mounts.len() {
+            let Some(ref mut weapon) = mounts[mount_idx].weapon else {
+                continue;
+            };
+            if weapon.weapon_type.category() != WeaponCategory::Cannon {
+                continue;
+            }
+            if fired_indices.contains(&mount_idx) {
+                stagger_count += 1;
+                continue;
+            }
+            if stagger_count > 0 && weapon.cooldown <= 0.0 {
+                weapon.fire_delay = CANNON_STAGGER_DELAY * stagger_count as f32;
+            }
+        }
+
+        let w1 = mounts[1].weapon.as_ref().unwrap();
+        assert!(
+            (w1.fire_delay - CANNON_STAGGER_DELAY).abs() < 0.001,
+            "second cannon should have fire_delay = {}, got {}",
+            CANNON_STAGGER_DELAY,
+            w1.fire_delay
+        );
     }
 }

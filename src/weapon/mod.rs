@@ -203,6 +203,10 @@ pub struct WeaponState {
     /// Counts down; when it reaches 0, one tube is reloaded (tubes_loaded += 1).
     #[serde(default)]
     pub tube_reload_timer: f32,
+    /// Stagger delay for cannon volleys. While > 0, this cannon cannot fire.
+    /// Set by a sibling cannon firing to create staggered volleys.
+    #[serde(default)]
+    pub fire_delay: f32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug)]
