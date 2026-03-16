@@ -76,7 +76,7 @@ pub struct ShipProfile {
 impl ShipClass {
     /// Fixed mount layout for this ship class — sizes and positions.
     /// This defines what slots exist; weapons are assigned separately.
-    fn mount_layout(&self) -> Vec<(MountSize, Vec2)> {
+    pub fn mount_layout(&self) -> Vec<(MountSize, Vec2)> {
         match self {
             ShipClass::Battleship => vec![
                 (MountSize::Large, Vec2::new(-8.0, 6.0)),
@@ -106,7 +106,7 @@ impl ShipClass {
     /// Battleship: 2 Large, 2 Medium, 2 Small
     /// Destroyer:  1 Large, 2 Medium, 1 Small
     /// Scout:      1 Medium, 1 Small
-    fn default_loadout(&self) -> Vec<Option<WeaponType>> {
+    pub fn default_loadout(&self) -> Vec<Option<WeaponType>> {
         match self {
             ShipClass::Battleship => vec![
                 Some(WeaponType::HeavyCannon), // Large

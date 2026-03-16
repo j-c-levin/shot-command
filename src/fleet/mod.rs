@@ -53,6 +53,59 @@ pub fn fleet_cost(specs: &[ShipSpec]) -> u16 {
     specs.iter().map(ship_spec_cost).sum()
 }
 
+/// Errors that can occur when validating a fleet composition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum FleetError {
+    /// Fleet has no ships.
+    EmptyFleet,
+    /// Fleet exceeds point budget.
+    OverBudget { cost: u16, budget: u16 },
+    /// Ship loadout length doesn't match mount layout length.
+    WrongSlotCount { ship_index: usize, expected: usize, got: usize },
+    /// Weapon is too large for the mount slot.
+    WeaponTooLarge { ship_index: usize, slot_index: usize, slot_size: MountSize, weapon_size: MountSize },
+}
+
+/// Validate an entire fleet against the budget and mount constraints.
+/// Returns Ok(()) if the fleet is valid, or the first error found.
+pub fn validate_fleet(specs: &[ShipSpec]) -> Result<(), FleetError> {
+    if specs.is_empty() {
+        return Err(FleetError::EmptyFleet);
+    }
+
+    let cost = fleet_cost(specs);
+    if cost > FLEET_BUDGET {
+        return Err(FleetError::OverBudget { cost, budget: FLEET_BUDGET });
+    }
+
+    for (ship_idx, spec) in specs.iter().enumerate() {
+        let layout = spec.class.mount_layout();
+        if spec.loadout.len() != layout.len() {
+            return Err(FleetError::WrongSlotCount {
+                ship_index: ship_idx,
+                expected: layout.len(),
+                got: spec.loadout.len(),
+            });
+        }
+
+        for (slot_idx, (weapon_opt, (slot_size, _))) in spec.loadout.iter().zip(layout.iter()).enumerate() {
+            if let Some(weapon) = weapon_opt {
+                let weapon_size = weapon.mount_size();
+                if !slot_size.fits(weapon_size) {
+                    return Err(FleetError::WeaponTooLarge {
+                        ship_index: ship_idx,
+                        slot_index: slot_idx,
+                        slot_size: *slot_size,
+                        weapon_size,
+                    });
+                }
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -146,5 +199,86 @@ mod tests {
             },
         ];
         assert_eq!(fleet_cost(&specs), 445);
+    }
+
+    #[test]
+    fn validate_valid_fleet() {
+        let specs = vec![
+            ShipSpec {
+                class: ShipClass::Destroyer,
+                loadout: vec![
+                    Some(WeaponType::Railgun),
+                    Some(WeaponType::Cannon),
+                    Some(WeaponType::LaserPD),
+                    Some(WeaponType::CWIS),
+                ],
+            },
+            ShipSpec {
+                class: ShipClass::Scout,
+                loadout: vec![Some(WeaponType::Cannon), Some(WeaponType::CWIS)],
+            },
+        ];
+        assert!(validate_fleet(&specs).is_ok());
+    }
+
+    #[test]
+    fn validate_over_budget() {
+        // 4 battleships = 4 * 375 = 1500 > 1000
+        let specs = vec![
+            ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
+            ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
+            ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
+            ShipSpec { class: ShipClass::Battleship, loadout: vec![None, None, None, None, None, None] },
+        ];
+        assert_eq!(
+            validate_fleet(&specs),
+            Err(FleetError::OverBudget { cost: 1500, budget: 1000 })
+        );
+    }
+
+    #[test]
+    fn validate_wrong_slot_count() {
+        // Scout has 2 slots, giving 3
+        let specs = vec![ShipSpec {
+            class: ShipClass::Scout,
+            loadout: vec![None, None, None],
+        }];
+        assert_eq!(
+            validate_fleet(&specs),
+            Err(FleetError::WrongSlotCount { ship_index: 0, expected: 2, got: 3 })
+        );
+    }
+
+    #[test]
+    fn validate_weapon_too_large() {
+        // Scout: slot 0 is Medium, HeavyCannon requires Large
+        let specs = vec![ShipSpec {
+            class: ShipClass::Scout,
+            loadout: vec![Some(WeaponType::HeavyCannon), Some(WeaponType::CWIS)],
+        }];
+        assert_eq!(
+            validate_fleet(&specs),
+            Err(FleetError::WeaponTooLarge {
+                ship_index: 0,
+                slot_index: 0,
+                slot_size: MountSize::Medium,
+                weapon_size: MountSize::Large,
+            })
+        );
+    }
+
+    #[test]
+    fn validate_empty_fleet() {
+        assert_eq!(validate_fleet(&[]), Err(FleetError::EmptyFleet));
+    }
+
+    #[test]
+    fn validate_downsized_weapon_ok() {
+        // Putting a Small weapon (CWIS) in a Large slot is fine
+        let specs = vec![ShipSpec {
+            class: ShipClass::Scout,
+            loadout: vec![Some(WeaponType::CWIS), Some(WeaponType::CWIS)],
+        }];
+        assert!(validate_fleet(&specs).is_ok());
     }
 }
