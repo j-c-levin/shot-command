@@ -12,6 +12,7 @@ use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
 use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::net::LocalTeam;
 use nebulous_shot_command::ship::ShipVisualsPlugin;
+use nebulous_shot_command::ui::FleetUiPlugin;
 
 #[derive(Parser, Debug)]
 #[command(name = "nebulous-client")]
@@ -50,6 +51,7 @@ fn main() {
             ShipVisualsPlugin,
             FogClientPlugin,
             InputPlugin,
+            FleetUiPlugin,
             ClientNetPlugin,
         ))
         .insert_resource(ClientConnectAddress(cli.connect))

@@ -6,4 +6,5 @@ pub mod input;
 pub mod map;
 pub mod net;
 pub mod ship;
+pub mod ui;
 pub mod weapon;
