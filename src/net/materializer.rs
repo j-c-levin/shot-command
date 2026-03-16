@@ -5,7 +5,8 @@ use crate::input::on_ship_clicked;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation};
-use crate::weapon::missile::{Missile, MissileVelocity};
+use crate::weapon::missile::{Explosion, Missile, MissileVelocity};
+use crate::weapon::pd::{LaserBeam, LaserBeamTarget};
 use crate::weapon::projectile::Projectile;
 
 /// System that watches for newly replicated ship entities (via `Added<Ship>` filter)
@@ -160,6 +161,78 @@ pub fn materialize_missiles(
                 Mesh3d(missile_mesh),
                 MeshMaterial3d(missile_material),
                 child_transform,
+            ));
+    }
+}
+
+/// Materialize laser beam entities as thin bright lines from origin to target.
+pub fn materialize_laser_beams(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<(Entity, &Transform, &LaserBeamTarget), Added<LaserBeam>>,
+) {
+    for (entity, transform, beam_target) in &query {
+        let origin = transform.translation;
+        let target = beam_target.0;
+        let midpoint = (origin + target) / 2.0;
+        let diff = target - origin;
+        let length = diff.length();
+        let dir = diff.normalize_or_zero();
+
+        // Thin cuboid stretched between the two points
+        let beam_mesh = meshes.add(Cuboid::new(0.3, 0.3, length));
+        let beam_material = materials.add(StandardMaterial {
+            base_color: Color::srgb(0.5, 1.0, 0.5),
+            emissive: LinearRgba::new(2.0, 8.0, 2.0, 1.0),
+            unlit: true,
+            ..default()
+        });
+
+        // Orient the cuboid (Z-axis by default) to point along the beam direction
+        let rotation = if dir != Vec3::ZERO {
+            Quat::from_rotation_arc(Vec3::Z, dir)
+        } else {
+            Quat::IDENTITY
+        };
+
+        commands
+            .entity(entity)
+            .insert(Visibility::Visible)
+            .with_child((
+                Mesh3d(beam_mesh),
+                MeshMaterial3d(beam_material),
+                Transform::from_translation(midpoint - origin).with_rotation(rotation),
+                Pickable::IGNORE,
+            ));
+    }
+}
+
+/// System that watches for newly replicated explosion entities and spawns
+/// a bright expanding sphere as a visual flash.
+pub fn materialize_explosions(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+    query: Query<Entity, Added<Explosion>>,
+) {
+    for entity in &query {
+        let mesh = meshes.add(Sphere::new(3.0).mesh().uv(8, 8));
+        let material = materials.add(StandardMaterial {
+            base_color: Color::srgba(1.0, 0.6, 0.1, 0.9),
+            emissive: LinearRgba::new(10.0, 5.0, 1.0, 1.0),
+            unlit: true,
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+
+        commands
+            .entity(entity)
+            .insert(Visibility::Visible)
+            .with_child((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                Transform::IDENTITY,
             ));
     }
 }

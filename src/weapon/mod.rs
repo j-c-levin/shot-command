@@ -132,13 +132,13 @@ impl WeaponType {
                 fire_rate_secs: 1.0,
                 burst_count: 1,
                 damage: 10,
-                firing_range: 150.0,
+                firing_range: 300.0,
                 projectile_speed: 0.0,
                 spread_degrees: 0.0,
                 arc: FiringArc::Turret,
                 tubes: 0,
                 missile_fuel: 0.0,
-                pd_cylinder_radius: 150.0,
+                pd_cylinder_radius: 300.0,
             },
             WeaponType::CWIS => WeaponProfile {
                 fire_rate_secs: 0.1,
@@ -281,9 +281,9 @@ mod tests {
         let p = WeaponType::LaserPD.profile();
         assert_eq!(p.damage, 10);
         assert_eq!(p.fire_rate_secs, 1.0);
-        assert_eq!(p.firing_range, 150.0);
+        assert_eq!(p.firing_range, 300.0);
         assert_eq!(p.projectile_speed, 0.0);
-        assert_eq!(p.pd_cylinder_radius, 150.0);
+        assert_eq!(p.pd_cylinder_radius, 300.0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 

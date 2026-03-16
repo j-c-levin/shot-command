@@ -104,6 +104,9 @@ fn camera_pan(
     }
 }
 
+/// Supreme Commander-style zoom: scroll zooms toward the point on the ground
+/// plane (Y=0) under the camera's look target. Zoom in moves toward that point,
+/// zoom out pulls back from it.
 fn camera_zoom(
     scroll: Res<AccumulatedMouseScroll>,
     settings: Res<CameraSettings>,
@@ -117,9 +120,23 @@ fn camera_zoom(
         return;
     };
 
-    let zoom_amount = scroll.delta.y * settings.zoom_speed;
+    // Find where the camera ray hits the ground plane (Y=0)
     let forward = transform.forward().as_vec3();
-    let new_pos = transform.translation + forward * zoom_amount;
+    let ground_target = if forward.y.abs() > 0.001 {
+        let dist = transform.translation.y / (-forward.y).max(0.001);
+        transform.translation + forward * dist
+    } else {
+        Vec3::ZERO
+    };
+
+    // Zoom factor — multiplicative for smooth feel at all distances
+    let zoom_factor = 1.0 - scroll.delta.y * 0.1;
+    let zoom_factor = zoom_factor.clamp(0.8, 1.2);
+
+    // Move camera toward/away from ground target
+    let offset = transform.translation - ground_target;
+    let new_offset = offset * zoom_factor;
+    let new_pos = ground_target + new_offset;
 
     if new_pos.y > settings.min_zoom && new_pos.y < settings.max_zoom {
         transform.translation = new_pos;

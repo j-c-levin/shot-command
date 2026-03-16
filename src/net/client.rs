@@ -37,6 +37,8 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::materialize_asteroids,
                 super::materializer::materialize_projectiles,
                 super::materializer::materialize_missiles,
+                super::materializer::materialize_explosions,
+                super::materializer::materialize_laser_beams,
                 super::materializer::update_target_indicators,
             )
                 .run_if(in_state(GameState::Playing)),
@@ -129,14 +131,14 @@ fn client_setup_scene(
     };
     commands.insert_resource(bounds.clone());
 
-    // Ground plane for click-to-move picking
-    let size = bounds.size();
+    // Ground plane for click-to-move picking (3x map bounds so edge clicks always register)
+    let size = bounds.size() * 3.0;
     commands.spawn((
         GroundPlane,
         Mesh3d(meshes.add(Plane3d::new(Vec3::Y, Vec2::new(size.x / 2.0, size.y / 2.0)))),
         MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgb(0.02, 0.02, 0.05),
-            perceptual_roughness: 1.0,
+            base_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
+            alpha_mode: AlphaMode::Blend,
             ..default()
         })),
         Transform::from_xyz(0.0, 0.0, 0.0),

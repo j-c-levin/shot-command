@@ -23,6 +23,7 @@ use crate::weapon::missile::{
     Explosion, ExplosionTimer, Missile, MissileDamage, MissileFuel,
     MissileOwner, MissileTarget, MissileVelocity,
 };
+use crate::weapon::pd::{LaserBeam, LaserBeamTarget, LaserBeamTimer};
 use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 pub struct SharedReplicationPlugin;
@@ -55,7 +56,10 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<MissileOwner>()
             .replicate::<MissileFuel>()
             .replicate::<Explosion>()
-            .replicate::<ExplosionTimer>();
+            .replicate::<ExplosionTimer>()
+            .replicate::<LaserBeam>()
+            .replicate::<LaserBeamTarget>()
+            .replicate::<LaserBeamTimer>();
 
         // ShipSecrets entity components (team-private state)
         app.replicate::<ShipSecrets>()

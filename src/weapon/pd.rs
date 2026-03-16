@@ -2,9 +2,23 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::Replicated;
 use rand::Rng;
 
+use serde::{Deserialize, Serialize};
+
 use crate::game::{GameState, Team};
 use crate::ship::Ship;
 use crate::weapon::missile::{Missile, MissileOwner, MissileVelocity};
+
+/// Marker for a laser beam visual entity (server-spawned, client-materialized).
+#[derive(Component, Serialize, Deserialize)]
+pub struct LaserBeam;
+
+/// The target end-point of the laser beam (beam goes from entity Transform to this point).
+#[derive(Component, Serialize, Deserialize, Clone)]
+pub struct LaserBeamTarget(pub Vec3);
+
+/// Remaining time before the beam despawns.
+#[derive(Component, Serialize, Deserialize, Clone)]
+pub struct LaserBeamTimer(pub f32);
 use crate::weapon::projectile::{
     CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity,
 };
@@ -23,7 +37,7 @@ const LASER_PD_HIT_CHANCE: f32 = 0.6;
 const CWIS_VISUAL_RANGE: f32 = 150.0;
 
 /// Seconds a PD mount must wait before engaging a new target after a kill.
-const PD_RETARGET_DELAY: f32 = 1.0;
+const PD_RETARGET_DELAY: f32 = 0.2;
 
 // ── Pure functions ─────────────────────────────────────────────────────
 
@@ -92,15 +106,25 @@ fn laser_pd_fire(
             }
 
             if let Some(target_entity) = closest_entity {
+                let target_pos = missile_query.get(target_entity).unwrap().1.translation;
+
+                // Spawn visible laser beam from ship to missile
+                let beam_origin = ship_pos + Vec3::new(0.0, 5.0, 0.0);
+                commands.spawn((
+                    LaserBeam,
+                    LaserBeamTarget(target_pos),
+                    LaserBeamTimer(0.3),
+                    Transform::from_translation(beam_origin),
+                    Replicated,
+                ));
+
                 // 60% chance to destroy outright
                 let killed = rng.random_range(0.0..1.0) < LASER_PD_HIT_CHANCE;
                 if killed {
-                    if let Ok((_, missile_tf, _)) = missile_query.get(target_entity) {
-                        crate::weapon::missile::spawn_small_explosion(
-                            &mut commands,
-                            missile_tf.translation,
-                        );
-                    }
+                    crate::weapon::missile::spawn_small_explosion(
+                        &mut commands,
+                        target_pos,
+                    );
                     commands.entity(target_entity).despawn();
                 }
 
@@ -229,6 +253,21 @@ fn cwis_fire(
     }
 }
 
+/// Tick laser beam timers and despawn expired beams.
+fn tick_laser_beams(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut LaserBeamTimer), With<LaserBeam>>,
+) {
+    let dt = time.delta_secs();
+    for (entity, mut timer) in &mut query {
+        timer.0 -= dt;
+        if timer.0 <= 0.0 {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 // ── Plugin ─────────────────────────────────────────────────────────────
 
 pub struct PdPlugin;
@@ -240,6 +279,10 @@ impl Plugin for PdPlugin {
             (laser_pd_fire, cwis_fire)
                 .before(crate::weapon::missile::check_missile_hits)
                 .run_if(in_state(GameState::Playing)),
+        );
+        app.add_systems(
+            Update,
+            tick_laser_beams.run_if(in_state(GameState::Playing)),
         );
     }
 }

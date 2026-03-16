@@ -30,7 +30,7 @@ use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, TargetDesignation,
     WaypointQueue, ship_xz_position, spawn_server_ship,
 };
-use crate::weapon::missile::Missile;
+use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
 
@@ -697,7 +697,7 @@ fn server_update_visibility(
     client_teams: Res<ClientTeams>,
     ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
     secrets_query: Query<(Entity, &ShipSecretsOwner), With<ShipSecrets>>,
-    missile_query: Query<(Entity, &Transform), With<Missile>>,
+    missile_query: Query<(Entity, &Transform, &MissileOwner), With<Missile>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
     mut clients: Query<(Entity, &mut ClientVisibility), With<ConnectedClient>>,
 ) {
@@ -749,19 +749,29 @@ fn server_update_visibility(
             }
         }
 
-        // Missile entity visibility (LOS-based, same as enemy ships)
-        for (missile_entity, missile_transform) in &missile_query {
-            let missile_pos = Vec2::new(
-                missile_transform.translation.x,
-                missile_transform.translation.z,
-            );
-            let seen = all_ships.iter().any(
-                |&(_, friendly_pos, friendly_range, ship_team)| {
-                    ship_team == *client_team
-                        && is_in_los(friendly_pos, missile_pos, friendly_range, &asteroids)
-                },
-            );
-            client_visibility.set(missile_entity, **los_bit, seen);
+        // Missile entity visibility:
+        // Own team's missiles: always visible (you can track your own missiles)
+        // Enemy missiles: LOS-based (only visible if a friendly ship can see them)
+        for (missile_entity, missile_transform, missile_owner) in &missile_query {
+            let is_friendly = ship_teams
+                .get(&missile_owner.0)
+                .is_some_and(|owner_team| *owner_team == *client_team);
+
+            let visible = if is_friendly {
+                true
+            } else {
+                let missile_pos = Vec2::new(
+                    missile_transform.translation.x,
+                    missile_transform.translation.z,
+                );
+                all_ships.iter().any(
+                    |&(_, friendly_pos, friendly_range, ship_team)| {
+                        ship_team == *client_team
+                            && is_in_los(friendly_pos, missile_pos, friendly_range, &asteroids)
+                    },
+                )
+            };
+            client_visibility.set(missile_entity, **los_bit, visible);
         }
     }
 }

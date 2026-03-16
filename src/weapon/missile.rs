@@ -22,7 +22,7 @@ pub const SEEKER_HALF_ANGLE: f32 = 0.5236;
 
 /// Maximum range at which the seeker can acquire targets (meters).
 /// Prevents missiles from locking onto distant targets immediately after launch.
-pub const SEEKER_MAX_RANGE: f32 = 100.0;
+pub const SEEKER_MAX_RANGE: f32 = 200.0;
 
 /// Maximum turn rate for missile steering (radians per second).
 /// ~90°/s gives smooth arcing turns.
