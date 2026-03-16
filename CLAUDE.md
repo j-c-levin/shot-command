@@ -39,7 +39,7 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 110 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 137 tests:
 
 | Module | # | What's tested |
 |---|---|---|
@@ -47,8 +47,10 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently
 | `src/weapon/missile.rs` | 18 | Intercept point (stationary, moving, zero speed), seeker cone (inside/outside/ahead/behind), spawn_missile components+velocity, flat flight, seeker acquisition, asteroid collision |
 | `src/camera/mod.rs` | 14 | CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), camera pan controls |
 | `src/fog/mod.rs` | 11 | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
-| `src/weapon/mod.rs` | 10 | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS values), mount size mapping, weapon categories, VLS tube reload |
-| `src/game/mod.rs` | 7 | Team constants, GameState default/variants, EnemyVisibility default, Health damage/saturation |
+| `src/weapon/mod.rs` | 13 | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS values), mount size mapping, weapon categories, VLS tube reload, MountSize::fits (same/smaller/rejects larger) |
+| `src/fleet/mod.rs` | 19 | Hull costs, weapon costs, ship spec cost (full/empty), fleet cost, fleet validation (valid/over budget/wrong slots/weapon too large/empty/downsized ok) |
+| `src/game/mod.rs` | 8 | Team constants, GameState default/variants/fleet_composition, EnemyVisibility default, Health damage/saturation |
+| `src/net/server.rs` | 4 | Asteroid exclusion zones (near corners, outside, boundary) |
 | `src/weapon/firing.rs` | 7 | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone) |
 | `src/weapon/projectile.rs` | 6 | Projectile spawning, direction normalization, advancement, bounds despawn |
 | `src/map/mod.rs` | 6 | MapBounds contains/clamp/size |
@@ -63,9 +65,15 @@ Library crate (`src/lib.rs`) with two binaries:
 
 ### Modules
 
-- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (u16), Destroyed marker, DestroyTimer
+- `src/fleet/` — Fleet composition module:
+  - `mod.rs` — ShipSpec (class + loadout), FLEET_BUDGET (1000), hull_cost/weapon_cost, ship_spec_cost/fleet_cost, FleetError, validate_fleet, FleetPlugin
+  - `lobby.rs` — LobbyTracker resource (submissions + countdown), LobbyPlugin, handle_fleet_submission/handle_cancel_submission observers, tick_lobby_countdown system
+- `src/ui/` — Client UI module:
+  - `mod.rs` — FleetUiPlugin (spawn/despawn on FleetComposition state)
+  - `fleet_builder.rs` — FleetBuilderState resource, two-panel fleet builder UI (ship list + ship detail), popup system (ship picker, weapon picker), submit/cancel toggle, budget display, lobby status text
+- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→FleetComposition→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (u16), Destroyed marker, DestroyTimer
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
-- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship
+- `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipSecrets/ShipSecretsOwner (per-component visibility), ShipPhysicsPlugin (server) / ShipVisualsPlugin (client), spawn_server_ship (takes &ShipSpec), spawn_server_ship_default (convenience with default loadout)
 - `src/weapon/` — Weapon system:
   - `mod.rs` — MountSize, WeaponType (HeavyCannon/Cannon/Railgun/HeavyVLS/LightVLS/LaserPD/CWIS), WeaponCategory (Cannon/Missile/PointDefense), FiringArc, WeaponProfile, WeaponState (incl. tubes_loaded, tube_reload_timer for VLS), Mount, Mounts component, MissileQueue/MissileQueueEntry
   - `projectile.rs` — Projectile/ProjectileVelocity/ProjectileDamage/ProjectileOwner/CwisRound components, spawn_projectile, ProjectilePlugin (advance, bounds, hit detection, CWIS hit detection)
@@ -78,9 +86,9 @@ Library crate (`src/lib.rs`) with two binaries:
 - `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
 - `src/net/` — Networking module:
   - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
-  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand (client→server with MapEntities), TeamAssignment, GameResult (server→client)
+  - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, FleetSubmission, CancelSubmission (client→server with MapEntities), TeamAssignment, GameResult, LobbyStatus, GameStarted (server→client), LobbyState enum
   - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target), LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting), target visibility clearing, disconnection handling
-  - `client.rs` — ClientNetPlugin: renet transport, team assignment observer, ground plane setup, materializer/asteroid registration
+  - `client.rs` — ClientNetPlugin: renet transport, team assignment observer (→FleetComposition), lobby status observer, game started observer (→Playing), ground plane setup, materializer/asteroid registration, CurrentLobbyState resource
   - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system. Selection indicator (green, larger, at ship center Y). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking.
 
 ### System ordering (Update schedule)
@@ -102,6 +110,10 @@ Library crate (`src/lib.rs`) with two binaries:
 **Server — Networking:** sync_ship_secrets → server_update_visibility (LOS per-client) → clear_lost_targets
 
 **Client — Visual indicators** (parallel): waypoint markers, facing direction arrows (read from ShipSecrets), targeting indicators
+
+**Server — Lobby (WaitingForPlayers):** handle_fleet_submission (observer) → handle_cancel_submission (observer) → tick_lobby_countdown (Update)
+
+**Client — Fleet UI (FleetComposition):** rebuild_fleet_list, rebuild_ship_detail, spawn_popup, handle clicks, update_budget_text, update_status_text, update_submit_button
 
 **Client — Fog:** fade_out_ghosts (fading ghost entities from visibility loss)
 
@@ -126,13 +138,15 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Explosions**: Two sizes — ship impact (large) vs PD kill (small).
 - **Targeting**: K+left-click enemy designates target. K again clears. Target auto-clears when enemy leaves LOS. TargetDesignation synced via ShipSecrets (team-private).
 - **Destruction**: Ships at 0 HP get Destroyed marker + 1s delay timer, then despawn (ship + ShipSecrets). Ghost fade-out fires on despawn. Win condition: all enemy ships destroyed → GameResult broadcast → GameOver state.
+- **Fleet composition**: 1000pt budget. Hull costs: BB 375, DD 150, Scout 45. Weapon costs: 10-40pts. Downsizing allowed (smaller weapons in larger slots). Server-authoritative lobby validates and stores submissions. FleetBuilderState is client-local, reset on state exit.
+- **Lobby protocol**: FleetSubmission/CancelSubmission (client→server), LobbyStatus/GameStarted (server→client). LobbyTracker resource tracks submissions + countdown. Server stays in WaitingForPlayers throughout.
 
 ### Connection flow
 
-**Server:** Setup → WaitingForPlayers (bind, listen) → Playing (when 2 clients authorized)
-**Client:** Setup → Connecting (connect to server) → Playing (when TeamAssignment received)
+**Server:** Setup → WaitingForPlayers (bind, listen, lobby) → Playing (when both fleets submitted + 3s countdown)
+**Client:** Setup → Connecting (connect to server) → FleetComposition (on TeamAssignment) → Playing (on GameStarted)
 
-Server spawns symmetric fleets (1 battleship, 1 destroyer, 1 scout per team, mirrored positions) and 12 random asteroids on entering Playing.
+Server sends TeamAssignment immediately on connect. Clients enter FleetComposition independently (no waiting for opponent). Both submit fleets → 3s countdown → server spawns from specs → Playing. Either can cancel during countdown to re-edit. Server spawns fleets from LobbyTracker submissions (or default fleet as fallback) + 12 random asteroids with exclusion zones around spawn corners.
 
 ## Bevy 0.18 notes
 
@@ -185,8 +199,12 @@ CWIS 100m kill / 150m visual), M-key missile mode, explosion effects, F3 debug v
 strategic camera zoom, selection indicator improvements. See design doc at
 `docs/plans/2026-03-15-phase3b-missiles-pd-design.md`.
 
-**Next up: Phase 3c — Fleet Composition Screen** (pre-game loadout with point budget)
-**Phase 4: Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
+**Phase 3c: Fleet Composition Screen — COMPLETE.** Pre-game fleet builder with 1000pt
+budget, clickable Bevy UI (two-panel layout: ship list + weapon slots), server-authoritative
+lobby with submit/cancel/countdown, spec-based fleet spawning, mount downsizing, asteroid
+exclusion zones. See design doc at `docs/plans/2026-03-16-phase3c-fleet-composition-design.md`.
+
+**Next up: Phase 4 — Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
 **Phase 5: Depth** (directional damage, repair, beams)
 
 ## Pre-approvals
