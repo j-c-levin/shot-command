@@ -303,6 +303,7 @@ pub fn on_ground_clicked(
             ship: entity,
             destination,
             append: shift,
+            facing: None,
         });
     }
 }
@@ -425,6 +426,7 @@ fn handle_keyboard(
                 ship: entity,
                 destination: pos,
                 append: false,
+                facing: None,
             });
             commands.client_trigger(FacingUnlockCommand { ship: entity });
             commands.client_trigger(ClearTargetCommand { ship: entity });

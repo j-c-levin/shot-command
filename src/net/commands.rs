@@ -6,12 +6,15 @@ use crate::fleet::ShipSpec;
 use crate::game::Team;
 
 /// Client → server: order a ship to move.
+/// If `facing` is `Some(dir)`, also lock the ship's facing to that direction
+/// and rotate formation offsets accordingly.
 #[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
 pub struct MoveCommand {
     #[entities]
     pub ship: Entity,
     pub destination: Vec2,
     pub append: bool,
+    pub facing: Option<Vec2>,
 }
 
 /// Client → server: lock a ship's facing to a direction.
