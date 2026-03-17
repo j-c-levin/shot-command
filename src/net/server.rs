@@ -794,8 +794,37 @@ fn handle_join_squad(
         offset,
     });
 
-    // Recompute squad speed limit for the new leader's squad
+    // Recompute squad speed limit for the new leader's squad.
+    // Note: cmd.ship's SquadMember was just inserted (deferred), so recompute_squad_speed_limit
+    // won't see it in the query. We manually include cmd.ship's speed and entity.
     recompute_squad_speed_limit(&mut commands, cmd.leader, &class_query, &squad_query);
+    // Also apply the limit to the newly joined ship (which wasn't in the query above)
+    if let Ok(ship_class) = class_query.get(cmd.ship) {
+        // Get the leader's current limit (just computed) or leader's own speed
+        let leader_speed = class_query
+            .get(cmd.leader)
+            .map(|c| c.profile().top_speed)
+            .unwrap_or(f32::MAX);
+        let ship_speed = ship_class.profile().top_speed;
+        let min_speed = leader_speed.min(ship_speed);
+        // Check existing followers too
+        let mut squad_min = min_speed;
+        for (follower_entity, squad) in squad_query.iter() {
+            if squad.leader == cmd.leader {
+                if let Ok(fc) = class_query.get(follower_entity) {
+                    squad_min = squad_min.min(fc.profile().top_speed);
+                }
+            }
+        }
+        // Apply to all members including the new one
+        commands.entity(cmd.leader).insert(SquadSpeedLimit(squad_min));
+        commands.entity(cmd.ship).insert(SquadSpeedLimit(squad_min));
+        for (follower_entity, squad) in squad_query.iter() {
+            if squad.leader == cmd.leader {
+                commands.entity(follower_entity).insert(SquadSpeedLimit(squad_min));
+            }
+        }
+    }
 
     info!(
         "JoinSquadCommand applied: ship {:?} joined squad of {:?} with offset ({:.0}, {:.0})",

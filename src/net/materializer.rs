@@ -552,28 +552,29 @@ pub fn update_squad_highlight_indicators(
         commands.entity(entity).despawn();
     }
 
-    // Spawn new indicators for highlighted followers
+    // Spawn new indicators for highlighted followers (at ship height)
     for transform in &highlight_query {
         let pos = transform.translation;
         commands.spawn((
             SquadHighlightIndicator,
             Mesh3d(assets.highlight_mesh.clone()),
             MeshMaterial3d(assets.highlight_material.clone()),
-            Transform::from_xyz(pos.x, pos.y, pos.z),
+            Transform::from_xyz(pos.x, 5.0, pos.z),
             Pickable::IGNORE,
         ));
     }
 }
 
 /// Helper: spawn a cyan connection line between two world XZ positions.
+/// Line is drawn at ship height (Y=5) so it's visible from the strategic camera.
 fn spawn_connection_line(
     commands: &mut Commands,
     assets: &SquadIndicatorAssets,
     from_pos: Vec3,
     to_pos: Vec3,
 ) {
-    let from = Vec3::new(from_pos.x, 1.0, from_pos.z);
-    let to = Vec3::new(to_pos.x, 1.0, to_pos.z);
+    let from = Vec3::new(from_pos.x, 5.0, from_pos.z);
+    let to = Vec3::new(to_pos.x, 5.0, to_pos.z);
     let diff = to - from;
     let length = diff.length();
     if length < 1.0 {
@@ -581,8 +582,10 @@ fn spawn_connection_line(
     }
 
     let mid = from + diff * 0.5;
-    let dir = diff.normalize();
-    let rotation = Quat::from_rotation_arc(Vec3::Y, dir);
+    // Compute rotation to align Y-axis capsule along the XZ direction
+    let dir_xz = Vec3::new(diff.x, 0.0, diff.z).normalize();
+    // Rotate from Y-up to horizontal direction
+    let rotation = Quat::from_rotation_arc(Vec3::Y, dir_xz);
 
     commands.spawn((
         SquadConnectionLine,
@@ -590,7 +593,7 @@ fn spawn_connection_line(
         MeshMaterial3d(assets.line_material.clone()),
         Transform::from_translation(mid)
             .with_rotation(rotation)
-            .with_scale(Vec3::new(1.0, length, 1.0)),
+            .with_scale(Vec3::new(2.0, length, 2.0)),
         Pickable::IGNORE,
     ));
 }
