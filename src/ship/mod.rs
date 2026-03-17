@@ -188,7 +188,7 @@ impl ShipClass {
         match self {
             ShipClass::Battleship => ShipProfile {
                 hp: 1200,
-                engine_hp: 400,
+                engine_hp: 300,
 
                 acceleration: 6.0,
                 thruster_factor: 0.2,
@@ -201,7 +201,7 @@ impl ShipClass {
             },
             ShipClass::Destroyer => ShipProfile {
                 hp: 600,
-                engine_hp: 300,
+                engine_hp: 180,
 
                 acceleration: 10.0,
                 thruster_factor: 0.3,
@@ -214,7 +214,7 @@ impl ShipClass {
             },
             ShipClass::Scout => ShipProfile {
                 hp: 300,
-                engine_hp: 200,
+                engine_hp: 120,
 
                 acceleration: 14.0,
                 thruster_factor: 0.5,
@@ -1291,7 +1291,7 @@ mod tests {
     fn battleship_hp_pools() {
         let p = ShipClass::Battleship.profile();
         assert_eq!(p.hp, 1200);
-        assert_eq!(p.engine_hp, 400);
+        assert_eq!(p.engine_hp, 300);
         // component_hp removed — HP is per mount size, not per ship class
     }
 
@@ -1299,7 +1299,7 @@ mod tests {
     fn destroyer_hp_pools() {
         let p = ShipClass::Destroyer.profile();
         assert_eq!(p.hp, 600);
-        assert_eq!(p.engine_hp, 300);
+        assert_eq!(p.engine_hp, 180);
         // component_hp removed — HP is per mount size, not per ship class
     }
 
@@ -1307,7 +1307,7 @@ mod tests {
     fn scout_hp_pools() {
         let p = ShipClass::Scout.profile();
         assert_eq!(p.hp, 300);
-        assert_eq!(p.engine_hp, 200);
+        assert_eq!(p.engine_hp, 120);
         // component_hp removed — HP is per mount size, not per ship class
     }
 

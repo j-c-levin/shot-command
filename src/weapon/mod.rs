@@ -101,7 +101,7 @@ impl WeaponType {
             WeaponType::HeavyCannon => WeaponProfile {
                 fire_rate_secs: 3.0,
                 burst_count: 3,
-                damage: 15,
+                damage: 25,
                 firing_range: 300.0,
                 projectile_speed: 150.0,
                 spread_degrees: 2.0,
@@ -113,7 +113,7 @@ impl WeaponType {
             WeaponType::Cannon => WeaponProfile {
                 fire_rate_secs: 1.0,
                 burst_count: 1,
-                damage: 8,
+                damage: 20,
                 firing_range: 200.0,
                 projectile_speed: 120.0,
                 spread_degrees: 2.0,
@@ -304,7 +304,7 @@ mod tests {
     #[test]
     fn heavy_cannon_profile_values() {
         let p = WeaponType::HeavyCannon.profile();
-        assert_eq!(p.damage, 15);
+        assert_eq!(p.damage, 25);
         assert_eq!(p.burst_count, 3);
         assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 300.0);
@@ -314,7 +314,7 @@ mod tests {
     #[test]
     fn cannon_profile_values() {
         let p = WeaponType::Cannon.profile();
-        assert_eq!(p.damage, 8);
+        assert_eq!(p.damage, 20);
         assert_eq!(p.burst_count, 1);
         assert_eq!(p.fire_rate_secs, 1.0);
         assert_eq!(p.firing_range, 200.0);
