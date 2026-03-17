@@ -65,6 +65,8 @@ pub enum ShipClass {
 #[derive(Clone, Debug)]
 pub struct ShipProfile {
     pub hp: u16,
+    pub engine_hp: u16,
+    pub component_hp: u16,
     pub acceleration: f32,
     pub thruster_factor: f32,
     pub turn_rate: f32,
@@ -153,6 +155,9 @@ impl ShipClass {
                         fire_delay: 0.0,
                     }
                 }),
+                hp: 0,
+                max_hp: 0,
+                offline_timer: 0.0,
             })
             .collect()
     }
@@ -183,7 +188,9 @@ impl ShipClass {
     pub fn profile(&self) -> ShipProfile {
         match self {
             ShipClass::Battleship => ShipProfile {
-                hp: 200,
+                hp: 1200,
+                engine_hp: 400,
+                component_hp: 150,
                 acceleration: 6.0,
                 thruster_factor: 0.2,
                 turn_rate: 0.8,
@@ -194,7 +201,9 @@ impl ShipClass {
                 rcs: 1.0,
             },
             ShipClass::Destroyer => ShipProfile {
-                hp: 100,
+                hp: 600,
+                engine_hp: 300,
+                component_hp: 100,
                 acceleration: 10.0,
                 thruster_factor: 0.3,
                 turn_rate: 1.5,
@@ -205,7 +214,9 @@ impl ShipClass {
                 rcs: 0.5,
             },
             ShipClass::Scout => ShipProfile {
-                hp: 50,
+                hp: 300,
+                engine_hp: 200,
+                component_hp: 75,
                 acceleration: 14.0,
                 thruster_factor: 0.5,
                 turn_rate: 3.0,
@@ -745,6 +756,9 @@ pub fn spawn_server_ship(
                     fire_delay: 0.0,
                 }
             }),
+            hp: 0,
+            max_hp: 0,
+            offline_timer: 0.0,
         })
         .collect();
 
@@ -1240,5 +1254,29 @@ mod tests {
             assert!(class.profile().rcs > 0.0);
             assert!(class.profile().rcs <= 1.0);
         }
+    }
+
+    #[test]
+    fn battleship_hp_pools() {
+        let p = ShipClass::Battleship.profile();
+        assert_eq!(p.hp, 1200);
+        assert_eq!(p.engine_hp, 400);
+        assert_eq!(p.component_hp, 150);
+    }
+
+    #[test]
+    fn destroyer_hp_pools() {
+        let p = ShipClass::Destroyer.profile();
+        assert_eq!(p.hp, 600);
+        assert_eq!(p.engine_hp, 300);
+        assert_eq!(p.component_hp, 100);
+    }
+
+    #[test]
+    fn scout_hp_pools() {
+        let p = ShipClass::Scout.profile();
+        assert_eq!(p.hp, 300);
+        assert_eq!(p.engine_hp, 200);
+        assert_eq!(p.component_hp, 75);
     }
 }

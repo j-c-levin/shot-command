@@ -471,6 +471,9 @@ mod tests {
                     tube_reload_timer: 0.0,
                     fire_delay: 0.0,
                 }),
+                hp: 100,
+                max_hp: 100,
+                offline_timer: 0.0,
             },
             Mount {
                 size: MountSize::Medium,
@@ -484,6 +487,9 @@ mod tests {
                     tube_reload_timer: 0.0,
                     fire_delay: 0.0,
                 }),
+                hp: 100,
+                max_hp: 100,
+                offline_timer: 0.0,
             },
         ];
 

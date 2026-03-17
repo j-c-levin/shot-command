@@ -244,6 +244,25 @@ pub struct Mount {
     pub size: MountSize,
     pub offset: Vec2,
     pub weapon: Option<WeaponState>,
+    #[serde(default)]
+    pub hp: u16,
+    #[serde(default)]
+    pub max_hp: u16,
+    #[serde(default)]
+    pub offline_timer: f32,
+}
+
+impl Mount {
+    pub fn new(size: MountSize, offset: Vec2, weapon: Option<WeaponState>, hp: u16) -> Self {
+        Self {
+            size,
+            offset,
+            weapon,
+            hp,
+            max_hp: hp,
+            offline_timer: 0.0,
+        }
+    }
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, Component)]
