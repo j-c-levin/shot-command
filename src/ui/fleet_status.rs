@@ -67,13 +67,11 @@ fn spawn_fleet_sidebar(mut commands: Commands) {
             left: Val::Px(0.0),
             top: Val::Px(0.0),
             width: Val::Px(200.0),
-            height: Val::Percent(100.0),
             flex_direction: FlexDirection::Column,
             padding: UiRect::all(Val::Px(4.0)),
             row_gap: Val::Px(4.0),
             ..default()
         },
-        BackgroundColor(Color::srgba(0.05, 0.05, 0.1, 0.75)),
     ));
 }
 
@@ -154,20 +152,16 @@ fn spawn_ship_card(
     parent
         .spawn((
             ShipCard(ship_entity),
+            Interaction::default(),
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(4.0)),
                 row_gap: Val::Px(2.0),
-                border: UiRect::left(Val::Px(3.0)),
+                border: UiRect::all(Val::Px(1.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.9)),
-            BorderColor {
-                left: Color::NONE,
-                top: Color::NONE,
-                right: Color::NONE,
-                bottom: Color::NONE,
-            },
+            BorderColor::all(Color::srgba(0.3, 0.3, 0.4, 0.8)),
         ))
         .with_children(|card| {
             // Row 1: Ship number + class name
@@ -506,12 +500,11 @@ fn update_selection_highlight(
     mut cards: Query<(&ShipCard, &mut BorderColor)>,
 ) {
     for (card, mut border) in &mut cards {
-        let color = if ships.get(card.0).is_ok() {
-            Color::srgba(0.2, 1.0, 0.2, 0.9)
+        *border = if ships.get(card.0).is_ok() {
+            BorderColor::all(Color::srgba(0.2, 1.0, 0.2, 0.9))
         } else {
-            Color::NONE
+            BorderColor::all(Color::srgba(0.3, 0.3, 0.4, 0.8))
         };
-        border.left = color;
     }
 }
 
