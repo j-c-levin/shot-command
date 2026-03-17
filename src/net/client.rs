@@ -46,6 +46,7 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::toggle_debug_visuals,
                 super::materializer::spawn_debug_seeker_cones,
                 super::materializer::update_debug_seeker_cones,
+                super::materializer::draw_pd_range_gizmos,
                 super::materializer::update_enemy_number_labels,
             )
                 .run_if(in_state(GameState::Playing)),

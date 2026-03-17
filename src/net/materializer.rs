@@ -352,9 +352,9 @@ pub fn materialize_explosions(
 
 // ── Debug Visuals ───────────────────────────────────────────────────────
 
-/// Toggle debug visuals on F3.
+/// Toggle debug visuals on `]` key.
 pub fn toggle_debug_visuals(keys: Res<ButtonInput<KeyCode>>, mut dbg_vis: ResMut<DebugVisuals>) {
-    if keys.just_pressed(KeyCode::F3) {
+    if keys.just_pressed(KeyCode::BracketRight) {
         dbg_vis.0 = !dbg_vis.0;
         info!("Debug visuals: {}", if dbg_vis.0 { "ON" } else { "OFF" });
     }
@@ -427,6 +427,61 @@ pub fn update_debug_seeker_cones(
             if let Ok(mut tf) = cone_query.get_mut(child) {
                 tf.rotation = flip;
                 tf.translation = dir * (SEEKER_MAX_RANGE / 2.0);
+            }
+        }
+    }
+}
+
+// ── PD Range Debug Gizmos ───────────────────────────────────────────────
+
+/// Draw CWIS and LaserPD range circles around own ships when debug visuals are on.
+/// CWIS kill range = red circle, CWIS visual range = orange circle.
+/// LaserPD range = magenta circle.
+pub fn draw_pd_range_gizmos(
+    mut gizmos: Gizmos,
+    dbg_vis: Res<DebugVisuals>,
+    local_team: Res<LocalTeam>,
+    ships: Query<(&Transform, &Team, &crate::weapon::Mounts), With<Ship>>,
+) {
+    if !dbg_vis.0 {
+        return;
+    }
+    let Some(my_team) = local_team.0 else { return };
+    for (transform, team, mounts) in &ships {
+        if *team != my_team {
+            continue;
+        }
+        let pos = Vec3::new(transform.translation.x, 0.5, transform.translation.z);
+        let flat_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+        for mount in &mounts.0 {
+            let Some(ref ws) = mount.weapon else { continue };
+            let profile = ws.weapon_type.profile();
+            if profile.pd_cylinder_radius <= 0.0 {
+                continue;
+            }
+            match ws.weapon_type {
+                crate::weapon::WeaponType::CWIS => {
+                    // Kill range (solid red)
+                    gizmos.circle(
+                        Isometry3d::new(pos, flat_rot),
+                        profile.pd_cylinder_radius,
+                        Color::srgba(1.0, 0.2, 0.2, 0.6),
+                    );
+                    // Visual/tracer range (orange)
+                    gizmos.circle(
+                        Isometry3d::new(pos, flat_rot),
+                        150.0, // CWIS_VISUAL_RANGE
+                        Color::srgba(1.0, 0.5, 0.0, 0.4),
+                    );
+                }
+                crate::weapon::WeaponType::LaserPD => {
+                    gizmos.circle(
+                        Isometry3d::new(pos, flat_rot),
+                        profile.pd_cylinder_radius,
+                        Color::srgba(1.0, 0.0, 1.0, 0.5),
+                    );
+                }
+                _ => {}
             }
         }
     }

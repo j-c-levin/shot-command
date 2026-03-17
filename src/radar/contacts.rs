@@ -10,7 +10,7 @@ use crate::game::Team;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::radar::{
     ContactKind, ContactLevel, ContactSourceShip, ContactTeam, ContactTracker,
-    RadarActive, RadarContact, MISSILE_RCS, PROJECTILE_RCS, SIGNATURE_FUZZ_RADIUS,
+    RadarActive, RadarContact, SIGNATURE_FUZZ_RADIUS,
     SIGNATURE_THRESHOLD, TRACK_THRESHOLD, compute_aspect_factor, compute_snr,
 };
 use crate::ship::{Ship, ShipClass, ship_facing_direction, ship_xz_position};
