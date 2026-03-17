@@ -111,9 +111,7 @@ pub struct RemoveWeaponButton {
 }
 
 #[derive(Component)]
-pub struct WeaponPickerOption {
-    pub weapon: WeaponType,
-}
+pub struct WeaponPickerOption(pub Option<WeaponType>);
 
 #[derive(Component)]
 pub struct PopupCloseButton;
@@ -722,9 +720,7 @@ pub fn spawn_popup(
                             // "Empty" option
                             inner
                                 .spawn((
-                                    WeaponPickerOption {
-                                        weapon: WeaponType::CWIS, // placeholder, handled specially
-                                    },
+                                    WeaponPickerOption(None),
                                     Button,
                                     Node {
                                         width: Val::Percent(100.0),
@@ -732,10 +728,6 @@ pub fn spawn_popup(
                                         ..default()
                                     },
                                     BackgroundColor(BG_BUTTON),
-                                    RemoveWeaponButton {
-                                        ship_index: *ship_index,
-                                        slot_index: *slot_index,
-                                    },
                                 ))
                                 .with_child((
                                     Text::new("Empty (0 pts)"),
@@ -755,7 +747,7 @@ pub fn spawn_popup(
 
                                 inner
                                     .spawn((
-                                        WeaponPickerOption { weapon },
+                                        WeaponPickerOption(Some(weapon)),
                                         Button,
                                         Node {
                                             width: Val::Percent(100.0),
@@ -942,25 +934,14 @@ pub fn handle_remove_weapon_button(
 
 pub fn handle_weapon_picker_option(
     query: Query<
-        (&Interaction, &WeaponPickerOption, Option<&RemoveWeaponButton>),
+        (&Interaction, &WeaponPickerOption),
         (Changed<Interaction>, With<Button>),
     >,
     mut state: ResMut<FleetBuilderState>,
 ) {
-    for (interaction, option, remove_btn) in &query {
+    for (interaction, option) in &query {
         if *interaction == Interaction::Pressed {
-            // If this is the "Empty" option (has RemoveWeaponButton), clear the slot
-            if let Some(remove) = remove_btn {
-                if let Some(spec) = state.ships.get_mut(remove.ship_index) {
-                    if let Some(slot) = spec.loadout.get_mut(remove.slot_index) {
-                        *slot = None;
-                    }
-                }
-                state.popup = None;
-                return;
-            }
-
-            // Otherwise, assign weapon from the current popup context
+            // Assign weapon (or None for "Empty") from the current popup context
             if let Some(PopupKind::ChangeWeapon {
                 ship_index,
                 slot_index,
@@ -970,7 +951,7 @@ pub fn handle_weapon_picker_option(
                 let sli = *slot_index;
                 if let Some(spec) = state.ships.get_mut(si) {
                     if let Some(slot) = spec.loadout.get_mut(sli) {
-                        *slot = Some(option.weapon);
+                        *slot = option.0;
                     }
                 }
             }

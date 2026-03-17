@@ -408,6 +408,10 @@ fn handle_move_command(
         if squad_member.leader != cmd.ship {
             continue;
         }
+        // Skip the ship itself — its SquadMember removal is deferred and hasn't flushed yet
+        if follower_entity == cmd.ship {
+            continue;
+        }
         let offset = squad_member.offset;
         let follower_dest = cmd.destination + offset;
 
@@ -666,12 +670,15 @@ fn handle_cancel_missiles(
 
 /// Observer: handle `JoinSquadCommand` from clients.
 /// Validates both ships are on the same team, then adds SquadMember to the follower.
+/// Prevents cycles by walking the leader chain up to 10 hops.
+/// Reassigns existing followers of cmd.ship to follow cmd.leader instead.
 fn handle_join_squad(
     trigger: On<FromClient<JoinSquadCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
     team_query: Query<&Team, With<Ship>>,
     transform_query: Query<&Transform, With<Ship>>,
+    squad_query: Query<(Entity, &SquadMember), With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -706,16 +713,57 @@ fn handle_join_squad(
         return;
     }
 
+    // Cycle detection: walk the leader chain from cmd.leader up to 10 hops.
+    // If we encounter cmd.ship, adding it would create a cycle.
+    {
+        let mut current = cmd.leader;
+        for _ in 0..10 {
+            let found = squad_query.iter().find(|(e, _)| *e == current);
+            if let Some((_, member)) = found {
+                if member.leader == cmd.ship {
+                    warn!(
+                        "JoinSquadCommand rejected: would create cycle ({:?} -> {:?})",
+                        cmd.ship, cmd.leader
+                    );
+                    return;
+                }
+                current = member.leader;
+            } else {
+                break;
+            }
+        }
+    }
+
+    // Reassign existing followers of cmd.ship to follow cmd.leader instead
+    let Ok(leader_tf) = transform_query.get(cmd.leader) else {
+        return;
+    };
+    let leader_pos = ship_xz_position(leader_tf);
+
+    for (follower_entity, squad_member) in &squad_query {
+        if squad_member.leader == cmd.ship {
+            let Ok(follower_tf) = transform_query.get(follower_entity) else {
+                continue;
+            };
+            let follower_pos = ship_xz_position(follower_tf);
+            let new_offset = follower_pos - leader_pos;
+            commands.entity(follower_entity).insert(SquadMember {
+                leader: cmd.leader,
+                offset: new_offset,
+            });
+            info!(
+                "Reassigned follower {:?} from {:?} to {:?}",
+                follower_entity, cmd.ship, cmd.leader
+            );
+        }
+    }
+
     // Compute offset from positions
     let Ok(ship_tf) = transform_query.get(cmd.ship) else {
         return;
     };
-    let Ok(leader_tf) = transform_query.get(cmd.leader) else {
-        return;
-    };
 
     let ship_pos = ship_xz_position(ship_tf);
-    let leader_pos = ship_xz_position(leader_tf);
     let offset = ship_pos - leader_pos;
 
     commands.entity(cmd.ship).insert(SquadMember {
