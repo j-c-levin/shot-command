@@ -1,9 +1,11 @@
 pub mod fleet_builder;
+pub mod fleet_status;
 
 use bevy::prelude::*;
 
 use crate::game::GameState;
 use fleet_builder::*;
+pub use fleet_status::FleetStatusPlugin;
 
 pub struct FleetUiPlugin;
 

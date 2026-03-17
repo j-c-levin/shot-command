@@ -15,7 +15,7 @@ use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::net::LocalTeam;
 use nebulous_shot_command::radar::RadarClientPlugin;
 use nebulous_shot_command::ship::{ShipClass, ShipVisualsPlugin};
-use nebulous_shot_command::ui::FleetUiPlugin;
+use nebulous_shot_command::ui::{FleetStatusPlugin, FleetUiPlugin};
 use nebulous_shot_command::weapon::WeaponType;
 
 #[derive(Parser, Debug)]
@@ -110,7 +110,10 @@ fn main() {
             FogClientPlugin,
             InputPlugin,
             FleetUiPlugin,
+            FleetStatusPlugin,
             RadarClientPlugin,
+        ))
+        .add_plugins((
             ControlPointClientPlugin,
             ClientNetPlugin,
         ));
