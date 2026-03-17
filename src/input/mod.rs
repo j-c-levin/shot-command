@@ -3,6 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 
+use crate::camera::GameCamera;
 use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
@@ -38,6 +39,19 @@ pub struct JoinMode(pub bool);
 #[derive(Resource, Default)]
 pub struct MoveMode(pub bool);
 
+/// Tracks a right-click drag gesture for move+facing commands.
+#[derive(Resource, Debug, Default)]
+pub struct MoveGestureState {
+    /// Whether a right-click drag is currently active.
+    pub active: bool,
+    /// Ground XZ position where the right-click landed.
+    pub destination: Vec2,
+    /// Screen position of the initial click (for drag distance threshold).
+    pub screen_start: Vec2,
+    /// Whether shift was held when the gesture started (append waypoint).
+    pub append: bool,
+}
+
 /// Tracks numbered enemy assignments for K/M mode keyboard targeting.
 #[derive(Resource, Debug, Default)]
 pub struct EnemyNumbers {
@@ -61,6 +75,7 @@ impl Plugin for InputPlugin {
             .init_resource::<MissileMode>()
             .init_resource::<JoinMode>()
             .init_resource::<MoveMode>()
+            .init_resource::<MoveGestureState>()
             .init_resource::<EnemyNumbers>()
             .add_systems(
                 Startup,
@@ -71,8 +86,10 @@ impl Plugin for InputPlugin {
                 (
                     draw_selection_gizmos,
                     draw_range_gizmos,
+                    draw_gesture_preview,
                     handle_keyboard,
                     handle_number_keys,
+                    handle_move_gesture,
                     update_squad_highlights,
                     update_mode_indicator,
                     update_enemy_numbers,
@@ -278,34 +295,8 @@ pub fn on_ground_clicked(
         return;
     }
 
-    if click.button != PointerButton::Secondary {
-        return;
-    }
-
-    // Target mode: right-click on ground does nothing (only enemy clicks target)
-    if target_mode.0 {
-        return;
-    }
-
-    // Move mode required for right-click move commands
-    if !move_mode.0 {
-        return;
-    }
-
-    // Shift+right-click: append waypoint
-    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
-
-    for (entity, _transform, team) in &selected_query {
-        if *team != my_team {
-            continue;
-        }
-        commands.client_trigger(MoveCommand {
-            ship: entity,
-            destination,
-            append: shift,
-            facing: None,
-        });
-    }
+    // Right-click move commands are now handled by handle_move_gesture system
+    // (press+release detection with drag-to-face). The observer no longer handles them.
 }
 
 fn handle_keyboard(
@@ -494,6 +485,143 @@ fn draw_range_gizmos(
 
     for range in &ranges_seen {
         gizmos.circle(ground_circle_isometry(center, *range), *range, range_color);
+    }
+}
+
+// ── Move Gesture (right-click drag for facing) ─────────────────────────
+
+/// Raycast from screen cursor to ground (Y=0) plane. Returns XZ position.
+fn cursor_to_ground(
+    window: &Window,
+    camera: &Camera,
+    camera_global_tf: &GlobalTransform,
+) -> Option<Vec2> {
+    let cursor_pos = window.cursor_position()?;
+    let ray = camera.viewport_to_world(camera_global_tf, cursor_pos).ok()?;
+    let dir = ray.direction.as_vec3();
+    if dir.y.abs() < 0.001 {
+        return None;
+    }
+    let t = -ray.origin.y / dir.y;
+    if t < 0.0 {
+        return None;
+    }
+    Some(Vec2::new(ray.origin.x + dir.x * t, ray.origin.z + dir.z * t))
+}
+
+/// Minimum screen-space drag distance (pixels) to activate facing.
+const DRAG_THRESHOLD_PX: f32 = 5.0;
+
+/// System that detects right-click press/release for move+facing gestures.
+/// On press: record destination and screen position.
+/// On release: if drag < threshold → move only; if >= threshold → move + facing.
+fn handle_move_gesture(
+    mut commands: Commands,
+    mouse: Res<ButtonInput<MouseButton>>,
+    keys: Res<ButtonInput<KeyCode>>,
+    local_team: Res<LocalTeam>,
+    move_mode: Res<MoveMode>,
+    missile_mode: Res<MissileMode>,
+    target_mode: Res<TargetMode>,
+    lock_mode: Res<LockMode>,
+    mut gesture: ResMut<MoveGestureState>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    selected_query: Query<(Entity, &Team), (With<Selected>, With<Ship>)>,
+) {
+    let Some(my_team) = local_team.0 else { return };
+
+    // Don't start gesture in modes that consume right-click differently
+    let right_click_consumed = missile_mode.0 || target_mode.0
+        || keys.pressed(KeyCode::AltLeft) || lock_mode.0;
+
+    // Right-click press: start gesture
+    if mouse.just_pressed(MouseButton::Right) && move_mode.0 && !right_click_consumed {
+        let Ok(window) = windows.single() else { return };
+        let Ok((camera, global_tf)) = camera_query.single() else { return };
+
+        if let Some(ground_pos) = cursor_to_ground(window, camera, global_tf) {
+            let screen_start = window.cursor_position().unwrap_or(Vec2::ZERO);
+            let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            gesture.active = true;
+            gesture.destination = ground_pos;
+            gesture.screen_start = screen_start;
+            gesture.append = shift;
+        }
+    }
+
+    // Right-click release: finalize gesture
+    if mouse.just_released(MouseButton::Right) && gesture.active {
+        gesture.active = false;
+
+        let Ok(window) = windows.single() else { return };
+        let screen_end = window.cursor_position().unwrap_or(gesture.screen_start);
+        let drag_dist = screen_end.distance(gesture.screen_start);
+
+        let facing = if drag_dist >= DRAG_THRESHOLD_PX {
+            // Raycast current cursor to ground to get the drag endpoint
+            let Ok((camera, global_tf)) = camera_query.single() else { return };
+            if let Some(ground_end) = cursor_to_ground(window, camera, global_tf) {
+                let dir = (ground_end - gesture.destination).normalize_or_zero();
+                if dir != Vec2::ZERO { Some(dir) } else { None }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        for (entity, team) in &selected_query {
+            if *team != my_team {
+                continue;
+            }
+            commands.client_trigger(MoveCommand {
+                ship: entity,
+                destination: gesture.destination,
+                append: gesture.append,
+                facing,
+            });
+        }
+    }
+}
+
+/// Draw a preview gizmo while the move gesture drag is active.
+fn draw_gesture_preview(
+    mut gizmos: Gizmos,
+    gesture: Res<MoveGestureState>,
+    windows: Query<&Window>,
+    camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+) {
+    if !gesture.active {
+        return;
+    }
+
+    let Ok(window) = windows.single() else { return };
+    let screen_now = window.cursor_position().unwrap_or(gesture.screen_start);
+    let drag_dist = screen_now.distance(gesture.screen_start);
+
+    // Always show destination circle
+    let dest_3d = Vec3::new(gesture.destination.x, 1.0, gesture.destination.y);
+    gizmos.circle(
+        Isometry3d::new(dest_3d, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+        3.0,
+        Color::srgba(0.3, 0.5, 1.0, 0.7),
+    );
+
+    // Show facing direction line if drag exceeds threshold
+    if drag_dist >= DRAG_THRESHOLD_PX {
+        let Ok((camera, global_tf)) = camera_query.single() else { return };
+        if let Some(ground_end) = cursor_to_ground(window, camera, global_tf) {
+            let dir = (ground_end - gesture.destination).normalize_or_zero();
+            if dir != Vec2::ZERO {
+                let end_3d = Vec3::new(
+                    dest_3d.x + dir.x * 20.0,
+                    1.0,
+                    dest_3d.z + dir.y * 20.0,
+                );
+                gizmos.line(dest_3d, end_3d, Color::srgba(0.0, 1.0, 1.0, 0.7));
+            }
+        }
     }
 }
 
