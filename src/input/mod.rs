@@ -566,7 +566,7 @@ struct LockModeHud;
 fn setup_lock_mode_hud(mut commands: Commands) {
     commands.spawn((
         LockModeHud,
-        Text::new("LOCK MODE — Right-click to set facing"),
+        Text::new("LOCK MODE - Right-click to set facing"),
         TextFont {
             font_size: 24.0,
             ..default()
@@ -605,7 +605,7 @@ struct TargetModeHud;
 fn setup_target_mode_hud(mut commands: Commands) {
     commands.spawn((
         TargetModeHud,
-        Text::new("TARGET MODE — Right-click enemy to designate"),
+        Text::new("TARGET MODE - Click enemy to designate"),
         TextFont {
             font_size: 24.0,
             ..default()
@@ -644,7 +644,7 @@ struct MissileModeHud;
 fn setup_missile_mode_hud(mut commands: Commands) {
     commands.spawn((
         MissileModeHud,
-        Text::new("MISSILE MODE — Right-click enemy or ground to fire"),
+        Text::new("MISSILE MODE - Click enemy or ground to fire"),
         TextFont {
             font_size: 24.0,
             ..default()
@@ -683,7 +683,7 @@ struct JoinModeHud;
 fn setup_join_mode_hud(mut commands: Commands) {
     commands.spawn((
         JoinModeHud,
-        Text::new("JOIN MODE — Click friendly ship or press its number"),
+        Text::new("JOIN MODE - Click friendly ship or press its number"),
         TextFont {
             font_size: 24.0,
             ..default()
