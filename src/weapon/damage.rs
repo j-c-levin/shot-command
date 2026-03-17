@@ -4,10 +4,13 @@ use bevy::math::Vec2;
 use bevy::prelude::*;
 use bevy::time::Timer;
 use bevy_replicon::prelude::*;
+use rand::prelude::IndexedRandom;
+use rand::Rng;
 
 use crate::game::{Destroyed, DestroyTimer, GameState, Health, Team};
 use crate::net::commands::GameResult;
-use crate::ship::{Ship, ShipSecrets, ShipSecretsOwner};
+use crate::ship::{EngineHealth, RepairCooldown, Ship, ShipSecrets, ShipSecretsOwner};
+use crate::weapon::Mounts;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HitZone {
@@ -70,6 +73,91 @@ pub fn route_damage(zone: HitZone, raw_damage: u16) -> (DamageTarget, u16, Damag
             DamageTarget::HullOrEngines,
             secondary_dmg,
         ),
+    }
+}
+
+pub const OFFLINE_COOLDOWN_SECS: f32 = 10.0;
+pub const REPAIR_DELAY_SECS: f32 = 5.0;
+pub const REPAIR_RATE_HP_PER_SEC: f32 = 20.0;
+
+/// Apply directional damage to a ship's HP pools.
+pub fn apply_damage_to_ship(
+    impact_dir: Vec2,
+    ship_forward: Vec2,
+    raw_damage: u16,
+    health: &mut Health,
+    engine_health: &mut EngineHealth,
+    mounts: &mut Mounts,
+    repair_cooldown: &mut RepairCooldown,
+) {
+    let zone = classify_hit_zone(impact_dir, ship_forward);
+    let (primary_target, primary_dmg, secondary_target, secondary_dmg) =
+        route_damage(zone, raw_damage);
+
+    apply_to_target(primary_target, primary_dmg, health, engine_health, mounts);
+    apply_to_target(secondary_target, secondary_dmg, health, engine_health, mounts);
+
+    // Reset repair cooldown on any hit
+    repair_cooldown.0 = REPAIR_DELAY_SECS;
+}
+
+fn apply_to_target(
+    target: DamageTarget,
+    damage: u16,
+    health: &mut Health,
+    engine_health: &mut EngineHealth,
+    mounts: &mut Mounts,
+) {
+    if damage == 0 {
+        return;
+    }
+    match target {
+        DamageTarget::Hull => {
+            health.hp = health.hp.saturating_sub(damage);
+        }
+        DamageTarget::Engines => {
+            if engine_health.hp > 0 {
+                engine_health.hp = engine_health.hp.saturating_sub(damage);
+                if engine_health.hp == 0 {
+                    engine_health.offline_timer = OFFLINE_COOLDOWN_SECS;
+                }
+            } else {
+                // Engines already down — spill to hull
+                health.hp = health.hp.saturating_sub(damage);
+            }
+        }
+        DamageTarget::Component => {
+            let mut rng = rand::rng();
+            let candidates: Vec<usize> = mounts
+                .0
+                .iter()
+                .enumerate()
+                .filter(|(_, m)| m.weapon.is_some() && m.max_hp > 0 && m.offline_timer <= 0.0)
+                .map(|(i, _)| i)
+                .collect();
+            if let Some(&idx) = candidates.choose(&mut rng) {
+                let mount = &mut mounts.0[idx];
+                mount.hp = mount.hp.saturating_sub(damage);
+                if mount.hp == 0 {
+                    mount.offline_timer = OFFLINE_COOLDOWN_SECS;
+                }
+            } else {
+                health.hp = health.hp.saturating_sub(damage);
+            }
+        }
+        DamageTarget::HullOrEngines => {
+            let mut rng = rand::rng();
+            if rng.random_bool(0.5) {
+                health.hp = health.hp.saturating_sub(damage);
+            } else if engine_health.hp > 0 {
+                engine_health.hp = engine_health.hp.saturating_sub(damage);
+                if engine_health.hp == 0 {
+                    engine_health.offline_timer = OFFLINE_COOLDOWN_SECS;
+                }
+            } else {
+                health.hp = health.hp.saturating_sub(damage);
+            }
+        }
     }
 }
 

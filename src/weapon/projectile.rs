@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::{GameState, Health};
 use crate::map::MapBounds;
-use crate::ship::{Ship, ShipClass};
+use crate::ship::{ship_facing_direction, EngineHealth, RepairCooldown, Ship, ShipClass};
+use crate::weapon::damage::apply_damage_to_ship;
+use crate::weapon::Mounts;
 
 // ── Components ──────────────────────────────────────────────────────────
 
@@ -110,25 +112,53 @@ fn check_projectile_bounds(
 fn check_projectile_hits(
     mut commands: Commands,
     projectile_query: Query<
-        (Entity, &Transform, &ProjectileDamage, &ProjectileOwner),
+        (
+            Entity,
+            &Transform,
+            &ProjectileVelocity,
+            &ProjectileDamage,
+            &ProjectileOwner,
+        ),
         (With<Projectile>, Without<CwisRound>),
     >,
-    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health), With<Ship>>,
+    mut ship_query: Query<
+        (
+            Entity,
+            &Transform,
+            &ShipClass,
+            &mut Health,
+            &mut EngineHealth,
+            &mut Mounts,
+            &mut RepairCooldown,
+        ),
+        With<Ship>,
+    >,
 ) {
-    for (proj_entity, proj_transform, _damage, owner) in &projectile_query {
+    for (proj_entity, proj_transform, proj_vel, damage, owner) in &projectile_query {
         let proj_xz = Vec2::new(proj_transform.translation.x, proj_transform.translation.z);
+        let impact_dir = Vec2::new(proj_vel.0.x, proj_vel.0.z).normalize_or_zero();
 
-        for (ship_entity, ship_transform, class, mut _health) in &mut ship_query {
+        for (ship_entity, ship_transform, class, mut health, mut engine_health, mut mounts, mut repair_cooldown) in &mut ship_query {
             // Skip the ship that fired this projectile
             if ship_entity == owner.0 {
                 continue;
             }
 
-            let ship_xz = Vec2::new(ship_transform.translation.x, ship_transform.translation.z);
+            let ship_xz =
+                Vec2::new(ship_transform.translation.x, ship_transform.translation.z);
             let dist = (proj_xz - ship_xz).length();
 
             if dist < class.profile().collision_radius {
-                // TODO: re-enable damage: health.hp = health.hp.saturating_sub(damage.0);
+                let ship_forward = ship_facing_direction(ship_transform);
+                apply_damage_to_ship(
+                    impact_dir,
+                    ship_forward,
+                    damage.0,
+                    &mut health,
+                    &mut engine_health,
+                    &mut mounts,
+                    &mut repair_cooldown,
+                );
                 commands.entity(proj_entity).despawn();
                 break;
             }
