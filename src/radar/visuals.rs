@@ -67,7 +67,7 @@ pub fn draw_radar_signature_gizmos(
         }
         let pos = transform.translation;
         let pulse = 0.7 + 0.3 * (time.elapsed_secs() * 2.0).sin();
-        let radius = 20.0 * pulse;
+        let radius = 40.0 * pulse;
         let color = Color::srgba(1.0, 0.5, 0.0, 0.4 * pulse);
         gizmos.circle(
             Isometry3d::new(pos, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
