@@ -39,7 +39,7 @@ server. This keeps `cargo test` fast and avoids GPU/window dependencies.
 
 ### Test locations
 
-Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 139 tests:
+Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently 143 tests:
 
 | Module | # | What's tested |
 |---|---|---|
@@ -50,8 +50,8 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file. Currently
 | `src/weapon/mod.rs` | 13 | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS values), mount size mapping, weapon categories, VLS tube reload, MountSize::fits (same/smaller/rejects larger) |
 | `src/fleet/mod.rs` | 19 | Hull costs, weapon costs, ship spec cost (full/empty), fleet cost, fleet validation (valid/over budget/wrong slots/weapon too large/empty/downsized ok) |
 | `src/game/mod.rs` | 8 | Team constants, GameState default/variants/fleet_composition, EnemyVisibility default, Health damage/saturation |
-| `src/net/server.rs` | 4 | Asteroid exclusion zones (near corners, outside, boundary) |
-| `src/weapon/firing.rs` | 7 | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone) |
+| `src/net/server.rs` | 8 | Asteroid exclusion zones (near corners, outside, boundary), rotate_offset (0/90/180/-90 degrees) |
+| `src/weapon/firing.rs` | 9 | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone), fire_delay tick, cannon stagger |
 | `src/weapon/projectile.rs` | 6 | Projectile spawning, direction normalization, advancement, bounds despawn |
 | `src/map/mod.rs` | 6 | MapBounds contains/clamp/size |
 | `src/weapon/pd.rs` | 3 | PD cylinder detection (inside/outside), altitude-independent cylinder check |
@@ -82,14 +82,14 @@ Library crate (`src/lib.rs`) with two binaries:
   - `pd.rs` — Point defense systems: is_in_pd_cylinder (vertical cylinder check), probability-based kills (no missile HP), LaserBeam/LaserBeamTarget/LaserBeamTimer entities (visible beam tracking missile in real-time, delayed kill 0.15s after beam appears), CWIS visual tracers. LaserPD range 300m, CWIS 100m kill / 150m visual. 0.2s retarget delay. PdPlugin
   - `damage.rs` — DamagePlugin: mark_destroyed (with 1s delay timer), despawn_destroyed (cleanup ShipSecrets), check_win_condition (broadcast GameResult)
 - `src/camera/` — CameraLookAt resource, strategic zoom (cursor zoom-in, center zoom-out), WASD pan (S is stop-only, not camera pan), middle-mouse orbit
-- `src/input/` — Ship selection (left-click, left-click ground = deselect), move commands (right-click only in move mode), Space toggle move mode, shift+click waypoint queue, alt+right-click facing lock, alt+click-ship unlock, L+left-click facing lock mode, K+left-click target designation, K clear target, M toggle missile mode (M gated by VLS presence, right-click ground = missile at point, click enemy = missile at entity), J toggle join mode (click friendly or press number to assign squad), 1-9 number-key ship selection (selects by ShipNumber, also highlights squad followers). In K/M mode, number keys target/fire at numbered enemies instead. EnemyNumbers resource assigns 1-9 to visible enemies in K/M mode. ModeIndicatorText shows current mode in bottom-left. SquadHighlight marker for follower visual. Selecting new ship resets modes. All modes mutually exclusive. All commands emit network triggers (MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, MissileCommand, JoinSquadCommand).
+- `src/input/` — Ship selection (left-click, left-click ground = deselect). Move commands (right-click only in move mode): quick click = move, hold+drag = move + face direction (formation offsets rotate). Space toggle move mode. Shift+right-click = append waypoint. Alt+right-click facing lock. L facing lock mode. K target mode (number keys target numbered enemies). M missile mode (number keys fire at numbered enemies). J join mode (click friendly or press number to assign squad). 1-9 number-key ship selection. All modes mutually exclusive. MoveGestureState tracks right-click drag for facing commands with preview gizmos (leader destination + follower predicted positions). EnemyNumbers resource dynamically assigns 1-9 to visible enemies in K/M mode (stable numbers, updates as ships enter/leave LOS). Friendly ship numbers hidden in K/M mode. ModeIndicatorText shows current mode in bottom-left. SquadHighlight marker. S key = full stop (propagates to squad). All commands emit network triggers.
 - `src/fog/` — Server: LOS detection (distance+raycast) drives replicon visibility filtering. Client: FogClientPlugin with ghost entity fade-out on visibility loss.
 - `src/net/` — Networking module:
   - `mod.rs` — LocalTeam resource, PROTOCOL_ID constant
   - `commands.rs` — MoveCommand, FacingLockCommand, FacingUnlockCommand, TargetCommand, ClearTargetCommand, JoinSquadCommand, FleetSubmission, CancelSubmission (client→server with MapEntities), TeamAssignment, GameResult, LobbyStatus, GameStarted (server→client), LobbyState enum
   - `server.rs` — ServerNetPlugin: renet transport, connection/auth handling, team assignment, replication registration, fleet/asteroid spawning, command handlers with team validation (move, facing, target, join squad), squad move propagation (leader move → followers move with offset), orphan squad cleanup, LOS visibility filtering, ShipSecrets sync (waypoints, facing, targeting, squad), target visibility clearing, disconnection handling
   - `client.rs` — ClientNetPlugin: renet transport, team assignment observer (→FleetComposition), lobby status observer, game started observer (→Playing), ground plane setup, materializer/asteroid registration, CurrentLobbyState resource
-  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Targeting indicator system. Selection indicator (green, larger, at ship center Y). Ship number labels (below ship, font 14, UI text via world-to-viewport projection). Enemy number labels (red, below enemy ships, active in K/M mode). LOS circle (green ring showing 400m vision range in move mode). Squad highlight indicators (gray torus on followers), squad connection lines (cyan capsule from follower to leader, bidirectional), squad info labels ("Following: N" / "Squad: N"). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking.
+  - `materializer.rs` — Spawns meshes for replicated Ship, Asteroid, Projectile, and Missile entities on client. Ship number labels (below ship, font 14, hidden in K/M mode). Enemy number labels (white, below enemy ships, active in K/M mode). Squad connection lines (gizmo lines from follower to leader), squad info labels ("Following: N" / "Squad: N"). Targeting gizmos (red line from ship to target). F3 debug visuals toggle (seeker cone visualization). Explosion effects (two sizes: ship impact vs PD kill). LaserBeam visual tracking. All indicators use Bevy Gizmos (immediate mode) — no mesh-based indicators remain.
 
 ### System ordering (Update schedule)
 
@@ -138,11 +138,14 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Explosions**: Two sizes — ship impact (large) vs PD kill (small).
 - **Targeting**: K+left-click enemy designates target. K again clears. Target auto-clears when enemy leaves LOS. TargetDesignation synced via ShipSecrets (team-private).
 - **Destruction**: Ships at 0 HP get Destroyed marker + 1s delay timer, then despawn (ship + ShipSecrets). Ghost fade-out fires on despawn. Win condition: all enemy ships destroyed → GameResult broadcast → GameOver state.
-- **Move mode**: Space key enters move mode. Right-click only moves in move mode. All modes (Space/K/M/J/L) are mutually exclusive. Mode indicator text in bottom-left.
-- **Enemy numbering**: K or M mode assigns numbers 1-9 to visible enemies. Number keys in K mode target enemy, in M mode fire missile at enemy. Red labels shown below enemy ships.
-- **Squad formation**: J key enters join mode; click friendly ship or press its number to assign. SquadMember { leader, offset } on followers. SquadSpeedLimit caps effective top_speed to slowest member. Leader move orders propagate to followers with offset applied. Direct move to a follower breaks formation (removes SquadMember + recomputes speed). Orphan cleanup removes SquadMember + SquadSpeedLimit when leader is destroyed/despawned.
-- **Ship numbers**: ShipNumber(1-9) assigned from fleet list index. Press 1-9 to select by number. Number labels float below friendly ships via world-to-viewport projection.
-- **Fleet composition**: 1000pt budget. Hull costs: BB 375, DD 150, Scout 45. Weapon costs: 10-40pts. Downsizing allowed (smaller weapons in larger slots). Server-authoritative lobby validates and stores submissions. FleetBuilderState is client-local, reset on state exit.
+- **Move mode**: Space key enters move mode. Right-click only moves in move mode. Quick click = move only. Hold+drag right-click = move + face direction (MoveCommand.facing field). All modes (Space/K/M/J/L) are mutually exclusive. Mode indicator text in bottom-left. Gesture preview shows destination circle + facing line + follower predicted positions during drag.
+- **Formation rotation**: When leader gets move+facing, follower offsets are rotated by the heading delta (rotate_offset pure function in ship module). Followers get rotated destinations + same facing lock.
+- **Cannon stagger**: fire_delay field on WeaponState, 0.5s between each cannon firing on a ship (WeaponCategory::Cannon only, CANNON_STAGGER_DELAY constant).
+- **Enemy numbering**: K or M mode dynamically assigns numbers 1-9 to visible enemies. Numbers are stable — existing assignments kept, new enemies get lowest available number as they enter LOS. Number keys in K mode target enemy, in M mode fire missile at enemy. White labels below enemy ships. Friendly numbers hidden in K/M mode to avoid confusion.
+- **Squad formation**: J key enters join mode; click friendly ship or press its number to assign. SquadMember { leader, offset } on followers (uses #[derive(MapEntities)] with #[entities] for replication entity mapping). SquadSpeedLimit { top_speed, acceleration, turn_rate, turn_acceleration } caps all movement stats to minimum across squad. Leader move orders propagate to followers with offset applied. S key stop propagates to followers + unlocks their facing. Direct move to a follower breaks formation. Squad cycles prevented (chain walk up to 10 hops). Leader joining another squad reassigns followers to new leader. Orphan cleanup on leader destroyed.
+- **Ship numbers**: ShipNumber(1-9) assigned from fleet list index. Press 1-9 to select by number. Number labels float below friendly ships. Clone button in fleet builder duplicates ship spec.
+- **Fleet composition**: 1000pt budget. Hull costs: BB 450, DD 200, Scout 140. Weapon costs: Railgun 50, HeavyVLS 45, HeavyCannon 40, LaserPD 30, LightVLS 25, Cannon 20, CWIS 15. Mount downsizing allowed. Server-authoritative lobby validates and stores submissions. FleetBuilderState is client-local, reset on state exit.
+- **Visual indicators**: All in-game indicators use Bevy Gizmos (immediate mode). Green circles for selection, gray circles for squad highlights, red lines for targeting, blue lines for waypoints, yellow lines for facing lock, cyan lines for squad connections, weapon range circles in K mode. No mesh-based indicators remain.
 - **Lobby protocol**: FleetSubmission/CancelSubmission (client→server), LobbyStatus/GameStarted (server→client). LobbyTracker resource tracks submissions + countdown. Server stays in WaitingForPlayers throughout.
 
 ### Connection flow
@@ -207,6 +210,16 @@ strategic camera zoom, selection indicator improvements. See design doc at
 budget, clickable Bevy UI (two-panel layout: ship list + weapon slots), server-authoritative
 lobby with submit/cancel/countdown, spec-based fleet spawning, mount downsizing, asteroid
 exclusion zones. See design doc at `docs/plans/2026-03-16-phase3c-fleet-composition-design.md`.
+
+**QoL Features — COMPLETE.** Clone ship in fleet builder, squad formations (J key join,
+SquadMember with offset, SquadSpeedLimit with all 4 stats, move propagation with formation
+rotation, cycle prevention, leader reassignment), cannon stagger (0.5s delay), ship number
+keys (1-9), explicit move mode (Space), right-click drag for facing, enemy numbering in
+K/M modes (dynamic, stable), all indicators converted to Bevy Gizmos, weapon range circles
+in K mode, formation preview during drag. See design docs at
+`docs/plans/2026-03-16-qol-features-design.md`,
+`docs/plans/2026-03-17-input-overhaul-design.md`,
+`docs/plans/2026-03-17-formation-facing-design.md`.
 
 **Next up: Phase 4 — Sensors, EW & Win Conditions** (radar/passive/RWR, lock vs track, control points)
 **Phase 5: Depth** (directional damage, repair, beams)
