@@ -291,4 +291,68 @@ mod tests {
             Vec2::new(800.0, 0.0)
         ));
     }
+
+    // ── ContactTracker tests ──
+
+    #[test]
+    fn contact_tracker_allocates_sequential_ids() {
+        let mut tracker = ContactTracker::default();
+        let id1 = tracker.allocate_id(0);
+        let id2 = tracker.allocate_id(0);
+        assert_eq!(id1.0, 1);
+        assert_eq!(id2.0, 2);
+    }
+
+    #[test]
+    fn contact_tracker_ids_per_team() {
+        let mut tracker = ContactTracker::default();
+        let team0 = tracker.allocate_id(0);
+        let team1 = tracker.allocate_id(1);
+        assert_eq!(team0.0, 1);
+        assert_eq!(team1.0, 1);
+    }
+
+    // ── Hard range cap tests ──
+
+    #[test]
+    fn no_detection_beyond_radar_range() {
+        // Even a battleship broadside should not be detected beyond radar range
+        let snr = compute_snr(800.0, 801.0, 1.0, 1.0);
+        // SNR is still positive but the contacts system hard-caps at radar_range
+        // This test verifies the formula — the system-level cap is in contacts.rs
+        assert!(snr < 1.0, "SNR should be less than 1.0 at max range, got {snr}");
+    }
+
+    #[test]
+    fn destroyer_signature_at_max_range_nose_on() {
+        // Destroyer (RCS 0.5) nose-on at 800m — should be below track but possibly signature
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::NEG_X);
+        let snr = compute_snr(800.0, 800.0, 0.5, aspect);
+        assert!(snr < TRACK_THRESHOLD, "DD nose-on at 800m should not be tracked, got {snr}");
+    }
+
+    #[test]
+    fn destroyer_tracked_broadside_at_600m() {
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::Y);
+        let snr = compute_snr(800.0, 600.0, 0.5, aspect);
+        assert!(snr >= TRACK_THRESHOLD, "DD broadside at 600m should be tracked, got {snr}");
+    }
+
+    // ── Aspect factor symmetry ──
+
+    #[test]
+    fn aspect_symmetric_regardless_of_radar_direction() {
+        // Radar from +X or -X looking at a target facing +Y should give same result
+        let from_pos_x = compute_aspect_factor(Vec2::X, Vec2::Y);
+        let from_neg_x = compute_aspect_factor(Vec2::NEG_X, Vec2::Y);
+        assert!((from_pos_x - from_neg_x).abs() < 0.01);
+    }
+
+    #[test]
+    fn aspect_quarter_angle() {
+        // 45 degrees should be between min and max
+        let factor = compute_aspect_factor(Vec2::X, Vec2::new(1.0, 1.0).normalize());
+        assert!(factor > 0.25);
+        assert!(factor < 1.0);
+    }
 }
