@@ -70,10 +70,6 @@ impl Plugin for InputPlugin {
                 (
                     setup_selection_indicator,
                     setup_range_indicator,
-                    setup_lock_mode_hud,
-                    setup_target_mode_hud,
-                    setup_missile_mode_hud,
-                    setup_join_mode_hud,
                     setup_mode_indicator,
                 ),
             )
@@ -85,10 +81,6 @@ impl Plugin for InputPlugin {
                     handle_keyboard,
                     handle_number_keys,
                     update_squad_highlights,
-                    update_lock_mode_hud,
-                    update_target_mode_hud,
-                    update_missile_mode_hud,
-                    update_join_mode_hud,
                     update_mode_indicator,
                     update_enemy_numbers,
                 ),

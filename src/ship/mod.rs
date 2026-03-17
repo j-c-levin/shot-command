@@ -257,8 +257,10 @@ pub struct ShipNumber(pub u8);
 
 /// Marks a ship as a squad follower. The `leader` entity is the squad leader,
 /// and `offset` is the XZ position offset from the leader at the time of joining.
-#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+/// Uses `#[entities]` for replicon entity mapping across server/client.
+#[derive(Component, Clone, Debug, Serialize, Deserialize, MapEntities)]
 pub struct SquadMember {
+    #[entities]
     pub leader: Entity,
     pub offset: Vec2,
 }
@@ -267,12 +269,6 @@ pub struct SquadMember {
 /// Applied to all members (leader + followers) when a squad exists.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
 pub struct SquadSpeedLimit(pub f32);
-
-impl MapEntities for SquadMember {
-    fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, mapper: &mut M) {
-        self.leader = mapper.get_mapped(self.leader);
-    }
-}
 
 #[derive(Component)]
 pub struct Selected;
