@@ -50,6 +50,9 @@ const LASER_PD_HIT_CHANCE: f32 = 0.6;
 /// Range at which CWIS starts firing visual tracers (wider than kill range).
 const CWIS_VISUAL_RANGE: f32 = 150.0;
 
+/// Multiplier for CWIS ranges when engaging a radar-tracked missile.
+const CWIS_RADAR_RANGE_MULTIPLIER: f32 = 2.0;
+
 /// Seconds a PD mount must wait before engaging a new target after a kill.
 const PD_RETARGET_DELAY: f32 = 0.2;
 
@@ -214,9 +217,11 @@ fn cwis_fire(
 
             let profile = weapon.weapon_type.profile();
 
-            // Find closest ENEMY missile within VISUAL range (for tracers)
+            // Find closest ENEMY missile within VISUAL range (for tracers).
+            // CWIS ranges double when engaging a radar-tracked missile.
             let mut closest_dist = f32::MAX;
             let mut closest_entity = None;
+            let mut closest_radar_tracked = false;
 
             for (missile_entity, missile_transform, _, missile_owner) in &missile_query {
                 if let (Some(my_team), Ok(owner_team)) =
@@ -237,13 +242,21 @@ fn cwis_fire(
                     continue;
                 }
 
-                if is_in_pd_cylinder(ship_pos, missile_pos, CWIS_VISUAL_RANGE) {
+                // CWIS visual range doubles for radar-tracked missiles
+                let effective_visual_range = if in_radar_range {
+                    CWIS_VISUAL_RANGE * CWIS_RADAR_RANGE_MULTIPLIER
+                } else {
+                    CWIS_VISUAL_RANGE
+                };
+
+                if is_in_pd_cylinder(ship_pos, missile_pos, effective_visual_range) {
                     let dx = ship_pos.x - missile_pos.x;
                     let dz = ship_pos.z - missile_pos.z;
                     let dist = (dx * dx + dz * dz).sqrt();
                     if dist < closest_dist {
                         closest_dist = dist;
                         closest_entity = Some(missile_entity);
+                        closest_radar_tracked = in_radar_range;
                     }
                 }
             }
@@ -265,8 +278,15 @@ fn cwis_fire(
                 let lead_pos = target_pos + target_v * travel_time;
                 let dir_to_lead = (lead_pos - origin).normalize_or_zero();
 
+                // CWIS kill radius doubles for radar-tracked missiles
+                let effective_kill_radius = if closest_radar_tracked {
+                    profile.pd_cylinder_radius * CWIS_RADAR_RANGE_MULTIPLIER
+                } else {
+                    profile.pd_cylinder_radius
+                };
+
                 // Only roll kill chance when missile is within actual PD kill radius
-                let killed = closest_dist <= profile.pd_cylinder_radius
+                let killed = closest_dist <= effective_kill_radius
                     && rng.random_range(0.0..1.0) < CWIS_HIT_CHANCE;
                 if killed {
                     crate::weapon::missile::spawn_small_explosion(

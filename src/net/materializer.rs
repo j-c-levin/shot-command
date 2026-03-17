@@ -441,18 +441,27 @@ pub fn draw_pd_range_gizmos(
     mut gizmos: Gizmos,
     dbg_vis: Res<DebugVisuals>,
     local_team: Res<LocalTeam>,
-    ships: Query<(&Transform, &Team, &crate::weapon::Mounts), With<Ship>>,
+    ships: Query<(&Transform, &Team, &ShipClass, &crate::weapon::Mounts), With<Ship>>,
 ) {
     if !dbg_vis.0 {
         return;
     }
     let Some(my_team) = local_team.0 else { return };
-    for (transform, team, mounts) in &ships {
+    for (transform, team, ship_class, mounts) in &ships {
         if *team != my_team {
             continue;
         }
         let pos = Vec3::new(transform.translation.x, 0.5, transform.translation.z);
         let flat_rot = Quat::from_rotation_x(std::f32::consts::FRAC_PI_2);
+
+        // Visual LOS range (white, dashed-style)
+        let vision_range = ship_class.profile().vision_range;
+        gizmos.circle(
+            Isometry3d::new(pos, flat_rot),
+            vision_range,
+            Color::srgba(1.0, 1.0, 1.0, 0.25),
+        );
+
         for mount in &mounts.0 {
             let Some(ref ws) = mount.weapon else { continue };
             let profile = ws.weapon_type.profile();
@@ -461,17 +470,29 @@ pub fn draw_pd_range_gizmos(
             }
             match ws.weapon_type {
                 crate::weapon::WeaponType::CWIS => {
-                    // Kill range (solid red)
+                    // Kill range (solid red) — base range
                     gizmos.circle(
                         Isometry3d::new(pos, flat_rot),
                         profile.pd_cylinder_radius,
                         Color::srgba(1.0, 0.2, 0.2, 0.6),
                     );
-                    // Visual/tracer range (orange)
+                    // Visual/tracer range (orange) — base range
                     gizmos.circle(
                         Isometry3d::new(pos, flat_rot),
                         150.0, // CWIS_VISUAL_RANGE
                         Color::srgba(1.0, 0.5, 0.0, 0.4),
+                    );
+                    // Radar-boosted kill range (dashed red)
+                    gizmos.circle(
+                        Isometry3d::new(pos, flat_rot),
+                        profile.pd_cylinder_radius * 2.0,
+                        Color::srgba(1.0, 0.2, 0.2, 0.25),
+                    );
+                    // Radar-boosted visual range (dashed orange)
+                    gizmos.circle(
+                        Isometry3d::new(pos, flat_rot),
+                        150.0 * 2.0,
+                        Color::srgba(1.0, 0.5, 0.0, 0.15),
                     );
                 }
                 crate::weapon::WeaponType::LaserPD => {
