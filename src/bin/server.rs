@@ -9,6 +9,7 @@ use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::net::server::{ServerBindAddress, ServerNetPlugin};
 use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::ship::ShipPhysicsPlugin;
+use nebulous_shot_command::radar::RadarPlugin;
 use nebulous_shot_command::weapon::damage::DamagePlugin;
 use nebulous_shot_command::weapon::missile::MissilePlugin;
 use nebulous_shot_command::weapon::pd::PdPlugin;
@@ -42,6 +43,9 @@ fn main() {
             ProjectilePlugin,
             MissilePlugin,
             PdPlugin,
+        ))
+        .add_plugins((
+            RadarPlugin,
             DamagePlugin,
             ServerNetPlugin,
         ))

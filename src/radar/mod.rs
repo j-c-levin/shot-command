@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-use crate::game::Team;
+use crate::game::{GameState, Team};
 
 /// Minimum SNR to appear as a signature (fuzzy blob on radar).
 pub const SIGNATURE_THRESHOLD: f32 = 0.1;
@@ -93,6 +93,23 @@ impl ContactTracker {
         let contact_id = ContactId(*id);
         *id = id.wrapping_add(1).max(1);
         contact_id
+    }
+}
+
+pub struct RadarPlugin;
+
+impl Plugin for RadarPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ContactTracker>();
+        app.add_systems(
+            Update,
+            (
+                contacts::update_radar_contacts,
+                contacts::cleanup_stale_contacts,
+            )
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
@@ -188,5 +205,44 @@ mod tests {
         let search = compute_snr(800.0, 400.0, 0.5, 1.0);
         let nav = compute_snr(500.0, 400.0, 0.5, 1.0);
         assert!(search > nav);
+    }
+
+    #[test]
+    fn battleship_detected_at_600m_broadside() {
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::Y);
+        let snr = compute_snr(800.0, 600.0, 1.0, aspect);
+        assert!(
+            snr >= TRACK_THRESHOLD,
+            "BB broadside at 600m should be tracked, got {snr}"
+        );
+    }
+
+    #[test]
+    fn scout_not_detected_at_700m_nose_on() {
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::NEG_X);
+        let snr = compute_snr(800.0, 700.0, 0.25, aspect);
+        assert!(
+            snr < TRACK_THRESHOLD,
+            "Scout nose-on at 700m should not be tracked, got {snr}"
+        );
+    }
+
+    #[test]
+    fn nav_radar_tracks_destroyer_at_300m() {
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::Y);
+        let snr = compute_snr(500.0, 300.0, 0.5, aspect);
+        assert!(
+            snr >= TRACK_THRESHOLD,
+            "DD broadside at 300m with nav radar should be tracked, got {snr}"
+        );
+    }
+
+    #[test]
+    fn missile_detected_by_radar_at_close_range() {
+        let snr = compute_snr(800.0, 200.0, MISSILE_RCS, 1.0);
+        assert!(
+            snr >= SIGNATURE_THRESHOLD,
+            "Missile at 200m should be at least signature, got {snr}"
+        );
     }
 }
