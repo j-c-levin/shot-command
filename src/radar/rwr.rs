@@ -3,7 +3,9 @@
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::fog::ray_blocked_by_asteroid;
 use crate::game::Team;
+use crate::map::{Asteroid, AsteroidSize};
 use crate::radar::RadarActive;
 use crate::ship::{Ship, ShipSecrets, ShipSecretsOwner, ship_xz_position};
 use crate::weapon::{Mounts, WeaponCategory};
@@ -27,7 +29,13 @@ pub fn update_rwr_bearings(
     radar_ships: Query<(&Transform, &Team, &Mounts), (With<Ship>, With<RadarActive>)>,
     all_ships: Query<(Entity, &Transform, &Team, &Mounts), With<Ship>>,
     mut secrets_query: Query<(&ShipSecretsOwner, &mut RwrBearings), With<ShipSecrets>>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
+    let asteroids: Vec<(Vec2, f32)> = asteroid_query
+        .iter()
+        .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
+        .collect();
+
     // Clear all bearings
     for (_, mut bearings) in &mut secrets_query {
         bearings.0.clear();
@@ -60,6 +68,9 @@ pub fn update_rwr_bearings(
 
             let target_pos = ship_xz_position(target_transform);
             if !is_in_rwr_range(radar_pos, radar_range, target_pos) {
+                continue;
+            }
+            if ray_blocked_by_asteroid(radar_pos, target_pos, &asteroids) {
                 continue;
             }
 
