@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::{GameState, Health, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
-use crate::ship::{Ship, ShipClass, Velocity};
+use crate::ship::{ship_facing_direction, EngineHealth, RepairCooldown, Ship, ShipClass, Velocity};
+use crate::weapon::damage::apply_damage_to_ship;
+use crate::weapon::Mounts;
 
 /// Marker for explosion visual entities. Server spawns these, client materializes.
 #[derive(Component, Serialize, Deserialize)]
@@ -355,18 +357,18 @@ fn check_missile_asteroid_hits(
 pub fn check_missile_hits(
     mut commands: Commands,
     missile_query: Query<
-        (Entity, &Transform, &MissileDamage, &MissileOwner),
+        (Entity, &Transform, &MissileVelocity, &MissileDamage, &MissileOwner),
         With<Missile>,
     >,
-    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health, &Team), With<Ship>>,
+    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Health, &mut EngineHealth, &mut Mounts, &mut RepairCooldown, &Team), With<Ship>>,
     team_query: Query<&Team>,
 ) {
-    for (missile_entity, missile_transform, _damage, owner) in &missile_query {
+    for (missile_entity, missile_transform, missile_vel, damage, owner) in &missile_query {
         let missile_pos = missile_transform.translation;
         let missile_xz = Vec2::new(missile_pos.x, missile_pos.z);
         let owner_team = team_query.get(owner.0).ok();
 
-        for (ship_entity, ship_transform, class, _health, ship_team) in &mut ship_query {
+        for (ship_entity, ship_transform, class, mut health, mut engine_health, mut mounts, mut repair_cooldown, ship_team) in &mut ship_query {
             // Skip own ship and same-team ships
             if ship_entity == owner.0 {
                 continue;
@@ -386,7 +388,12 @@ pub fn check_missile_hits(
             if dist < class.profile().collision_radius
                 && y_dist < class.profile().collision_radius + MISSILE_Y
             {
-                // TODO: re-enable damage: health.hp = health.hp.saturating_sub(damage.0);
+                let ship_forward = ship_facing_direction(ship_transform);
+                let impact_dir = Vec2::new(missile_vel.0.x, missile_vel.0.z).normalize_or_zero();
+                apply_damage_to_ship(
+                    impact_dir, ship_forward, damage.0,
+                    &mut health, &mut engine_health, &mut mounts, &mut repair_cooldown,
+                );
                 spawn_explosion(&mut commands, missile_pos);
                 commands.entity(missile_entity).despawn();
                 break;
