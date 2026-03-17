@@ -308,12 +308,18 @@ fn cwis_fire(
                 )
                 .normalize_or_zero();
 
+                // Tracer lifetime scales with radar boost so rounds reach the target
+                let tracer_lifetime = if closest_radar_tracked {
+                    0.5 * CWIS_RADAR_RANGE_MULTIPLIER
+                } else {
+                    0.5
+                };
                 commands.spawn((
                     Projectile,
                     ProjectileVelocity(spread_dir * profile.projectile_speed),
                     ProjectileDamage(profile.damage),
                     ProjectileOwner(ship_entity),
-                    CwisRound(0.5),
+                    CwisRound(tracer_lifetime),
                     Transform::from_translation(origin),
                     Replicated,
                 ));
