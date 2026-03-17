@@ -55,9 +55,14 @@ pub struct MoveGestureState {
 }
 
 /// Tracks numbered enemy assignments for K/M mode keyboard targeting.
+/// Keys are the entity to use for targeting (ship entity or contact entity).
+/// `source_map` tracks source_ship → number for stable numbering across
+/// contact re-detection (when a ship leaves and re-enters radar range).
 #[derive(Resource, Debug, Default)]
 pub struct EnemyNumbers {
     pub assignments: HashMap<Entity, u8>,
+    /// Maps source ship entity → assigned number, for stable contact numbering.
+    pub source_numbers: HashMap<Entity, u8>,
     pub active: bool,
 }
 
@@ -907,6 +912,7 @@ fn update_enemy_numbers(
         if enemy_numbers.active {
             enemy_numbers.active = false;
             enemy_numbers.assignments.clear();
+            // Keep source_numbers so re-entering K/M mode reuses the same numbers
         }
         return;
     }
@@ -920,6 +926,19 @@ fn update_enemy_numbers(
         ship_query.get(*entity).is_ok() || contact_query.get(*entity).is_ok()
     });
 
+    // Clean up source_numbers for sources that have no ship or contact anymore
+    let active_sources: std::collections::HashSet<Entity> = {
+        let mut set = std::collections::HashSet::new();
+        for (e, _) in &ship_query {
+            set.insert(e);
+        }
+        for (_, _, _, _, src) in &contact_query {
+            set.insert(src.0);
+        }
+        set
+    };
+    enemy_numbers.source_numbers.retain(|src, _| active_sources.contains(src));
+
     // Assign numbers to visible enemy ships first (stable: existing assignments kept)
     let mut new_enemies: Vec<Entity> = ship_query
         .iter()
@@ -930,9 +949,22 @@ fn update_enemy_numbers(
     new_enemies.sort_by_key(|e| e.index());
 
     for entity in new_enemies {
-        let next = (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n));
-        if let Some(num) = next {
+        // Reuse source number if this ship was previously tracked
+        let num = if let Some(&n) = enemy_numbers.source_numbers.get(&entity) {
+            if !enemy_numbers.assignments.values().any(|v| *v == n) {
+                Some(n)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let num = num.or_else(|| {
+            (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n))
+        });
+        if let Some(num) = num {
             enemy_numbers.assignments.insert(entity, num);
+            enemy_numbers.source_numbers.insert(entity, num);
         }
     }
 
@@ -941,35 +973,44 @@ fn update_enemy_numbers(
         .assignments
         .keys()
         .filter_map(|e| {
-            // If it's a ship entity, that ship is covered
             if ship_query.get(*e).is_ok() {
                 return Some(*e);
             }
-            // If it's a contact entity, its source is covered
             contact_query.get(*e).ok().map(|(_, _, _, _, src)| src.0)
         })
         .collect();
 
-    // Assign numbers to radar track contacts (Ship kind, enemy team)
-    // whose source ship isn't already numbered
-    let mut new_contacts: Vec<Entity> = contact_query
+    // Assign numbers to radar track contacts whose source isn't already numbered
+    let mut new_contacts: Vec<(Entity, Entity)> = contact_query
         .iter()
         .filter(|(_, level, team, kind, source)| {
             **level == ContactLevel::Track
                 && **kind == ContactKind::Ship
-                && team.0 == my_team // ContactTeam is the detecting team (us)
-                && !enemy_numbers.assignments.contains_key(&source.0)
+                && team.0 == my_team
                 && !already_numbered_sources.contains(&source.0)
         })
         .filter(|(e, _, _, _, _)| !enemy_numbers.assignments.contains_key(e))
-        .map(|(e, _, _, _, _)| e)
+        .map(|(e, _, _, _, src)| (e, src.0))
         .collect();
-    new_contacts.sort_by_key(|e| e.index());
+    new_contacts.sort_by_key(|(e, _)| e.index());
 
-    for entity in new_contacts {
-        let next = (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n));
-        if let Some(num) = next {
+    for (entity, source) in new_contacts {
+        // Reuse the number this source previously had
+        let num = if let Some(&n) = enemy_numbers.source_numbers.get(&source) {
+            if !enemy_numbers.assignments.values().any(|v| *v == n) {
+                Some(n)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        let num = num.or_else(|| {
+            (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n))
+        });
+        if let Some(num) = num {
             enemy_numbers.assignments.insert(entity, num);
+            enemy_numbers.source_numbers.insert(source, num);
         }
     }
 
