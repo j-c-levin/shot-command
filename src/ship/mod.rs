@@ -502,7 +502,7 @@ fn update_facing_targets(
 fn turn_ships(
     time: Res<Time>,
     mut query: Query<
-        (&mut Transform, &mut Velocity, &ShipClass, Option<&FacingTarget>),
+        (&mut Transform, &mut Velocity, &ShipClass, Option<&FacingTarget>, Option<&SquadSpeedLimit>),
         With<Ship>,
     >,
 ) {
@@ -511,13 +511,20 @@ fn turn_ships(
         return;
     }
 
-    for (mut transform, mut velocity, class, facing_target) in &mut query {
+    for (mut transform, mut velocity, class, facing_target, speed_limit) in &mut query {
         let profile = class.profile();
+        // Scale turn rate/acceleration proportionally when in a squad
+        let (effective_turn_rate, effective_turn_accel) = if let Some(limit) = speed_limit {
+            let speed_ratio = (limit.0 / profile.top_speed).min(1.0);
+            (profile.turn_rate * speed_ratio, profile.turn_acceleration * speed_ratio)
+        } else {
+            (profile.turn_rate, profile.turn_acceleration)
+        };
 
         let Some(target) = facing_target else {
             // No target — decelerate angular velocity to zero
             if velocity.angular.abs() > 0.001 {
-                let decel = profile.turn_acceleration * dt;
+                let decel = effective_turn_accel * dt;
                 if velocity.angular.abs() <= decel {
                     velocity.angular = 0.0;
                 } else {
@@ -558,11 +565,11 @@ fn turn_ships(
         }
 
         // Calculate if we need to decelerate to stop at target angle
-        let stop_distance = braking_distance(velocity.angular.abs(), profile.turn_acceleration);
+        let stop_distance = braking_distance(velocity.angular.abs(), effective_turn_accel);
         let should_brake = stop_distance >= delta.abs();
 
         if should_brake {
-            let decel = profile.turn_acceleration * dt;
+            let decel = effective_turn_accel * dt;
             if velocity.angular.abs() <= decel {
                 velocity.angular = 0.0;
             } else {
@@ -570,8 +577,8 @@ fn turn_ships(
             }
         } else {
             let desired_sign = delta.signum();
-            velocity.angular += desired_sign * profile.turn_acceleration * dt;
-            velocity.angular = velocity.angular.clamp(-profile.turn_rate, profile.turn_rate);
+            velocity.angular += desired_sign * effective_turn_accel * dt;
+            velocity.angular = velocity.angular.clamp(-effective_turn_rate, effective_turn_rate);
         }
 
         // Apply angular velocity
