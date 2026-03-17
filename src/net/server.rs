@@ -824,6 +824,7 @@ fn handle_join_squad(
                 commands.entity(follower_entity).insert(SquadSpeedLimit(squad_min));
             }
         }
+        info!("Squad speed limit set to {:.1} for leader {:?} and followers", squad_min, cmd.leader);
     }
 
     info!(

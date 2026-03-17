@@ -607,7 +607,12 @@ fn apply_thrust(
 
         // Effective top speed: capped by squad speed limit if present
         let effective_top_speed = if let Some(limit) = speed_limit {
-            profile.top_speed.min(limit.0)
+            let capped = profile.top_speed.min(limit.0);
+            if (capped - profile.top_speed).abs() > 0.1 {
+                // Only log when actually capping (avoids spam when limit == top_speed)
+                info!("Speed limited: {:.1} -> {:.1}", profile.top_speed, capped);
+            }
+            capped
         } else {
             profile.top_speed
         };
