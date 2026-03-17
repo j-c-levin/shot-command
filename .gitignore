@@ -1,6 +1,7 @@
 # Rust / Cargo
 /target
 **/*.rs.bk
+Cargo.lock.bak
 
 # Editor
 *.swp
@@ -16,5 +17,30 @@
 .LSOverride
 
 # Logs
-firebase-debug.log
 *.log
+
+# Claude Code
+CLAUDE.md
+.claude/
+docs/superpowers/
+
+# Secrets / credentials
+.env
+.env.*
+*.pem
+*.key
+*.p12
+*.pfx
+credentials.*
+secrets.*
+
+# Bevy / game build artifacts
+*.wasm
+wasm_build/
+
+# Template assets (not part of game)
+assets/textures/bevy.png
+assets/textures/github.png
+assets/textures/icon.png
+assets/textures/mute.png
+assets/textures/pause.png
