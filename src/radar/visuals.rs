@@ -9,7 +9,8 @@ use crate::radar::rwr::RwrBearings;
 use crate::ship::{Ship, ShipSecrets, ShipSecretsOwner};
 use crate::weapon::{Mounts, WeaponCategory};
 
-/// Blue/grey circle above own ships indicating radar on/off.
+/// Large range circle around own ships with active radar, showing coverage area.
+/// Semi-transparent blue when on. No indicator when off.
 pub fn draw_radar_status_gizmos(
     mut gizmos: Gizmos,
     local_team: Res<LocalTeam>,
@@ -21,12 +22,13 @@ pub fn draw_radar_status_gizmos(
         if *team != my_team {
             continue;
         }
-        let has_radar = mounts.0.iter().any(|m| {
-            m.weapon
-                .as_ref()
-                .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Sensor)
-        });
-        if !has_radar {
+        // Find the best radar range on this ship
+        let radar_range = mounts.0.iter()
+            .filter_map(|m| m.weapon.as_ref())
+            .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+            .map(|w| w.weapon_type.profile().firing_range)
+            .fold(0.0_f32, f32::max);
+        if radar_range <= 0.0 {
             continue;
         }
         let is_active = secrets
@@ -34,15 +36,15 @@ pub fn draw_radar_status_gizmos(
             .find(|(owner, _)| owner.0 == ship_entity)
             .map(|(_, active)| active.0)
             .unwrap_or(false);
-        let pos = transform.translation + Vec3::Y * 15.0;
-        let color = if is_active {
-            Color::srgb(0.2, 0.5, 1.0)
-        } else {
-            Color::srgb(0.4, 0.4, 0.4)
-        };
+        if !is_active {
+            continue;
+        }
+        // Draw large range circle at ground level centered on the ship
+        let pos = Vec3::new(transform.translation.x, 0.5, transform.translation.z);
+        let color = Color::srgba(0.2, 0.5, 1.0, 0.3);
         gizmos.circle(
             Isometry3d::new(pos, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            3.0,
+            radar_range,
             color,
         );
     }
