@@ -3,7 +3,7 @@ use bevy::prelude::*;
 
 use crate::game::{Destroyed, GameState, Health, Team};
 use crate::net::LocalTeam;
-use crate::ship::{EngineHealth, Selected, Ship, ShipClass, ShipNumber};
+use crate::ship::{EngineHealth, Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner};
 use crate::weapon::{Mounts, WeaponCategory, WeaponType};
 
 pub struct FleetStatusPlugin;
@@ -91,7 +91,8 @@ fn despawn_fleet_sidebar(
 fn rebuild_ship_cards(
     mut commands: Commands,
     local_team: Res<LocalTeam>,
-    ships: Query<(Entity, &Team, &ShipClass, &ShipNumber, &Health, &Mounts), With<Ship>>,
+    ships: Query<(Entity, &Team, &ShipClass, &Health, &Mounts), With<Ship>>,
+    secrets: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     mut sidebar_q: Query<(Entity, &mut SidebarShipCount), With<FleetSidebar>>,
     existing_cards: Query<Entity, With<ShipCard>>,
 ) {
@@ -100,12 +101,20 @@ fn rebuild_ship_cards(
         return;
     };
 
+    // Build a map of ship entity → ship number from ShipSecrets
+    let ship_numbers: std::collections::HashMap<Entity, u8> = secrets
+        .iter()
+        .map(|(owner, num)| (owner.0, num.0))
+        .collect();
+
     // Collect friendly ships sorted by ShipNumber
     let mut friendly_ships: Vec<_> = ships
         .iter()
-        .filter(|(_, team, _, _, _, _)| **team == my_team)
+        .filter(|(_, team, _, _, _)| **team == my_team)
         .collect();
-    friendly_ships.sort_by_key(|(_, _, _, num, _, _)| num.0);
+    friendly_ships.sort_by_key(|(entity, _, _, _, _)| {
+        ship_numbers.get(entity).copied().unwrap_or(255)
+    });
 
     // Only rebuild if count changed
     if friendly_ships.len() == ship_count.0 {
@@ -120,8 +129,9 @@ fn rebuild_ship_cards(
 
     // Spawn new cards as children of sidebar
     commands.entity(sidebar_entity).with_children(|parent| {
-        for (ship_entity, _, class, number, health, mounts) in &friendly_ships {
-            spawn_ship_card(parent, *ship_entity, *class, *number, health, mounts);
+        for (ship_entity, _, class, health, mounts) in &friendly_ships {
+            let number = ship_numbers.get(ship_entity).copied().unwrap_or(0);
+            spawn_ship_card(parent, *ship_entity, class, number, health, mounts);
         }
     });
 }
@@ -130,7 +140,7 @@ fn spawn_ship_card(
     parent: &mut ChildSpawnerCommands<'_>,
     ship_entity: Entity,
     class: &ShipClass,
-    number: &ShipNumber,
+    number: u8,
     health: &Health,
     mounts: &Mounts,
 ) {
@@ -162,7 +172,7 @@ fn spawn_ship_card(
         .with_children(|card| {
             // Row 1: Ship number + class name
             card.spawn((
-                Text::new(format!("{}  {}", number.0, class_name)),
+                Text::new(format!("{}  {}", number, class_name)),
                 TextFont {
                     font_size: 14.0,
                     ..default()
