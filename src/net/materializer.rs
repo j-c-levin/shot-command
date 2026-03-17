@@ -656,11 +656,12 @@ pub fn update_squad_connection_lines(
 #[derive(Component)]
 pub struct EnemyNumberLabel;
 
-/// System that shows red number labels below visible enemy ships when EnemyNumbers is active.
+/// System that shows number labels below visible enemy ships and radar contacts
+/// when EnemyNumbers is active.
 pub fn update_enemy_number_labels(
     mut commands: Commands,
     enemy_numbers: Res<EnemyNumbers>,
-    ship_query: Query<&Transform, With<Ship>>,
+    transform_query: Query<&Transform>,
     label_query: Query<Entity, With<EnemyNumberLabel>>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
 ) {
@@ -677,12 +678,12 @@ pub fn update_enemy_number_labels(
         return;
     };
 
-    for (&ship_entity, &number) in &enemy_numbers.assignments {
-        let Ok(transform) = ship_query.get(ship_entity) else {
+    for (&entity, &number) in &enemy_numbers.assignments {
+        let Ok(transform) = transform_query.get(entity) else {
             continue;
         };
 
-        // Project world position to screen (below ship)
+        // Project world position to screen (below entity)
         let world_pos = transform.translation + Vec3::Y * -2.0;
         let Ok(screen_pos) = camera.world_to_viewport(camera_gt, world_pos) else {
             continue;

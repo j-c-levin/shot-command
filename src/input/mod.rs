@@ -957,7 +957,7 @@ fn update_enemy_numbers(
         .filter(|(_, level, team, kind, source)| {
             **level == ContactLevel::Track
                 && **kind == ContactKind::Ship
-                && team.0 != my_team
+                && team.0 == my_team // ContactTeam is the detecting team (us)
                 && !enemy_numbers.assignments.contains_key(&source.0)
                 && !already_numbered_sources.contains(&source.0)
         })
