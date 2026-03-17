@@ -125,8 +125,8 @@ pub fn update_ship_number_labels(
             continue;
         }
 
-        // Project world position to screen coordinates (label floats above ship)
-        let world_pos = transform.translation + Vec3::Y * 20.0;
+        // Project world position to screen coordinates (label floats below ship)
+        let world_pos = transform.translation + Vec3::Y * -2.0;
         let Ok(screen_pos) = camera.world_to_viewport(camera_gt, world_pos) else {
             continue;
         };
@@ -135,14 +135,14 @@ pub fn update_ship_number_labels(
             ShipNumberLabel { owner: owner.0 },
             Text::new(format!("{}", ship_number.0)),
             TextFont {
-                font_size: 22.0,
+                font_size: 14.0,
                 ..default()
             },
             TextColor(Color::srgba(0.8, 0.95, 1.0, 0.85)),
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(screen_pos.x - 6.0),
-                top: Val::Px(screen_pos.y - 14.0),
+                left: Val::Px(screen_pos.x - 4.0),
+                top: Val::Px(screen_pos.y),
                 ..default()
             },
             Pickable::IGNORE,
