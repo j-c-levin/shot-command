@@ -28,7 +28,10 @@ impl Plugin for ClientNetPlugin {
 
         // Systems
         app.init_resource::<super::materializer::DebugVisuals>();
-        app.add_systems(Startup, super::materializer::init_target_indicator_assets);
+        app.add_systems(Startup, (
+            super::materializer::init_target_indicator_assets,
+            super::materializer::init_los_circle_assets,
+        ));
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
         app.add_systems(OnEnter(GameState::Playing), client_setup_scene);
         app.add_systems(
@@ -48,6 +51,8 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::toggle_debug_visuals,
                 super::materializer::spawn_debug_seeker_cones,
                 super::materializer::update_debug_seeker_cones,
+                super::materializer::update_los_circle,
+                super::materializer::update_enemy_number_labels,
             )
                 .run_if(in_state(GameState::Playing)),
         );

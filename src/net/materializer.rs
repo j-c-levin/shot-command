@@ -1,11 +1,11 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
-use crate::input::{on_ship_clicked, SquadHighlight};
+use crate::input::{on_ship_clicked, EnemyNumbers, MoveMode, SquadHighlight};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
-    Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, TargetDesignation,
+    Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, TargetDesignation,
 };
 use crate::weapon::missile::{
     Explosion, Missile, MissileVelocity, SEEKER_HALF_ANGLE, SEEKER_MAX_RANGE,
@@ -619,4 +619,133 @@ pub fn update_squad_connection_lines(
             .with_scale(Vec3::new(1.0, length, 1.0)),
         Pickable::IGNORE,
     ));
+}
+
+// ── LOS Circle (Move Mode) ─────────────────────────────────────────────
+
+/// Marker for the LOS (vision range) circle shown in move mode.
+#[derive(Component)]
+pub struct LosCircle;
+
+/// Cached assets for the LOS circle.
+#[derive(Resource)]
+pub struct LosCircleAssets {
+    pub mesh: Handle<Mesh>,
+    pub material: Handle<StandardMaterial>,
+}
+
+/// Startup: create LOS circle assets.
+pub fn init_los_circle_assets(
+    mut commands: Commands,
+    mut meshes: ResMut<Assets<Mesh>>,
+    mut materials: ResMut<Assets<StandardMaterial>>,
+) {
+    // Unit torus — scaled to 400m at runtime
+    commands.insert_resource(LosCircleAssets {
+        mesh: meshes.add(Torus::new(0.98, 1.0)),
+        material: materials.add(StandardMaterial {
+            base_color: Color::srgba(0.2, 1.0, 0.3, 0.15),
+            alpha_mode: AlphaMode::Blend,
+            unlit: true,
+            ..default()
+        }),
+    });
+}
+
+/// System: spawn/despawn and position the LOS circle based on move mode + selection.
+pub fn update_los_circle(
+    mut commands: Commands,
+    move_mode: Res<MoveMode>,
+    assets: Res<LosCircleAssets>,
+    selected_query: Query<(&Transform, &ShipClass), (With<Selected>, With<Ship>)>,
+    circle_query: Query<Entity, With<LosCircle>>,
+) {
+    let show = move_mode.0 && selected_query.iter().next().is_some();
+
+    if !show {
+        // Despawn all LOS circles
+        for entity in &circle_query {
+            commands.entity(entity).despawn();
+        }
+        return;
+    }
+
+    let Some((ship_tf, ship_class)) = selected_query.iter().next() else {
+        return;
+    };
+    let vision_range = ship_class.profile().vision_range;
+
+    if circle_query.iter().next().is_some() {
+        // Already exists — we can't easily update transforms here without mut query conflicts,
+        // so despawn and respawn (cheap per frame for a single entity)
+        for entity in &circle_query {
+            commands.entity(entity).despawn();
+        }
+    }
+
+    commands.spawn((
+        LosCircle,
+        Mesh3d(assets.mesh.clone()),
+        MeshMaterial3d(assets.material.clone()),
+        Transform::from_xyz(ship_tf.translation.x, 0.5, ship_tf.translation.z)
+            .with_scale(Vec3::splat(vision_range)),
+        Pickable::IGNORE,
+    ));
+}
+
+// ── Enemy Number Labels ─────────────────────────────────────────────────
+
+/// Marker for enemy number label entities.
+#[derive(Component)]
+pub struct EnemyNumberLabel;
+
+/// System that shows red number labels below visible enemy ships when EnemyNumbers is active.
+pub fn update_enemy_number_labels(
+    mut commands: Commands,
+    enemy_numbers: Res<EnemyNumbers>,
+    ship_query: Query<&Transform, With<Ship>>,
+    label_query: Query<Entity, With<EnemyNumberLabel>>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    // Despawn all existing enemy number labels
+    for entity in &label_query {
+        commands.entity(entity).despawn();
+    }
+
+    if !enemy_numbers.active {
+        return;
+    }
+
+    let Ok((camera, camera_gt)) = camera_query.single() else {
+        return;
+    };
+
+    for (&ship_entity, &number) in &enemy_numbers.assignments {
+        let Ok(transform) = ship_query.get(ship_entity) else {
+            continue;
+        };
+
+        // Project world position to screen (below ship)
+        let world_pos = transform.translation + Vec3::Y * -2.0;
+        let Ok(screen_pos) = camera.world_to_viewport(camera_gt, world_pos) else {
+            continue;
+        };
+
+        commands.spawn((
+            EnemyNumberLabel,
+            Text::new(format!("{}", number)),
+            TextFont {
+                font_size: 14.0,
+                ..default()
+            },
+            TextColor(Color::srgba(1.0, 0.3, 0.3, 0.9)),
+            Node {
+                position_type: PositionType::Absolute,
+                left: Val::Px(screen_pos.x - 4.0),
+                top: Val::Px(screen_pos.y),
+                ..default()
+            },
+            Pickable::IGNORE,
+        ));
+    }
 }

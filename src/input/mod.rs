@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 
@@ -32,6 +34,21 @@ pub struct MissileMode(pub bool);
 #[derive(Resource, Default)]
 pub struct JoinMode(pub bool);
 
+/// Resource: when true, right-click issues move commands
+#[derive(Resource, Default)]
+pub struct MoveMode(pub bool);
+
+/// Tracks numbered enemy assignments for K/M mode keyboard targeting.
+#[derive(Resource, Debug, Default)]
+pub struct EnemyNumbers {
+    pub assignments: HashMap<Entity, u8>,
+    pub active: bool,
+}
+
+/// Marker for the mode indicator text in the bottom-left corner.
+#[derive(Component)]
+pub struct ModeIndicatorText;
+
 /// Marker for ships highlighted as squad followers of the selected leader.
 #[derive(Component)]
 pub struct SquadHighlight;
@@ -46,6 +63,8 @@ impl Plugin for InputPlugin {
             .init_resource::<TargetMode>()
             .init_resource::<MissileMode>()
             .init_resource::<JoinMode>()
+            .init_resource::<MoveMode>()
+            .init_resource::<EnemyNumbers>()
             .add_systems(
                 Startup,
                 (
@@ -55,6 +74,7 @@ impl Plugin for InputPlugin {
                     setup_target_mode_hud,
                     setup_missile_mode_hud,
                     setup_join_mode_hud,
+                    setup_mode_indicator,
                 ),
             )
             .add_systems(
@@ -69,6 +89,8 @@ impl Plugin for InputPlugin {
                     update_target_mode_hud,
                     update_missile_mode_hud,
                     update_join_mode_hud,
+                    update_mode_indicator,
+                    update_enemy_numbers,
                 ),
             );
     }
@@ -103,6 +125,7 @@ pub fn on_ship_clicked(
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
     mut join_mode: ResMut<JoinMode>,
+    mut move_mode: ResMut<MoveMode>,
     ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
@@ -182,6 +205,7 @@ pub fn on_ship_clicked(
     target_mode.0 = false;
     missile_mode.0 = false;
     join_mode.0 = false;
+    move_mode.0 = false;
 
     commands.entity(entity).insert(Selected);
 }
@@ -194,6 +218,7 @@ pub fn on_ground_clicked(
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
     mut join_mode: ResMut<JoinMode>,
+    mut move_mode: ResMut<MoveMode>,
     local_team: Res<LocalTeam>,
     ground_query: Query<Entity, With<GroundPlane>>,
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
@@ -257,10 +282,21 @@ pub fn on_ground_clicked(
         target_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
         return;
     }
 
     if click.button != PointerButton::Secondary {
+        return;
+    }
+
+    // Target mode: right-click on ground does nothing (only enemy clicks target)
+    if target_mode.0 {
+        return;
+    }
+
+    // Move mode required for right-click move commands
+    if !move_mode.0 {
         return;
     }
 
@@ -309,6 +345,7 @@ fn handle_keyboard(
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
     mut join_mode: ResMut<JoinMode>,
+    mut move_mode: ResMut<MoveMode>,
     selected_query: Query<(Entity, &Transform), With<Selected>>,
     locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&TargetDesignation>), With<ShipSecrets>>,
@@ -327,6 +364,18 @@ fn handle_keyboard(
         target_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
+    }
+
+    // Space: toggle move mode
+    if keys.just_pressed(KeyCode::Space) {
+        move_mode.0 = !move_mode.0;
+        if move_mode.0 {
+            lock_mode.0 = false;
+            target_mode.0 = false;
+            missile_mode.0 = false;
+            join_mode.0 = false;
+        }
     }
 
     if keys.just_pressed(KeyCode::KeyL) {
@@ -341,6 +390,7 @@ fn handle_keyboard(
         target_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyK) {
@@ -363,6 +413,7 @@ fn handle_keyboard(
         lock_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyM) {
@@ -381,6 +432,7 @@ fn handle_keyboard(
         lock_mode.0 = false;
         target_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyJ) {
@@ -393,6 +445,7 @@ fn handle_keyboard(
         lock_mode.0 = false;
         target_mode.0 = false;
         missile_mode.0 = false;
+        move_mode.0 = false;
     }
 
     // S key: full stop
@@ -412,6 +465,7 @@ fn handle_keyboard(
         target_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
     }
 }
 
@@ -688,9 +742,11 @@ fn handle_number_keys(
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
     mut join_mode: ResMut<JoinMode>,
-    ship_query: Query<(Entity, &Team), With<Ship>>,
+    mut move_mode: ResMut<MoveMode>,
+    ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
+    enemy_numbers: Res<EnemyNumbers>,
 ) {
     let Some(my_team) = local_team.0 else {
         return;
@@ -710,13 +766,47 @@ fn handle_number_keys(
             continue;
         };
 
+        // K mode: target enemy by number
+        if target_mode.0 && enemy_numbers.active {
+            let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
+            if let Some(enemy_entity) = enemy {
+                for selected_ship in &selected_query {
+                    commands.client_trigger(TargetCommand {
+                        ship: selected_ship,
+                        target: enemy_entity,
+                    });
+                }
+                target_mode.0 = false;
+            }
+            return;
+        }
+
+        // M mode: fire missile at enemy by number
+        if missile_mode.0 && enemy_numbers.active {
+            let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
+            if let Some(enemy_entity) = enemy {
+                if let Ok((_, _, transform)) = ship_query.get(enemy_entity) {
+                    let target_pos = Vec2::new(transform.translation.x, transform.translation.z);
+                    for selected_ship in &selected_query {
+                        commands.client_trigger(FireMissileCommand {
+                            ship: selected_ship,
+                            target_point: target_pos,
+                            target_entity: Some(enemy_entity),
+                        });
+                    }
+                }
+            }
+            // Stay in M mode
+            return;
+        }
+
         // Find the ship on our team with this number via ShipSecrets
         // (ShipNumber lives only on ShipSecrets, not on Ship entities).
         let target_ship = secrets_query
             .iter()
             .find(|(_, sn)| sn.0 == number)
             .and_then(|(owner, _)| {
-                let (entity, team) = ship_query.get(owner.0).ok()?;
+                let (entity, team, _) = ship_query.get(owner.0).ok()?;
                 if *team == my_team { Some(entity) } else { None }
             });
 
@@ -746,10 +836,105 @@ fn handle_number_keys(
         target_mode.0 = false;
         missile_mode.0 = false;
         join_mode.0 = false;
+        move_mode.0 = false;
 
         commands.entity(target_ship).insert(Selected);
         return;
     }
+}
+
+// ── Mode Indicator ──────────────────────────────────────────────────────
+
+fn setup_mode_indicator(mut commands: Commands) {
+    commands.spawn((
+        ModeIndicatorText,
+        Text::new(""),
+        TextFont {
+            font_size: 18.0,
+            ..default()
+        },
+        TextColor(Color::srgba(1.0, 1.0, 1.0, 0.8)),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(8.0),
+            left: Val::Px(12.0),
+            ..default()
+        },
+    ));
+}
+
+fn update_mode_indicator(
+    move_mode: Res<MoveMode>,
+    target_mode: Res<TargetMode>,
+    missile_mode: Res<MissileMode>,
+    join_mode: Res<JoinMode>,
+    lock_mode: Res<LockMode>,
+    mut query: Query<(&mut Text, &mut TextColor), With<ModeIndicatorText>>,
+) {
+    let Ok((mut text, mut color)) = query.single_mut() else {
+        return;
+    };
+
+    let (label, c) = if target_mode.0 {
+        ("TARGET", Color::srgba(1.0, 0.3, 0.3, 0.9))
+    } else if missile_mode.0 {
+        ("MISSILE", Color::srgba(1.0, 0.5, 0.1, 0.9))
+    } else if move_mode.0 {
+        ("MOVE", Color::srgba(0.3, 1.0, 0.3, 0.9))
+    } else if join_mode.0 {
+        ("JOIN", Color::srgba(0.3, 1.0, 0.8, 0.9))
+    } else if lock_mode.0 {
+        ("LOCK", Color::srgba(1.0, 0.8, 0.2, 0.9))
+    } else {
+        ("", Color::srgba(1.0, 1.0, 1.0, 0.0))
+    };
+
+    *text = Text::new(label);
+    *color = TextColor(c);
+}
+
+// ── Enemy Numbers ───────────────────────────────────────────────────────
+
+/// System that populates/clears EnemyNumbers based on current mode.
+fn update_enemy_numbers(
+    target_mode: Res<TargetMode>,
+    missile_mode: Res<MissileMode>,
+    local_team: Res<LocalTeam>,
+    mut enemy_numbers: ResMut<EnemyNumbers>,
+    ship_query: Query<(Entity, &Team), With<Ship>>,
+) {
+    let should_be_active = target_mode.0 || missile_mode.0;
+
+    if !should_be_active {
+        if enemy_numbers.active {
+            enemy_numbers.active = false;
+            enemy_numbers.assignments.clear();
+        }
+        return;
+    }
+
+    // Already active — don't reassign (stable numbers while mode is on)
+    if enemy_numbers.active {
+        return;
+    }
+
+    let Some(my_team) = local_team.0 else {
+        return;
+    };
+
+    // Collect visible enemy ships and sort by entity index for stability
+    let mut enemies: Vec<Entity> = ship_query
+        .iter()
+        .filter(|(_, team)| **team != my_team)
+        .map(|(e, _)| e)
+        .collect();
+    enemies.sort_by_key(|e| e.index());
+
+    enemy_numbers.assignments.clear();
+    for (i, entity) in enemies.iter().enumerate().take(9) {
+        enemy_numbers.assignments.insert(*entity, (i + 1) as u8);
+    }
+    enemy_numbers.active = true;
 }
 
 // ── Squad Highlights ─────────────────────────────────────────────────────
