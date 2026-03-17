@@ -131,16 +131,11 @@ pub fn update_radar_contacts(
                 continue;
             }
 
-            let snr = compute_snr(radar_range, distance, MISSILE_RCS, 1.0);
-
-            if snr >= SIGNATURE_THRESHOLD {
-                let key = (team_id, missile_entity);
-                let entry = best_snr.entry(key).or_insert((0.0, ContactKind::Missile));
-                if snr > entry.0 {
-                    entry.0 = snr;
-                    entry.1 = ContactKind::Missile;
-                }
-            }
+            // Missiles inside radar range are always immediately tracked (no SNR gradation)
+            let key = (team_id, missile_entity);
+            let entry = best_snr.entry(key).or_insert((0.0, ContactKind::Missile));
+            entry.0 = f32::MAX; // Force track level
+            entry.1 = ContactKind::Missile;
         }
 
         // Check enemy projectiles
@@ -165,18 +160,13 @@ pub fn update_radar_contacts(
                 continue;
             }
 
-            let snr = compute_snr(radar_range, distance, PROJECTILE_RCS, 1.0);
-
-            if snr >= SIGNATURE_THRESHOLD {
-                let key = (team_id, proj_entity);
-                let entry = best_snr
-                    .entry(key)
-                    .or_insert((0.0, ContactKind::Projectile));
-                if snr > entry.0 {
-                    entry.0 = snr;
-                    entry.1 = ContactKind::Projectile;
-                }
-            }
+            // Projectiles inside radar range are always immediately tracked
+            let key = (team_id, proj_entity);
+            let entry = best_snr
+                .entry(key)
+                .or_insert((0.0, ContactKind::Projectile));
+            entry.0 = f32::MAX;
+            entry.1 = ContactKind::Projectile;
         }
     }
 
