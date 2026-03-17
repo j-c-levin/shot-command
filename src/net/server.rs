@@ -33,6 +33,7 @@ use crate::ship::{
     spawn_server_ship_default,
 };
 use crate::radar::{ContactLevel, ContactSourceShip, ContactTeam, RadarActive, RadarActiveSecret, RadarContact};
+use crate::control_point::{ControlPoint, ControlPointRadius, ControlPointState, TeamScores, DEFAULT_ZONE_RADIUS};
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
@@ -347,6 +348,18 @@ fn server_setup_game(
             Replicated,
         ));
     }
+
+    // Spawn control point at map center
+    commands.spawn((
+        ControlPoint,
+        ControlPointState::Neutral,
+        ControlPointRadius(DEFAULT_ZONE_RADIUS),
+        TeamScores::default(),
+        Transform::from_xyz(0.0, 0.0, 0.0),
+        Replicated,
+    ));
+
+    info!("Server: spawned control point at map center");
 
     info!(
         "Server: spawned fleets for 2 teams and {} asteroids",

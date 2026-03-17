@@ -31,6 +31,7 @@ use crate::weapon::missile::{
     MissileOwner, MissileTarget, MissileVelocity,
 };
 use crate::weapon::pd::{LaserBeam, LaserBeamTarget, LaserBeamTimer};
+use crate::control_point::{ControlPoint, ControlPointRadius, ControlPointState, TeamScores};
 use crate::weapon::projectile::{CwisRound, Projectile, ProjectileDamage, ProjectileOwner, ProjectileVelocity};
 
 pub struct SharedReplicationPlugin;
@@ -91,6 +92,12 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<ContactId>()
             .replicate::<ContactSourceShip>()
             .replicate::<ContactKind>();
+
+        // Control point components
+        app.replicate::<ControlPoint>()
+            .replicate::<ControlPointState>()
+            .replicate::<ControlPointRadius>()
+            .replicate::<TeamScores>();
 
         // ── Client→server triggers ─────────────────────────────────────
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)
