@@ -96,6 +96,24 @@ impl ContactTracker {
     }
 }
 
+pub struct RadarClientPlugin;
+
+impl Plugin for RadarClientPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (
+                visuals::draw_radar_status_gizmos,
+                visuals::draw_radar_signature_gizmos,
+                visuals::draw_radar_track_gizmos,
+                visuals::draw_tracked_missile_gizmos,
+                visuals::draw_rwr_gizmos,
+            )
+                .run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
 pub struct RadarPlugin;
 
 impl Plugin for RadarPlugin {
