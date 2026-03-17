@@ -777,7 +777,8 @@ fn handle_join_squad(
     );
 }
 
-/// Remove SquadMember from ships whose leader no longer exists or is destroyed.
+/// Remove SquadMember from ships whose leader no longer exists or is destroyed,
+/// and from ships that are themselves destroyed.
 fn cleanup_orphan_squad_members(
     mut commands: Commands,
     squad_query: Query<(Entity, &SquadMember), With<Ship>>,
@@ -787,7 +788,8 @@ fn cleanup_orphan_squad_members(
     for (entity, squad) in &squad_query {
         let leader_gone = ship_query.get(squad.leader).is_err();
         let leader_destroyed = destroyed_query.get(squad.leader).is_ok();
-        if leader_gone || leader_destroyed {
+        let self_destroyed = destroyed_query.get(entity).is_ok();
+        if leader_gone || leader_destroyed || self_destroyed {
             commands.entity(entity).remove::<SquadMember>();
             info!(
                 "Orphan cleanup: ship {:?} lost leader {:?}",

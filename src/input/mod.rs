@@ -227,27 +227,10 @@ pub fn on_ground_clicked(
         return;
     }
 
-    // Alt+right-click: set facing direction and lock
-    if click.button == PointerButton::Secondary && keys.pressed(KeyCode::AltLeft) {
-        for (entity, transform, team) in &selected_query {
-            if *team != my_team {
-                continue;
-            }
-            let pos = Vec2::new(transform.translation.x, transform.translation.z);
-            let dir = (destination - pos).normalize_or_zero();
-            if dir != Vec2::ZERO {
-                commands.client_trigger(FacingLockCommand {
-                    ship: entity,
-                    direction: dir,
-                });
-            }
-        }
-        lock_mode.0 = false;
-        return;
-    }
-
-    // Lock mode: right-click sets facing direction
-    if click.button == PointerButton::Secondary && lock_mode.0 {
+    // Alt+right-click or lock-mode right-click: set facing direction and lock
+    if click.button == PointerButton::Secondary
+        && (keys.pressed(KeyCode::AltLeft) || lock_mode.0)
+    {
         for (entity, transform, team) in &selected_query {
             if *team != my_team {
                 continue;
@@ -705,7 +688,7 @@ fn handle_number_keys(
     mut target_mode: ResMut<TargetMode>,
     mut missile_mode: ResMut<MissileMode>,
     mut join_mode: ResMut<JoinMode>,
-    ship_query: Query<(Entity, &Team, &ShipNumber), With<Ship>>,
+    ship_query: Query<(Entity, &Team), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
 ) {
@@ -727,14 +710,13 @@ fn handle_number_keys(
             continue;
         };
 
-        // Find the ship on our team with this number.
-        // First try direct Ship entities (which have ShipNumber on server).
-        // On client, ShipNumber is replicated via ShipSecrets, so look there.
+        // Find the ship on our team with this number via ShipSecrets
+        // (ShipNumber lives only on ShipSecrets, not on Ship entities).
         let target_ship = secrets_query
             .iter()
             .find(|(_, sn)| sn.0 == number)
             .and_then(|(owner, _)| {
-                let (entity, team, _) = ship_query.get(owner.0).ok()?;
+                let (entity, team) = ship_query.get(owner.0).ok()?;
                 if *team == my_team { Some(entity) } else { None }
             });
 

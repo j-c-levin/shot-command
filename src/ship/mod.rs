@@ -771,7 +771,6 @@ pub fn spawn_server_ship(
             Velocity::default(),
             WaypointQueue::default(),
             MissileQueue::default(),
-            ShipNumber(ship_number),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: class.profile().hp },
             Mounts(mounts),

@@ -24,6 +24,8 @@ pub struct LobbyTracker {
     pub submissions: HashMap<Entity, Vec<ShipSpec>>,
     /// Countdown timer (seconds remaining). `Some` when both players have submitted.
     pub countdown: Option<f32>,
+    /// Last broadcast second (to avoid broadcasting every frame). -1 means no broadcast yet.
+    pub last_broadcast_secs: i32,
 }
 
 pub struct LobbyPlugin;
@@ -125,6 +127,7 @@ fn handle_cancel_submission(
 
     lobby.submissions.remove(&client_entity);
     lobby.countdown = None;
+    lobby.last_broadcast_secs = -1;
 
     info!("Fleet submission cancelled by {:?}", client_entity);
 
@@ -165,6 +168,7 @@ fn tick_lobby_countdown(
 
     if *remaining <= 0.0 {
         lobby.countdown = None;
+        lobby.last_broadcast_secs = -1;
         info!("Lobby countdown complete — starting game");
         commands.server_trigger(ToClients {
             mode: SendMode::Broadcast,
@@ -173,11 +177,15 @@ fn tick_lobby_countdown(
         next_state.set(GameState::Playing);
     } else {
         let secs = *remaining;
-        commands.server_trigger(ToClients {
-            mode: SendMode::Broadcast,
-            message: LobbyStatus {
-                state: LobbyState::Countdown(secs),
-            },
-        });
+        let display_secs = secs.ceil() as i32;
+        if display_secs != lobby.last_broadcast_secs {
+            lobby.last_broadcast_secs = display_secs;
+            commands.server_trigger(ToClients {
+                mode: SendMode::Broadcast,
+                message: LobbyStatus {
+                    state: LobbyState::Countdown(secs),
+                },
+            });
+        }
     }
 }

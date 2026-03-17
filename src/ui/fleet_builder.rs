@@ -259,6 +259,17 @@ pub fn despawn_fleet_ui(
     *state = FleetBuilderState::default();
 }
 
+// ── Helpers ──────────────────────────────────────────────────────────────
+
+/// Despawn all children of a parent entity.
+fn clear_children(commands: &mut Commands, parent: Entity, children_query: &Query<&Children>) {
+    if let Ok(children) = children_query.get(parent) {
+        for child in children.iter() {
+            commands.entity(child).despawn();
+        }
+    }
+}
+
 // ── Rebuild fleet list ──────────────────────────────────────────────────
 
 pub fn rebuild_fleet_list(
@@ -275,12 +286,7 @@ pub fn rebuild_fleet_list(
         return;
     };
 
-    // Despawn existing children
-    if let Ok(children) = children_query.get(panel_entity) {
-        for child in children.iter() {
-            commands.entity(child).despawn();
-        }
-    }
+    clear_children(&mut commands, panel_entity, &children_query);
 
     commands.entity(panel_entity).with_children(|panel| {
         // Title
@@ -418,12 +424,7 @@ pub fn rebuild_ship_detail(
         return;
     };
 
-    // Despawn existing children
-    if let Ok(children) = children_query.get(panel_entity) {
-        for child in children.iter() {
-            commands.entity(child).despawn();
-        }
-    }
+    clear_children(&mut commands, panel_entity, &children_query);
 
     let Some(idx) = state.selected_ship else {
         commands.entity(panel_entity).with_children(|panel| {
@@ -1059,7 +1060,6 @@ pub fn update_status_text(
 pub fn update_submit_button(
     state: Res<FleetBuilderState>,
     mut query: Query<&mut BackgroundColor, With<SubmitButton>>,
-    mut text_query: Query<&mut Text, With<SubmitButton>>,
     children_query: Query<&Children, With<SubmitButton>>,
     mut child_text_query: Query<&mut Text, Without<SubmitButton>>,
 ) {
@@ -1079,11 +1079,6 @@ pub fn update_submit_button(
 
     for mut bg_color in &mut query {
         bg_color.0 = bg;
-    }
-
-    // Update direct text on the button (if any)
-    for mut text in &mut text_query {
-        *text = Text::new(label);
     }
 
     // Update child text entities
