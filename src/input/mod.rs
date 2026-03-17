@@ -869,27 +869,30 @@ fn update_enemy_numbers(
         return;
     }
 
-    // Already active — don't reassign (stable numbers while mode is on)
-    if enemy_numbers.active {
-        return;
-    }
-
     let Some(my_team) = local_team.0 else {
         return;
     };
 
-    // Collect visible enemy ships and sort by entity index for stability
-    let mut enemies: Vec<Entity> = ship_query
+    // Remove assignments for enemies that are no longer visible (despawned by replicon)
+    enemy_numbers.assignments.retain(|entity, _| ship_query.get(*entity).is_ok());
+
+    // Assign numbers to newly visible enemies (stable: existing assignments kept)
+    let mut new_enemies: Vec<Entity> = ship_query
         .iter()
         .filter(|(_, team)| **team != my_team)
+        .filter(|(e, _)| !enemy_numbers.assignments.contains_key(e))
         .map(|(e, _)| e)
         .collect();
-    enemies.sort_by_key(|e| e.index());
+    new_enemies.sort_by_key(|e| e.index());
 
-    enemy_numbers.assignments.clear();
-    for (i, entity) in enemies.iter().enumerate().take(9) {
-        enemy_numbers.assignments.insert(*entity, (i + 1) as u8);
+    for entity in new_enemies {
+        // Find the lowest unused number 1-9
+        let next = (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n));
+        if let Some(num) = next {
+            enemy_numbers.assignments.insert(entity, num);
+        }
     }
+
     enemy_numbers.active = true;
 }
 
