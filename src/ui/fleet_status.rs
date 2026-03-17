@@ -1,9 +1,9 @@
 use bevy::picking::prelude::Pickable;
 use bevy::prelude::*;
 
-use crate::game::{GameState, Health, Team};
+use crate::game::{Destroyed, GameState, Health, Team};
 use crate::net::LocalTeam;
-use crate::ship::{EngineHealth, Ship, ShipClass, ShipNumber};
+use crate::ship::{EngineHealth, Selected, Ship, ShipClass, ShipNumber};
 use crate::weapon::{Mounts, WeaponCategory, WeaponType};
 
 pub struct FleetStatusPlugin;
@@ -19,6 +19,10 @@ impl Plugin for FleetStatusPlugin {
                     update_hull_bars,
                     update_engine_bars,
                     update_weapon_cells,
+                    update_selection_highlight,
+                    handle_card_click,
+                    update_destroyed_cards,
+                    update_cooldown_bars,
                 )
                     .chain()
                     .run_if(in_state(GameState::Playing)),
@@ -46,6 +50,9 @@ struct EngineBar(Entity);
 
 #[derive(Component)]
 struct WeaponCell(Entity, usize);
+
+#[derive(Component)]
+struct CooldownBar(Entity, usize);
 
 // ── Spawn / despawn ────────────────────────────────────────────────────
 
@@ -137,14 +144,20 @@ fn spawn_ship_card(
     parent
         .spawn((
             ShipCard(ship_entity),
-            Pickable::IGNORE,
             Node {
                 flex_direction: FlexDirection::Column,
                 padding: UiRect::all(Val::Px(4.0)),
                 row_gap: Val::Px(2.0),
+                border: UiRect::left(Val::Px(3.0)),
                 ..default()
             },
             BackgroundColor(Color::srgba(0.1, 0.1, 0.15, 0.9)),
+            BorderColor {
+                left: Color::NONE,
+                top: Color::NONE,
+                right: Color::NONE,
+                bottom: Color::NONE,
+            },
         ))
         .with_children(|card| {
             // Row 1: Ship number + class name
@@ -370,6 +383,21 @@ fn spawn_weapon_cell(
                 TextColor(Color::srgba(0.85, 0.85, 0.85, 1.0)),
                 Pickable::IGNORE,
             ));
+
+            // Cooldown bar fill
+            cell.spawn((
+                CooldownBar(ship_entity, mount_index),
+                Node {
+                    position_type: PositionType::Absolute,
+                    left: Val::Px(0.0),
+                    bottom: Val::Px(0.0),
+                    width: Val::Percent(0.0),
+                    height: Val::Px(2.0),
+                    ..default()
+                },
+                BackgroundColor(Color::srgba(1.0, 1.0, 0.3, 0.7)),
+                Pickable::IGNORE,
+            ));
         });
 }
 
@@ -458,5 +486,103 @@ fn update_weapon_cells(
                 **text = new_text;
             }
         }
+    }
+}
+
+// ── Selection highlighting ───────────────────────────────────────────
+
+fn update_selection_highlight(
+    ships: Query<(), With<Selected>>,
+    mut cards: Query<(&ShipCard, &mut BorderColor)>,
+) {
+    for (card, mut border) in &mut cards {
+        let color = if ships.get(card.0).is_ok() {
+            Color::srgba(0.2, 1.0, 0.2, 0.9)
+        } else {
+            Color::NONE
+        };
+        border.left = color;
+    }
+}
+
+fn handle_card_click(
+    mut commands: Commands,
+    cards: Query<(&ShipCard, &Interaction), Changed<Interaction>>,
+    selected: Query<Entity, With<Selected>>,
+) {
+    for (card, interaction) in &cards {
+        if *interaction == Interaction::Pressed {
+            // Deselect all ships
+            for entity in &selected {
+                commands.entity(entity).remove::<Selected>();
+            }
+            // Select the clicked card's ship
+            commands.entity(card.0).insert(Selected);
+        }
+    }
+}
+
+// ── Destroyed ship graying ───────────────────────────────────────────
+
+fn update_destroyed_cards(
+    ships: Query<(), With<Destroyed>>,
+    mut cards: Query<(&ShipCard, &mut BackgroundColor)>,
+) {
+    for (card, mut bg) in &mut cards {
+        if ships.get(card.0).is_ok() {
+            bg.0 = Color::srgba(0.15, 0.15, 0.15, 0.5);
+        }
+    }
+}
+
+// ── Cooldown bars ────────────────────────────────────────────────────
+
+fn update_cooldown_bars(
+    ships: Query<&Mounts, With<Ship>>,
+    mut bars: Query<(&CooldownBar, &mut Node)>,
+) {
+    for (cb, mut node) in &mut bars {
+        let Ok(mounts) = ships.get(cb.0) else {
+            continue;
+        };
+        let Some(mount) = mounts.0.get(cb.1) else {
+            continue;
+        };
+        let progress = if let Some(ref ws) = mount.weapon {
+            let profile = ws.weapon_type.profile();
+            match ws.weapon_type.category() {
+                WeaponCategory::Cannon | WeaponCategory::Sensor => {
+                    if profile.fire_rate_secs > 0.0 {
+                        1.0 - (ws.cooldown / profile.fire_rate_secs)
+                    } else {
+                        1.0
+                    }
+                }
+                WeaponCategory::PointDefense => {
+                    if ws.weapon_type == WeaponType::CWIS {
+                        1.0
+                    } else if profile.fire_rate_secs > 0.0 {
+                        1.0 - (ws.cooldown / profile.fire_rate_secs)
+                    } else {
+                        1.0
+                    }
+                }
+                WeaponCategory::Missile => {
+                    let total_tubes = profile.tubes;
+                    if total_tubes > 0 && ws.tubes_loaded < total_tubes {
+                        if profile.fire_rate_secs > 0.0 {
+                            1.0 - (ws.tube_reload_timer / profile.fire_rate_secs)
+                        } else {
+                            1.0
+                        }
+                    } else {
+                        1.0
+                    }
+                }
+            }
+        } else {
+            0.0
+        };
+        node.width = Val::Percent(progress.clamp(0.0, 1.0) * 100.0);
     }
 }
