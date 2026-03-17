@@ -161,13 +161,62 @@ fn apply_to_target(
     }
 }
 
+fn tick_repair(
+    time: Res<Time>,
+    mut query: Query<
+        (&mut EngineHealth, &mut Mounts, &mut RepairCooldown),
+        (With<Ship>, Without<Destroyed>),
+    >,
+) {
+    let dt = time.delta_secs();
+    for (mut engine_health, mut mounts, mut repair_cooldown) in &mut query {
+        // Tick repair cooldown
+        if repair_cooldown.0 > 0.0 {
+            repair_cooldown.0 = (repair_cooldown.0 - dt).max(0.0);
+        }
+        let repair_active = repair_cooldown.0 <= 0.0;
+
+        // --- Engine health ---
+        if engine_health.hp == 0 && engine_health.offline_timer > 0.0 {
+            engine_health.offline_timer = (engine_health.offline_timer - dt).max(0.0);
+            if engine_health.offline_timer <= 0.0 {
+                engine_health.hp = engine_health.floor();
+            }
+        } else if repair_active && engine_health.hp > 0 {
+            let floor = engine_health.floor();
+            if engine_health.hp < floor {
+                let healed = (REPAIR_RATE_HP_PER_SEC * dt) as u16;
+                engine_health.hp = (engine_health.hp + healed).min(floor);
+            }
+        }
+
+        // --- Mount component health ---
+        for mount in mounts.0.iter_mut() {
+            if mount.max_hp == 0 {
+                continue;
+            }
+            let floor = (mount.max_hp / 10).max(1);
+
+            if mount.hp == 0 && mount.offline_timer > 0.0 {
+                mount.offline_timer = (mount.offline_timer - dt).max(0.0);
+                if mount.offline_timer <= 0.0 {
+                    mount.hp = floor;
+                }
+            } else if repair_active && mount.hp > 0 && mount.hp < floor {
+                let healed = (REPAIR_RATE_HP_PER_SEC * dt) as u16;
+                mount.hp = (mount.hp + healed).min(floor);
+            }
+        }
+    }
+}
+
 pub struct DamagePlugin;
 
 impl Plugin for DamagePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            (mark_destroyed, despawn_destroyed, check_win_condition)
+            (tick_repair, mark_destroyed, despawn_destroyed, check_win_condition)
                 .chain()
                 .run_if(in_state(GameState::Playing)),
         );
@@ -345,5 +394,67 @@ mod tests {
             let (_, p, _, s) = route_damage(HitZone::Front, raw);
             assert_eq!(p + s, raw, "total must equal raw for damage={raw}");
         }
+    }
+
+    #[test]
+    fn engine_offline_timer_ticks_to_restore() {
+        use crate::ship::EngineHealth;
+        let mut eh = EngineHealth::new(300);
+        eh.hp = 0;
+        eh.offline_timer = 0.05;
+
+        let dt = 0.1_f32;
+        eh.offline_timer = (eh.offline_timer - dt).max(0.0);
+        if eh.offline_timer <= 0.0 {
+            eh.hp = eh.floor();
+        }
+
+        assert_eq!(eh.hp, 30);
+        assert_eq!(eh.offline_timer, 0.0);
+    }
+
+    #[test]
+    fn mount_restores_to_floor_after_offline() {
+        use crate::weapon::{Mount, MountSize, WeaponState, WeaponType};
+        let profile = WeaponType::Cannon.profile();
+        let mut mount = Mount {
+            size: MountSize::Medium,
+            offset: bevy::math::Vec2::ZERO,
+            weapon: Some(WeaponState {
+                weapon_type: WeaponType::Cannon,
+                ammo: 0,
+                cooldown: 0.0,
+                pd_retarget_cooldown: 0.0,
+                tubes_loaded: profile.tubes,
+                tube_reload_timer: 0.0,
+                fire_delay: 0.0,
+            }),
+            hp: 0,
+            max_hp: 100,
+            offline_timer: 0.05,
+        };
+
+        let dt = 0.1_f32;
+        mount.offline_timer = (mount.offline_timer - dt).max(0.0);
+        if mount.offline_timer <= 0.0 {
+            let floor = (mount.max_hp / 10).max(1);
+            mount.hp = floor;
+        }
+
+        assert_eq!(mount.hp, 10);
+    }
+
+    #[test]
+    fn repair_heals_toward_floor_not_above() {
+        use crate::ship::EngineHealth;
+        let mut eh = EngineHealth::new(300);
+        eh.hp = 25;
+        let floor = eh.floor();
+
+        let healed = (REPAIR_RATE_HP_PER_SEC * 1.0) as u16;
+        eh.hp = (eh.hp + healed).min(floor);
+
+        assert!(eh.hp <= floor);
+        assert_eq!(eh.hp, floor);
     }
 }
