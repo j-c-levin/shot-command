@@ -70,6 +70,7 @@ pub struct ShipProfile {
     pub top_speed: f32,
     pub vision_range: f32,
     pub collision_radius: f32,
+    pub rcs: f32,
 }
 
 impl ShipClass {
@@ -188,6 +189,7 @@ impl ShipClass {
                 top_speed: 20.0,
                 vision_range: 400.0,
                 collision_radius: 12.0,
+                rcs: 1.0,
             },
             ShipClass::Destroyer => ShipProfile {
                 hp: 100,
@@ -198,6 +200,7 @@ impl ShipClass {
                 top_speed: 28.0,
                 vision_range: 400.0,
                 collision_radius: 8.0,
+                rcs: 0.5,
             },
             ShipClass::Scout => ShipProfile {
                 hp: 50,
@@ -208,6 +211,7 @@ impl ShipClass {
                 top_speed: 35.0,
                 vision_range: 400.0,
                 collision_radius: 5.0,
+                rcs: 0.25,
             },
         }
     }
@@ -1215,5 +1219,22 @@ mod tests {
             turn_acceleration: 1000.0,
         };
         assert!((limit.top_speed.min(bb.top_speed) - bb.top_speed).abs() < 0.01);
+    }
+
+    #[test]
+    fn battleship_rcs_largest() {
+        let bb = ShipClass::Battleship.profile();
+        let dd = ShipClass::Destroyer.profile();
+        let sc = ShipClass::Scout.profile();
+        assert!(bb.rcs > dd.rcs);
+        assert!(dd.rcs > sc.rcs);
+    }
+
+    #[test]
+    fn rcs_values_positive() {
+        for class in [ShipClass::Battleship, ShipClass::Destroyer, ShipClass::Scout] {
+            assert!(class.profile().rcs > 0.0);
+            assert!(class.profile().rcs <= 1.0);
+        }
     }
 }
