@@ -511,6 +511,7 @@ pub fn draw_pd_range_gizmos(
 // ── Targeting Gizmos ────────────────────────────────────────────────────
 
 /// Draw red lines from own-team ships to their designated targets.
+/// Works for both visually-seen ship targets and radar-tracked targets.
 pub fn draw_targeting_gizmos(
     mut gizmos: Gizmos,
     local_team: Res<LocalTeam>,
@@ -519,6 +520,7 @@ pub fn draw_targeting_gizmos(
         With<ShipSecrets>,
     >,
     ship_query: Query<(&Transform, &Team), With<Ship>>,
+    contact_query: Query<(&Transform, &crate::radar::ContactSourceShip), With<crate::radar::RadarContact>>,
 ) {
     let Some(my_team) = local_team.0 else { return };
 
@@ -531,13 +533,20 @@ pub fn draw_targeting_gizmos(
             continue;
         }
 
-        // Look up the target ship's position
-        let Ok((target_tf, _)) = ship_query.get(target_designation.0) else {
-            continue;
+        // Look up the target position — either a visible ship or a radar contact
+        let target_pos = if let Ok((target_tf, _)) = ship_query.get(target_designation.0) {
+            // Target ship is visible on client
+            target_tf.translation
+        } else {
+            // Target ship not visible — find radar contact that tracks this source
+            let Some((contact_tf, _)) = contact_query.iter().find(|(_, src)| src.0 == target_designation.0) else {
+                continue;
+            };
+            contact_tf.translation
         };
 
         let from = Vec3::new(ship_tf.translation.x, 5.0, ship_tf.translation.z);
-        let to = Vec3::new(target_tf.translation.x, 5.0, target_tf.translation.z);
+        let to = Vec3::new(target_pos.x, 5.0, target_pos.z);
         gizmos.line(from, to, Color::srgba(1.0, 0.15, 0.1, 0.7));
     }
 }
