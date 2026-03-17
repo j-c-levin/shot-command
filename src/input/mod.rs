@@ -235,9 +235,6 @@ pub fn on_ground_clicked(
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
 ) {
     let clicked_entity = click.event_target();
-    if ground_query.get(clicked_entity).is_err() {
-        return;
-    }
     let Some(hit_pos) = click.hit.position else {
         return;
     };
@@ -247,23 +244,10 @@ pub fn on_ground_clicked(
         return;
     };
 
-    // Missile mode: right-click on ground queues a missile at that position
-    if click.button == PointerButton::Secondary && missile_mode.0 {
-        for (entity, _transform, team) in &selected_query {
-            if *team != my_team {
-                continue;
-            }
-            commands.client_trigger(FireMissileCommand {
-                ship: entity,
-                target_point: destination,
-                target_entity: None,
-            });
-        }
-        // Don't exit missile mode
-        return;
-    }
+    let is_ground = ground_query.get(clicked_entity).is_ok();
 
-    // Alt+right-click or lock-mode right-click: set facing direction and lock
+    // Alt+right-click or lock-mode right-click: set facing direction and lock.
+    // Works on any surface (ground, asteroid, etc.) — direction is what matters.
     if click.button == PointerButton::Secondary
         && (keys.pressed(KeyCode::AltLeft) || lock_mode.0)
     {
@@ -281,6 +265,27 @@ pub fn on_ground_clicked(
             }
         }
         lock_mode.0 = false;
+        return;
+    }
+
+    // Everything below requires clicking the ground plane
+    if !is_ground {
+        return;
+    }
+
+    // Missile mode: right-click on ground queues a missile at that position
+    if click.button == PointerButton::Secondary && missile_mode.0 {
+        for (entity, _transform, team) in &selected_query {
+            if *team != my_team {
+                continue;
+            }
+            commands.client_trigger(FireMissileCommand {
+                ship: entity,
+                target_point: destination,
+                target_entity: None,
+            });
+        }
+        // Don't exit missile mode
         return;
     }
 
