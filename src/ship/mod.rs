@@ -119,8 +119,8 @@ impl ShipClass {
                 Some(WeaponType::CWIS),        // Small
             ],
             ShipClass::Destroyer => vec![
-                Some(WeaponType::Railgun),     // Large
-                Some(WeaponType::Cannon),      // Medium
+                Some(WeaponType::Railgun),      // Large
+                Some(WeaponType::SearchRadar), // Medium
                 Some(WeaponType::LaserPD),     // Medium
                 Some(WeaponType::CWIS),        // Small
             ],
@@ -1088,7 +1088,7 @@ mod tests {
         // All mounts armed
         assert!(mounts.iter().all(|m| m.weapon.is_some()));
         assert_eq!(mounts[0].weapon.as_ref().unwrap().weapon_type, WeaponType::Railgun);
-        assert_eq!(mounts[1].weapon.as_ref().unwrap().weapon_type, WeaponType::Cannon);
+        assert_eq!(mounts[1].weapon.as_ref().unwrap().weapon_type, WeaponType::SearchRadar);
         assert_eq!(mounts[2].weapon.as_ref().unwrap().weapon_type, WeaponType::LaserPD);
         assert_eq!(mounts[3].weapon.as_ref().unwrap().weapon_type, WeaponType::CWIS);
     }
