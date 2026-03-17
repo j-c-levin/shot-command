@@ -746,6 +746,11 @@ mod tests {
     }
 
     #[test]
+    fn engine_offline_cooldown_constant() {
+        assert_eq!(ENGINE_OFFLINE_COOLDOWN_SECS, 15.0);
+    }
+
+    #[test]
     fn total_damage_equals_raw_damage_railgun() {
         let (mut health, mut engine, mut mounts, mut rc) = test_ship(
             1200, 300, vec![(MountSize::Large, WeaponType::HeavyCannon)],

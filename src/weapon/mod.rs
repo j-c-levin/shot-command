@@ -456,4 +456,47 @@ mod tests {
     fn nav_radar_range_500() {
         assert_eq!(WeaponType::NavRadar.profile().firing_range, 500.0);
     }
+
+    #[test]
+    fn mount_size_hp_large() {
+        assert_eq!(MountSize::Large.hp(), 150);
+    }
+
+    #[test]
+    fn mount_size_hp_medium() {
+        assert_eq!(MountSize::Medium.hp(), 100);
+    }
+
+    #[test]
+    fn mount_size_hp_small() {
+        assert_eq!(MountSize::Small.hp(), 75);
+    }
+
+    #[test]
+    fn mount_new_initializes_all_fields() {
+        let mount = Mount::new(MountSize::Medium, Vec2::new(1.0, 2.0), None, 100);
+        assert_eq!(mount.size, MountSize::Medium);
+        assert_eq!(mount.offset, Vec2::new(1.0, 2.0));
+        assert!(mount.weapon.is_none());
+        assert_eq!(mount.hp, 100);
+        assert_eq!(mount.max_hp, 100);
+        assert_eq!(mount.offline_timer, 0.0);
+    }
+
+    #[test]
+    fn mount_new_with_weapon() {
+        let ws = WeaponState {
+            weapon_type: WeaponType::Cannon,
+            ammo: 50,
+            cooldown: 0.0,
+            pd_retarget_cooldown: 0.0,
+            tubes_loaded: 0,
+            tube_reload_timer: 0.0,
+            fire_delay: 0.0,
+        };
+        let mount = Mount::new(MountSize::Large, Vec2::ZERO, Some(ws), 150);
+        assert!(mount.weapon.is_some());
+        assert_eq!(mount.hp, 150);
+        assert_eq!(mount.max_hp, 150);
+    }
 }
