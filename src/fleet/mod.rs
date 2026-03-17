@@ -123,53 +123,31 @@ mod tests {
     use super::*;
 
     #[test]
-    fn hull_cost_battleship() {
-        assert_eq!(hull_cost(ShipClass::Battleship), 450);
+    fn all_hull_costs() {
+        let cases = [
+            (ShipClass::Battleship, 450),
+            (ShipClass::Destroyer, 200),
+            (ShipClass::Scout, 140),
+        ];
+        for (class, expected) in cases {
+            assert_eq!(hull_cost(class), expected, "hull_cost({:?})", class);
+        }
     }
 
     #[test]
-    fn hull_cost_destroyer() {
-        assert_eq!(hull_cost(ShipClass::Destroyer), 200);
-    }
-
-    #[test]
-    fn hull_cost_scout() {
-        assert_eq!(hull_cost(ShipClass::Scout), 140);
-    }
-
-    #[test]
-    fn weapon_cost_heavy_cannon() {
-        assert_eq!(weapon_cost(WeaponType::HeavyCannon), 40);
-    }
-
-    #[test]
-    fn weapon_cost_railgun() {
-        assert_eq!(weapon_cost(WeaponType::Railgun), 50);
-    }
-
-    #[test]
-    fn weapon_cost_heavy_vls() {
-        assert_eq!(weapon_cost(WeaponType::HeavyVLS), 45);
-    }
-
-    #[test]
-    fn weapon_cost_cannon() {
-        assert_eq!(weapon_cost(WeaponType::Cannon), 20);
-    }
-
-    #[test]
-    fn weapon_cost_light_vls() {
-        assert_eq!(weapon_cost(WeaponType::LightVLS), 25);
-    }
-
-    #[test]
-    fn weapon_cost_laser_pd() {
-        assert_eq!(weapon_cost(WeaponType::LaserPD), 30);
-    }
-
-    #[test]
-    fn weapon_cost_cwis() {
-        assert_eq!(weapon_cost(WeaponType::CWIS), 15);
+    fn all_weapon_costs() {
+        let cases = [
+            (WeaponType::HeavyCannon, 40),
+            (WeaponType::Cannon, 20),
+            (WeaponType::Railgun, 50),
+            (WeaponType::HeavyVLS, 45),
+            (WeaponType::LightVLS, 25),
+            (WeaponType::LaserPD, 30),
+            (WeaponType::CWIS, 15),
+        ];
+        for (weapon, expected) in cases {
+            assert_eq!(weapon_cost(weapon), expected, "weapon_cost({:?})", weapon);
+        }
     }
 
     #[test]

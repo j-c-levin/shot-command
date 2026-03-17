@@ -173,6 +173,7 @@ fn on_client_connected(
     trigger: On<Add, AuthorizedClient>,
     mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
+    lobby: Res<crate::fleet::lobby::LobbyTracker>,
 ) {
     let client_entity = trigger.entity;
     let team_id = client_teams.map.len() as u8;
@@ -193,9 +194,25 @@ fn on_client_connected(
         message: TeamAssignment { team },
     });
 
+    // If the other team has already submitted, inform this client
+    let other_has_submitted = client_teams.map.iter().any(|(&other_entity, _)| {
+        other_entity != client_entity && lobby.submissions.contains_key(&other_entity)
+    });
+    if other_has_submitted {
+        commands.server_trigger(ToClients {
+            mode: SendMode::Direct(ClientId::Client(client_entity)),
+            message: crate::net::commands::LobbyStatus {
+                state: crate::net::commands::LobbyState::OpponentComposing,
+            },
+        });
+    }
+
     // Server stays in WaitingForPlayers — lobby systems handle the
     // FleetComposition phase and transition to Playing when both fleets are submitted.
 }
+
+/// Half-extent of the map bounds (used for MapBounds and asteroid placement).
+const MAP_HALF_EXTENT: f32 = 500.0;
 
 /// Spawn corners for each team's fleet.
 const TEAM0_CORNER: Vec2 = Vec2::new(-300.0, -300.0);
@@ -219,7 +236,7 @@ fn server_setup_game(
 ) {
     // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
     commands.insert_resource(MapBounds {
-        half_extents: Vec2::splat(500.0),
+        half_extents: Vec2::splat(MAP_HALF_EXTENT),
     });
 
     // Spawn fleets from lobby submissions (or default fleets as fallback)
@@ -272,7 +289,7 @@ fn server_setup_game(
 
     // Spawn asteroids (data-only, no mesh — clients materialize visuals)
     let bounds = MapBounds {
-        half_extents: Vec2::splat(500.0),
+        half_extents: Vec2::splat(MAP_HALF_EXTENT),
     };
     let mut rng = rand::rng();
     let asteroid_count = 12;
