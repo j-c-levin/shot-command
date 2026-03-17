@@ -8,7 +8,7 @@ use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, JoinSquadCommand, MoveCommand, TargetCommand,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand, TargetCommand,
 };
 use crate::net::LocalTeam;
 use crate::ship::{
@@ -428,6 +428,13 @@ fn handle_keyboard(
         missile_mode.0 = false;
         join_mode.0 = false;
         move_mode.0 = false;
+    }
+
+    // R key: toggle radar for all selected ships
+    if keys.just_pressed(KeyCode::KeyR) {
+        for (entity, _) in &selected_query {
+            commands.client_trigger(RadarToggleCommand { ship: entity });
+        }
     }
 }
 

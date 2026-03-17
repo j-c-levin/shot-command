@@ -23,7 +23,8 @@ use crate::game::{GameState, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, JoinSquadCommand, MoveCommand, TargetCommand, TeamAssignment,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand, TargetCommand,
+    TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
@@ -31,6 +32,7 @@ use crate::ship::{
     SquadSpeedLimit, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
+use crate::radar::{RadarActive, RadarActiveSecret};
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
@@ -112,6 +114,7 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_fire_missile);
         app.add_observer(handle_cancel_missiles);
         app.add_observer(handle_join_squad);
+        app.add_observer(handle_radar_toggle);
 
         // Orphan cleanup: remove SquadMember when leader is destroyed/despawned
         app.add_systems(
@@ -893,6 +896,52 @@ fn handle_join_squad(
     );
 }
 
+fn handle_radar_toggle(
+    trigger: On<FromClient<RadarToggleCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    radar_query: Query<Option<&RadarActive>>,
+    mounts_query: Query<&Mounts>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    let Some(_) = validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "RadarToggleCommand",
+    ) else {
+        return;
+    };
+
+    let Ok(mounts) = mounts_query.get(cmd.ship) else {
+        return;
+    };
+    let has_radar = mounts.0.iter().any(|m| {
+        m.weapon
+            .as_ref()
+            .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+    });
+    if !has_radar {
+        info!(
+            "RadarToggleCommand rejected: ship {:?} has no radar",
+            cmd.ship
+        );
+        return;
+    }
+
+    if let Ok(Some(_)) = radar_query.get(cmd.ship) {
+        commands.entity(cmd.ship).remove::<RadarActive>();
+        info!("Radar OFF for ship {:?}", cmd.ship);
+    } else {
+        commands.entity(cmd.ship).insert(RadarActive);
+        info!("Radar ON for ship {:?}", cmd.ship);
+    }
+}
+
 /// Recompute SquadSpeedLimit for all members of a squad led by `leader`.
 /// Sets the limit to the minimum of each stat across leader + all followers.
 /// If the leader has no followers, removes the limit from the leader.
@@ -1055,6 +1104,7 @@ fn sync_ship_secrets(
             &MissileQueue,
             Option<&SquadMember>,
             Option<&SquadSpeedLimit>,
+            Option<&RadarActive>,
         ),
         With<Ship>,
     >,
@@ -1064,7 +1114,7 @@ fn sync_ship_secrets(
     >,
 ) {
     for (secrets_entity, owner, mut secrets_waypoints, mut secrets_missiles) in &mut secrets_query {
-        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles, ship_squad, ship_speed_limit)) =
+        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles, ship_squad, ship_speed_limit, ship_radar)) =
             ship_query.get(owner.0)
         else {
             continue;
@@ -1112,6 +1162,11 @@ fn sync_ship_secrets(
         } else {
             commands.entity(secrets_entity).remove::<SquadSpeedLimit>();
         }
+
+        // Sync radar active state
+        commands
+            .entity(secrets_entity)
+            .insert(RadarActiveSecret(ship_radar.is_some()));
     }
 }
 

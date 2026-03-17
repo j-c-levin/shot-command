@@ -6,6 +6,8 @@ use std::collections::VecDeque;
 
 use crate::game::{GameState, Health, Team};
 use crate::net::LocalTeam;
+use crate::radar::rwr::RwrBearings;
+use crate::radar::RadarActiveSecret;
 use crate::weapon::{MissileQueue, Mount, MountSize, Mounts, WeaponState, WeaponType};
 
 pub struct ShipPhysicsPlugin;
@@ -770,6 +772,8 @@ pub fn spawn_server_ship(
         WaypointQueue::default(),
         MissileQueue::default(),
         ShipNumber(ship_number),
+        RadarActiveSecret(false),
+        RwrBearings::default(),
     ));
 
     ship_entity
