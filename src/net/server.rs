@@ -32,7 +32,7 @@ use crate::ship::{
     SquadSpeedLimit, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
-use crate::radar::{ContactSourceShip, RadarActive, RadarActiveSecret, RadarContact, ContactTeam};
+use crate::radar::{ContactLevel, ContactSourceShip, ContactTeam, RadarActive, RadarActiveSecret, RadarContact};
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
@@ -1093,9 +1093,9 @@ fn clear_lost_targets(
     mut commands: Commands,
     targeting_ships: Query<(Entity, &TargetDesignation, &Team), With<Ship>>,
     all_ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
-    radar_ships: Query<(&Transform, &Team, &Mounts), (With<Ship>, With<RadarActive>)>,
     target_transforms: Query<&Transform, With<Ship>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
+    contact_query: Query<(&ContactSourceShip, &ContactLevel, &ContactTeam), With<RadarContact>>,
 ) {
     let asteroids: Vec<(Vec2, f32)> = asteroid_query
         .iter()
@@ -1104,7 +1104,6 @@ fn clear_lost_targets(
 
     for (ship_entity, target_designation, ship_team) in &targeting_ships {
         let Ok(target_transform) = target_transforms.get(target_designation.0) else {
-            // Target entity no longer exists — clear designation
             commands.entity(ship_entity).remove::<TargetDesignation>();
             continue;
         };
@@ -1124,26 +1123,17 @@ fn clear_lost_targets(
                     )
             });
 
-        // Check if any friendly radar is tracking the target
-        let radar_tracked = radar_ships.iter().any(|(radar_t, radar_team, mounts)| {
-            if *radar_team != *ship_team {
-                return false;
-            }
-            let radar_pos = ship_xz_position(radar_t);
-            let radar_range = mounts.0.iter()
-                .filter_map(|m| m.weapon.as_ref())
-                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
-                .map(|w| w.weapon_type.profile().firing_range)
-                .fold(0.0_f32, f32::max);
-            let distance = radar_pos.distance(target_pos);
-            distance <= radar_range
-                && !crate::fog::ray_blocked_by_asteroid(radar_pos, target_pos, &asteroids)
+        // Check if any friendly radar has a TRACK (not signature) on the target
+        let radar_track = contact_query.iter().any(|(source, level, team)| {
+            source.0 == target_designation.0
+                && *level == ContactLevel::Track
+                && team.0 == *ship_team
         });
 
-        if !visual_los && !radar_tracked {
+        if !visual_los && !radar_track {
             commands.entity(ship_entity).remove::<TargetDesignation>();
             info!(
-                "Target {:?} lost LOS+radar — clearing designation on ship {:?}",
+                "Target {:?} lost track — clearing designation on ship {:?}",
                 target_designation.0, ship_entity
             );
         }
