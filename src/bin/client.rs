@@ -4,6 +4,7 @@ use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
 use nebulous_shot_command::camera::CameraPlugin;
+use nebulous_shot_command::control_point::ControlPointClientPlugin;
 use nebulous_shot_command::fleet::{FleetPlugin, ShipSpec};
 use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
@@ -110,6 +111,7 @@ fn main() {
             InputPlugin,
             FleetUiPlugin,
             RadarClientPlugin,
+            ControlPointClientPlugin,
             ClientNetPlugin,
         ));
     app.insert_resource(ClientConnectAddress(cli.connect));

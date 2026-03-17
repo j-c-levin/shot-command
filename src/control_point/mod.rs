@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::game::{Destroyed, GameState, Team};
 use crate::net::commands::GameResult;
+use crate::net::LocalTeam;
 use crate::ship::Ship;
 
 // ── Constants ────────────────────────────────────────────────────────────
@@ -241,6 +242,134 @@ fn check_score_victory(
             return;
         }
     }
+}
+
+// ── Team colors (matching materializer.rs) ───────────────────────────────
+const COLOR_FRIENDLY: Color = Color::srgb(0.2, 0.6, 1.0); // Blue
+const COLOR_ENEMY: Color = Color::srgb(1.0, 0.2, 0.2); // Red
+const COLOR_NEUTRAL: Color = Color::srgb(0.5, 0.5, 0.5); // Gray
+
+// ── Client plugin ────────────────────────────────────────────────────────
+
+pub struct ControlPointClientPlugin;
+
+impl Plugin for ControlPointClientPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (draw_control_point_gizmos, update_score_display)
+                .run_if(in_state(GameState::Playing)),
+        )
+        .add_systems(OnEnter(GameState::Playing), spawn_score_ui);
+    }
+}
+
+fn team_color(team: u8, local_team: &LocalTeam) -> Color {
+    if local_team.0.map(|lt| lt.0 == team).unwrap_or(false) {
+        COLOR_FRIENDLY
+    } else {
+        COLOR_ENEMY
+    }
+}
+
+fn draw_control_point_gizmos(
+    mut gizmos: Gizmos,
+    time: Res<Time>,
+    local_team: Res<LocalTeam>,
+    points: Query<(&Transform, &ControlPointRadius, &ControlPointState), With<ControlPoint>>,
+) {
+    for (tf, radius, state) in &points {
+        let center = tf.translation;
+        let r = radius.0;
+
+        let (base_color, pulse_progress) = match state {
+            ControlPointState::Neutral => (COLOR_NEUTRAL, None),
+            ControlPointState::Capturing { team, progress } => {
+                (team_color(*team, &local_team), Some(*progress))
+            }
+            ControlPointState::Decapturing { team, progress } => {
+                (team_color(*team, &local_team), Some(*progress))
+            }
+            ControlPointState::Captured { team } => (team_color(*team, &local_team), None),
+        };
+
+        let color = if let Some(progress) = pulse_progress {
+            // Pulse speed proportional to capture progress (faster near completion)
+            let freq = 2.0 + progress * 4.0;
+            let pulse = 0.5 + 0.5 * (time.elapsed_secs() * freq).sin();
+            let Srgba {
+                red, green, blue, ..
+            } = Srgba::from(base_color);
+            Color::srgba(
+                0.5 * (1.0 - pulse) + red * pulse,
+                0.5 * (1.0 - pulse) + green * pulse,
+                0.5 * (1.0 - pulse) + blue * pulse,
+                0.6,
+            )
+        } else {
+            base_color.with_alpha(0.6)
+        };
+
+        // Horizontal circle (XZ plane)
+        gizmos.circle(
+            Isometry3d::new(center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            r,
+            color,
+        );
+
+        // Vertical circle (XY plane, perpendicular)
+        gizmos.circle(Isometry3d::new(center, Quat::IDENTITY), r, color);
+    }
+}
+
+#[derive(Component)]
+struct ScoreDisplayText;
+
+fn spawn_score_ui(mut commands: Commands) {
+    commands.spawn((
+        ScoreDisplayText,
+        Text::new("0  ───  0"),
+        TextFont {
+            font_size: 22.0,
+            ..default()
+        },
+        TextColor(Color::WHITE),
+        Node {
+            position_type: PositionType::Absolute,
+            top: Val::Px(12.0),
+            left: Val::Percent(50.0),
+            margin: UiRect {
+                left: Val::Px(-80.0),
+                ..default()
+            },
+            ..default()
+        },
+        Pickable::IGNORE,
+    ));
+}
+
+fn update_score_display(
+    local_team: Res<LocalTeam>,
+    points: Query<&TeamScores, With<ControlPoint>>,
+    mut query: Query<&mut Text, With<ScoreDisplayText>>,
+) {
+    let Ok(mut text) = query.single_mut() else {
+        return;
+    };
+
+    let mut totals = [0.0f32; 2];
+    for scores in &points {
+        totals[0] += scores.scores[0];
+        totals[1] += scores.scores[1];
+    }
+
+    let local_id = local_team.0.map(|t| t.0 as usize).unwrap_or(0);
+    let enemy_id = 1 - local_id;
+
+    *text = Text::new(format!(
+        "{}  ───  {}",
+        totals[local_id] as u32, totals[enemy_id] as u32
+    ));
 }
 
 #[cfg(test)]
