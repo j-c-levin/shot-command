@@ -89,12 +89,12 @@ impl Plugin for InputPlugin {
                     draw_selection_gizmos,
                     draw_range_gizmos,
                     draw_gesture_preview,
-                    handle_keyboard,
-                    handle_number_keys,
+                    // handle_keyboard toggles modes → update_enemy_numbers populates
+                    // assignments → handle_number_keys reads them. Must be ordered.
+                    (handle_keyboard, update_enemy_numbers, handle_number_keys).chain(),
                     handle_move_gesture,
                     update_squad_highlights,
                     update_mode_indicator,
-                    update_enemy_numbers,
                 ),
             );
     }
