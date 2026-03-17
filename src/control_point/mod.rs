@@ -310,27 +310,7 @@ fn draw_control_point_gizmos(
             base_color.with_alpha(0.6)
         };
 
-        // Three great circles forming a wireframe sphere:
-        // 1. XZ plane (horizontal, flat on ground)
-        gizmos.circle(
-            Isometry3d::new(center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
-            r,
-            color,
-        );
-
-        // 2. XY plane (vertical, facing +Z)
-        gizmos.circle(
-            Isometry3d::new(center, Quat::IDENTITY),
-            r,
-            color,
-        );
-
-        // 3. YZ plane (vertical, facing +X)
-        gizmos.circle(
-            Isometry3d::new(center, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
-            r,
-            color,
-        );
+        gizmos.sphere(Isometry3d::new(center, Quat::IDENTITY), r, color);
     }
 }
 
