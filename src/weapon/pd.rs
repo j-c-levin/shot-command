@@ -5,8 +5,10 @@ use rand::Rng;
 use serde::{Deserialize, Serialize};
 
 use crate::game::{GameState, Team};
-use crate::ship::Ship;
+use crate::radar::RadarActive;
+use crate::ship::{Ship, ShipClass};
 use crate::weapon::missile::{Missile, MissileOwner, MissileVelocity};
+use crate::weapon::WeaponCategory;
 
 /// Marker for a laser beam visual entity (server-spawned, client-materialized).
 #[derive(Component, Serialize, Deserialize)]
@@ -67,15 +69,27 @@ pub fn is_in_pd_cylinder(pd_pos: Vec3, missile_pos: Vec3, radius: f32) -> bool {
 /// Skips friendly missiles (same team as PD ship).
 fn laser_pd_fire(
     mut commands: Commands,
-    mut ship_query: Query<(Entity, &Transform, &mut Mounts), With<Ship>>,
+    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Mounts, Option<&RadarActive>), With<Ship>>,
     missile_query: Query<(Entity, &Transform, &MissileOwner), With<Missile>>,
     team_query: Query<&Team>,
 ) {
     let mut rng = rand::rng();
 
-    for (ship_entity, ship_transform, mut mounts) in &mut ship_query {
+    for (ship_entity, ship_transform, ship_class, mut mounts, radar_active) in &mut ship_query {
         let ship_pos = ship_transform.translation;
         let ship_team = team_query.get(ship_entity).ok();
+
+        // Precompute radar range for this ship (0.0 if no radar)
+        let radar_range = if radar_active.is_some() {
+            mounts.0.iter()
+                .filter_map(|m| m.weapon.as_ref())
+                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+                .map(|w| w.weapon_type.profile().firing_range)
+                .fold(0.0_f32, f32::max)
+        } else {
+            0.0
+        };
+        let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
             let Some(ref weapon) = mounts.0[mount_idx].weapon else {
@@ -106,6 +120,15 @@ fn laser_pd_fire(
                 }
 
                 let missile_pos = missile_transform.translation;
+
+                // Check if this ship can detect the missile (visual LOS or radar)
+                let distance = ship_pos.distance(missile_pos);
+                let in_visual_los = distance <= vision_range;
+                let in_radar_range = radar_active.is_some() && distance <= radar_range;
+                if !in_visual_los && !in_radar_range {
+                    continue;
+                }
+
                 if is_in_pd_cylinder(ship_pos, missile_pos, profile.pd_cylinder_radius) {
                     let dx = ship_pos.x - missile_pos.x;
                     let dz = ship_pos.z - missile_pos.z;
@@ -154,15 +177,27 @@ fn laser_pd_fire(
 /// but kill probability only rolls within pd_cylinder_radius (100m).
 fn cwis_fire(
     mut commands: Commands,
-    mut ship_query: Query<(Entity, &Transform, &mut Mounts), With<Ship>>,
+    mut ship_query: Query<(Entity, &Transform, &ShipClass, &mut Mounts, Option<&RadarActive>), With<Ship>>,
     missile_query: Query<(Entity, &Transform, &MissileVelocity, &MissileOwner), With<Missile>>,
     team_query: Query<&Team>,
 ) {
     let mut rng = rand::rng();
 
-    for (ship_entity, ship_transform, mut mounts) in &mut ship_query {
+    for (ship_entity, ship_transform, ship_class, mut mounts, radar_active) in &mut ship_query {
         let ship_pos = ship_transform.translation;
         let ship_team = team_query.get(ship_entity).ok();
+
+        // Precompute radar range for this ship (0.0 if no radar)
+        let radar_range = if radar_active.is_some() {
+            mounts.0.iter()
+                .filter_map(|m| m.weapon.as_ref())
+                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+                .map(|w| w.weapon_type.profile().firing_range)
+                .fold(0.0_f32, f32::max)
+        } else {
+            0.0
+        };
+        let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
             let Some(ref weapon) = mounts.0[mount_idx].weapon else {
@@ -193,6 +228,15 @@ fn cwis_fire(
                 }
 
                 let missile_pos = missile_transform.translation;
+
+                // Check if this ship can detect the missile (visual LOS or radar)
+                let distance = ship_pos.distance(missile_pos);
+                let in_visual_los = distance <= vision_range;
+                let in_radar_range = radar_active.is_some() && distance <= radar_range;
+                if !in_visual_los && !in_radar_range {
+                    continue;
+                }
+
                 if is_in_pd_cylinder(ship_pos, missile_pos, CWIS_VISUAL_RANGE) {
                     let dx = ship_pos.x - missile_pos.x;
                     let dz = ship_pos.z - missile_pos.z;
