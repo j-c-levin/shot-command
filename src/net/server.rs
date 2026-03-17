@@ -487,7 +487,8 @@ fn handle_move_command(
             follower_waypoints.braking = false;
         }
 
-        // If facing was provided, lock followers' facing too
+        // If facing was provided, lock followers' facing too.
+        // If no facing, unlock followers so they auto-face their waypoint.
         if let Some(facing_dir) = cmd.facing {
             if facing_dir != Vec2::ZERO {
                 commands.entity(follower_entity).insert((
@@ -497,6 +498,9 @@ fn handle_move_command(
                     FacingLocked,
                 ));
             }
+        } else {
+            commands.entity(follower_entity).remove::<FacingLocked>();
+            commands.entity(follower_entity).remove::<FacingTarget>();
         }
 
         info!(
