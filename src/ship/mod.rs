@@ -308,6 +308,38 @@ pub struct ShipSecrets;
 pub struct ShipSecretsOwner(#[entities] pub Entity);
 
 
+/// Engine HP pool. When hp == 0, ship cannot thrust (drifts on space drag).
+/// After offline_timer counts down, hp restores to 10% of max_hp.
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+pub struct EngineHealth {
+    pub hp: u16,
+    pub max_hp: u16,
+    /// Countdown when engines are offline. When 0, hp restores to floor.
+    pub offline_timer: f32,
+    /// Seconds until passive repair is allowed after last damage. Reset on each hit.
+    pub repair_cooldown: f32,
+}
+
+impl EngineHealth {
+    pub fn new(max_hp: u16) -> Self {
+        Self { hp: max_hp, max_hp, offline_timer: 0.0, repair_cooldown: 0.0 }
+    }
+
+    /// HP floor: 10% of max, minimum 1.
+    pub fn floor(&self) -> u16 {
+        (self.max_hp / 10).max(1)
+    }
+
+    pub fn is_offline(&self) -> bool {
+        self.hp == 0 && self.offline_timer > 0.0
+    }
+}
+
+/// Ship-level repair cooldown. Resets to REPAIR_DELAY_SECS on any damage hit.
+/// When 0, passive repair is active across all HP pools.
+#[derive(Component, Clone, Debug, Default)]
+pub struct RepairCooldown(pub f32);
+
 // ── Pure Functions ──────────────────────────────────────────────────────
 
 /// Rotate a 2D offset vector by the given angle (radians).
@@ -1278,5 +1310,41 @@ mod tests {
         assert_eq!(p.hp, 300);
         assert_eq!(p.engine_hp, 200);
         assert_eq!(p.component_hp, 75);
+    }
+
+    #[test]
+    fn engine_health_new_full() {
+        let eh = EngineHealth::new(400);
+        assert_eq!(eh.hp, 400);
+        assert_eq!(eh.max_hp, 400);
+        assert!(!eh.is_offline());
+    }
+
+    #[test]
+    fn engine_health_floor_is_10_percent() {
+        let eh = EngineHealth::new(400);
+        assert_eq!(eh.floor(), 40);
+    }
+
+    #[test]
+    fn engine_health_floor_minimum_one() {
+        let eh = EngineHealth::new(5);
+        assert_eq!(eh.floor(), 1);
+    }
+
+    #[test]
+    fn engine_health_is_offline_when_zero_and_timer_active() {
+        let mut eh = EngineHealth::new(100);
+        eh.hp = 0;
+        eh.offline_timer = 5.0;
+        assert!(eh.is_offline());
+    }
+
+    #[test]
+    fn engine_health_not_offline_when_timer_expired() {
+        let mut eh = EngineHealth::new(100);
+        eh.hp = 0;
+        eh.offline_timer = 0.0;
+        assert!(!eh.is_offline());
     }
 }
