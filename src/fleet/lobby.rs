@@ -104,7 +104,7 @@ fn handle_fleet_submission(
                 commands.server_trigger(ToClients {
                     mode: SendMode::Direct(ClientId::Client(other_entity)),
                     message: LobbyStatus {
-                        state: LobbyState::OpponentComposing,
+                        state: LobbyState::OpponentSubmitted,
                     },
                 });
             }

@@ -225,7 +225,7 @@ fn on_client_connected(
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(ClientId::Client(client_entity)),
             message: crate::net::commands::LobbyStatus {
-                state: crate::net::commands::LobbyState::OpponentComposing,
+                state: crate::net::commands::LobbyState::OpponentSubmitted,
             },
         });
     }

@@ -135,7 +135,9 @@ pub enum LobbyState {
     Composing,
     /// Player has submitted; waiting for opponent to submit.
     WaitingForOpponent,
-    /// Opponent has submitted; this player is still composing.
+    /// Opponent has submitted their fleet; this player is still composing.
+    OpponentSubmitted,
+    /// Opponent cancelled their submission; back to composing.
     OpponentComposing,
     /// Both submitted; countdown to game start (seconds remaining).
     Countdown(f32),
