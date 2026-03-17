@@ -1,4 +1,5 @@
 pub mod camera;
+pub mod control_point;
 pub mod fleet;
 pub mod fog;
 pub mod game;
