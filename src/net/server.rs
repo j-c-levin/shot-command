@@ -32,7 +32,7 @@ use crate::ship::{
     SquadSpeedLimit, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
-use crate::radar::{RadarActive, RadarActiveSecret};
+use crate::radar::{RadarActive, RadarActiveSecret, RadarContact, ContactTeam};
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
@@ -65,6 +65,24 @@ impl FromWorld for LosBit {
     }
 }
 
+/// A [`FilterBit`] for radar-based entity visibility.
+///
+/// Registered via [`FilterRegistry::register_scope`] so we can manually call
+/// [`ClientVisibility::set`] each frame for radar contacts.
+#[derive(Resource, Deref)]
+pub struct RadarBit(FilterBit);
+
+impl FromWorld for RadarBit {
+    fn from_world(world: &mut World) -> Self {
+        let bit = world.resource_scope(|world, mut filter_registry: Mut<FilterRegistry>| {
+            world.resource_scope(|world, mut registry: Mut<ReplicationRegistry>| {
+                filter_registry.register_scope::<Entity>(world, &mut registry)
+            })
+        });
+        Self(bit)
+    }
+}
+
 pub struct ServerNetPlugin;
 
 impl Plugin for ServerNetPlugin {
@@ -75,6 +93,7 @@ impl Plugin for ServerNetPlugin {
         // Init resources
         app.init_resource::<ClientTeams>();
         app.init_resource::<LosBit>();
+        app.init_resource::<RadarBit>();
 
         // Systems
         app.add_systems(
@@ -1180,11 +1199,14 @@ fn sync_ship_secrets(
 /// WaypointQueue/FacingTarget/FacingLocked replicate only to the owning team.
 fn server_update_visibility(
     los_bit: Res<LosBit>,
+    radar_bit: Res<RadarBit>,
     client_teams: Res<ClientTeams>,
     ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
     secrets_query: Query<(Entity, &ShipSecretsOwner), With<ShipSecrets>>,
     missile_query: Query<(Entity, &Transform, &MissileOwner), With<Missile>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
+    contact_query: Query<(Entity, &ContactTeam), With<RadarContact>>,
+    radar_ships: Query<(&Transform, &Team, &Mounts), (With<Ship>, With<RadarActive>)>,
     mut clients: Query<(Entity, &mut ClientVisibility), With<ConnectedClient>>,
 ) {
     // Build asteroid list for LOS checks (will be empty if server has no asteroids spawned)
@@ -1250,14 +1272,38 @@ fn server_update_visibility(
                     missile_transform.translation.x,
                     missile_transform.translation.z,
                 );
-                all_ships.iter().any(
+                // Visual LOS check (existing)
+                let visual_los = all_ships.iter().any(
                     |&(_, friendly_pos, friendly_range, ship_team)| {
                         ship_team == *client_team
                             && is_in_los(friendly_pos, missile_pos, friendly_range, &asteroids)
                     },
-                )
+                );
+                // Radar tracking check: any friendly radar can see this missile
+                let radar_tracked = radar_ships.iter().any(
+                    |(radar_transform, radar_team, radar_mounts)| {
+                        if radar_team.0 != client_team.0 { return false; }
+                        let radar_pos = ship_xz_position(radar_transform);
+                        let radar_range = radar_mounts.0.iter()
+                            .filter_map(|m| m.weapon.as_ref())
+                            .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+                            .map(|w| w.weapon_type.profile().firing_range)
+                            .fold(0.0_f32, f32::max);
+                        radar_pos.distance(missile_pos) <= radar_range
+                    },
+                );
+                visual_los || radar_tracked
             };
             client_visibility.set(missile_entity, **los_bit, visible);
+        }
+
+        // RadarContact visibility: only visible to the detecting team.
+        // Must set BOTH los_bit and radar_bit — replicon uses OR across filter bits,
+        // and unset bits default to invisible for scoped entities.
+        for (contact_entity, contact_team) in &contact_query {
+            let visible = contact_team.0 == *client_team;
+            client_visibility.set(contact_entity, **los_bit, visible);
+            client_visibility.set(contact_entity, **radar_bit, visible);
         }
     }
 }
