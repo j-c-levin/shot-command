@@ -373,15 +373,22 @@ fn validate_ownership(
     Some(())
 }
 
+/// Rotate a 2D offset vector by the given angle (radians).
+pub fn rotate_offset(offset: Vec2, angle: f32) -> Vec2 {
+    let (sin, cos) = angle.sin_cos();
+    Vec2::new(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos)
+}
+
 /// Observer: handle `MoveCommand` from clients.
 /// If the target ship is a squad leader, propagate the move to all followers
-/// with their offset applied. If the target ship is a follower receiving a
-/// direct order, break formation (remove SquadMember).
+/// with their offset applied (rotated if facing is provided).
+/// If the target ship is a follower receiving a direct order, break formation.
 fn handle_move_command(
     trigger: On<FromClient<MoveCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
     team_query: Query<&Team, With<Ship>>,
+    transform_query: Query<&Transform, With<Ship>>,
     mut waypoint_query: Query<(&mut WaypointQueue, Option<&SquadMember>), With<Ship>>,
     follower_query: Query<(Entity, &SquadMember), With<Ship>>,
     class_query: Query<&ShipClass, With<Ship>>,
@@ -410,6 +417,18 @@ fn handle_move_command(
         }
     }
 
+    // If facing is provided, lock the leader's facing
+    if let Some(facing_dir) = cmd.facing {
+        if facing_dir != Vec2::ZERO {
+            commands.entity(cmd.ship).insert((
+                FacingTarget {
+                    direction: facing_dir,
+                },
+                FacingLocked,
+            ));
+        }
+    }
+
     // Apply the move to the target ship
     {
         let Ok((mut waypoints, _)) = waypoint_query.get_mut(cmd.ship) else {
@@ -425,6 +444,19 @@ fn handle_move_command(
         }
     }
 
+    // Compute rotation delta for formation if facing is provided
+    let rotation_delta = cmd.facing.and_then(|facing_dir| {
+        if facing_dir == Vec2::ZERO {
+            return None;
+        }
+        let Ok(leader_tf) = transform_query.get(cmd.ship) else {
+            return None;
+        };
+        let current_heading = crate::ship::ship_heading(leader_tf);
+        let desired_heading = facing_dir.y.atan2(facing_dir.x);
+        Some(desired_heading - current_heading)
+    });
+
     // Propagate to squad followers (if this ship is a leader)
     for (follower_entity, squad_member) in &follower_query {
         if squad_member.leader != cmd.ship {
@@ -434,7 +466,13 @@ fn handle_move_command(
         if follower_entity == cmd.ship {
             continue;
         }
-        let offset = squad_member.offset;
+
+        // Rotate offset if facing was provided, otherwise use static offset
+        let offset = if let Some(delta) = rotation_delta {
+            rotate_offset(squad_member.offset, delta)
+        } else {
+            squad_member.offset
+        };
         let follower_dest = cmd.destination + offset;
 
         let Ok((mut follower_waypoints, _)) = waypoint_query.get_mut(follower_entity) else {
@@ -449,6 +487,18 @@ fn handle_move_command(
             follower_waypoints.braking = false;
         }
 
+        // If facing was provided, lock followers' facing too
+        if let Some(facing_dir) = cmd.facing {
+            if facing_dir != Vec2::ZERO {
+                commands.entity(follower_entity).insert((
+                    FacingTarget {
+                        direction: facing_dir,
+                    },
+                    FacingLocked,
+                ));
+            }
+        }
+
         info!(
             "Squad propagated: follower {:?} -> ({:.0}, {:.0})",
             follower_entity, follower_dest.x, follower_dest.y
@@ -456,8 +506,8 @@ fn handle_move_command(
     }
 
     info!(
-        "MoveCommand applied: ship {:?} -> ({}, {}), append={}",
-        cmd.ship, cmd.destination.x, cmd.destination.y, cmd.append
+        "MoveCommand applied: ship {:?} -> ({}, {}), append={}, facing={:?}",
+        cmd.ship, cmd.destination.x, cmd.destination.y, cmd.append, cmd.facing
     );
 }
 
@@ -1169,5 +1219,38 @@ mod tests {
         assert!(!is_in_asteroid_exclusion_zone(Vec2::new(-200.0, -300.0)));
         // Just barely inside
         assert!(is_in_asteroid_exclusion_zone(Vec2::new(-201.0, -300.0)));
+    }
+
+    // rotate_offset tests
+    #[test]
+    fn rotate_offset_zero_angle() {
+        let offset = Vec2::new(10.0, 0.0);
+        let rotated = rotate_offset(offset, 0.0);
+        assert!((rotated.x - 10.0).abs() < 0.001);
+        assert!(rotated.y.abs() < 0.001);
+    }
+
+    #[test]
+    fn rotate_offset_90_degrees() {
+        let offset = Vec2::new(10.0, 0.0);
+        let rotated = rotate_offset(offset, std::f32::consts::FRAC_PI_2);
+        assert!(rotated.x.abs() < 0.001);
+        assert!((rotated.y - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn rotate_offset_180_degrees() {
+        let offset = Vec2::new(10.0, 0.0);
+        let rotated = rotate_offset(offset, std::f32::consts::PI);
+        assert!((rotated.x - (-10.0)).abs() < 0.001);
+        assert!(rotated.y.abs() < 0.001);
+    }
+
+    #[test]
+    fn rotate_offset_negative_90_degrees() {
+        let offset = Vec2::new(10.0, 0.0);
+        let rotated = rotate_offset(offset, -std::f32::consts::FRAC_PI_2);
+        assert!(rotated.x.abs() < 0.001);
+        assert!((rotated.y - (-10.0)).abs() < 0.001);
     }
 }
