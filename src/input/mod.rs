@@ -11,7 +11,7 @@ use crate::net::commands::{
 };
 use crate::net::LocalTeam;
 use crate::ship::{
-    FacingLocked, Selected, SelectionIndicator, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    FacingLocked, Selected, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
     SquadMember, TargetDesignation,
 };
 use crate::weapon::{Mounts, WeaponCategory};
@@ -53,9 +53,6 @@ pub struct ModeIndicatorText;
 #[derive(Component)]
 pub struct SquadHighlight;
 
-/// Marker for the weapon range indicator ring.
-#[derive(Component)]
-struct RangeIndicator;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
@@ -67,17 +64,13 @@ impl Plugin for InputPlugin {
             .init_resource::<EnemyNumbers>()
             .add_systems(
                 Startup,
-                (
-                    setup_selection_indicator,
-                    setup_range_indicator,
-                    setup_mode_indicator,
-                ),
+                setup_mode_indicator,
             )
             .add_systems(
                 Update,
                 (
-                    update_selection_indicator,
-                    update_range_indicator,
+                    draw_selection_gizmos,
+                    draw_range_gizmos,
                     handle_keyboard,
                     handle_number_keys,
                     update_squad_highlights,
@@ -88,24 +81,31 @@ impl Plugin for InputPlugin {
     }
 }
 
-fn setup_selection_indicator(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
+/// Rotation to lay a circle flat on the XZ ground plane (rotate 90 degrees around X).
+fn ground_circle_isometry(center: Vec3, _radius: f32) -> Isometry3d {
+    Isometry3d::new(
+        center,
+        Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
+    )
+}
+
+/// Draw a green gizmo circle under the selected ship and gray circles under squad highlights.
+fn draw_selection_gizmos(
+    mut gizmos: Gizmos,
+    selected_query: Query<&Transform, (With<Selected>, With<Ship>)>,
+    highlight_query: Query<&Transform, With<SquadHighlight>>,
 ) {
-    commands.spawn((
-        SelectionIndicator,
-        Mesh3d(meshes.add(Torus::new(14.0, 16.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(0.2, 1.0, 0.3, 0.6),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -1000.0, 0.0),
-        Visibility::Hidden,
-        Pickable::IGNORE,
-    ));
+    // Green circle for selected ship
+    for ship_tf in &selected_query {
+        let center = Vec3::new(ship_tf.translation.x, 1.0, ship_tf.translation.z);
+        gizmos.circle(ground_circle_isometry(center, 15.0), 15.0, Color::srgba(0.2, 1.0, 0.3, 0.6));
+    }
+
+    // Gray circles for squad-highlighted followers
+    for tf in &highlight_query {
+        let center = Vec3::new(tf.translation.x, 1.0, tf.translation.z);
+        gizmos.circle(ground_circle_isometry(center, 14.0), 14.0, Color::srgba(0.5, 0.5, 0.5, 0.4));
+    }
 }
 
 pub fn on_ship_clicked(
@@ -307,29 +307,6 @@ pub fn on_ground_clicked(
     }
 }
 
-fn update_selection_indicator(
-    selected_query: Query<&Transform, (With<Selected>, With<Ship>, Without<SelectionIndicator>)>,
-    mut indicator_query: Query<
-        (&mut Transform, &mut Visibility),
-        (With<SelectionIndicator>, Without<Ship>),
-    >,
-) {
-    let Ok((mut indicator_transform, mut visibility)) = indicator_query.single_mut() else {
-        return;
-    };
-
-    if let Some(ship_transform) = selected_query.iter().next() {
-        indicator_transform.translation = Vec3::new(
-            ship_transform.translation.x,
-            ship_transform.translation.y,
-            ship_transform.translation.z,
-        );
-        *visibility = Visibility::Visible;
-    } else {
-        *visibility = Visibility::Hidden;
-    }
-}
-
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
@@ -461,42 +438,15 @@ fn handle_keyboard(
     }
 }
 
-// ── Range Indicator ─────────────────────────────────────────────────────
+// ── Range Gizmos ────────────────────────────────────────────────────────
 
-fn setup_range_indicator(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Unit-radius torus — we scale it at runtime to match weapon range
-    commands.spawn((
-        RangeIndicator,
-        Mesh3d(meshes.add(Torus::new(0.98, 1.0))),
-        MeshMaterial3d(materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 1.0, 1.0, 0.15),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        })),
-        Transform::from_xyz(0.0, -1000.0, 0.0),
-        Visibility::Hidden,
-        Pickable::IGNORE,
-    ));
-}
-
-fn update_range_indicator(
+/// Draw weapon range circles as gizmos when in target or missile mode.
+fn draw_range_gizmos(
+    mut gizmos: Gizmos,
     target_mode: Res<TargetMode>,
     missile_mode: Res<MissileMode>,
     selected_query: Query<(&Transform, &Mounts), (With<Selected>, With<Ship>)>,
-    mut indicator_query: Query<
-        (&mut Transform, &mut Visibility),
-        (With<RangeIndicator>, Without<Ship>),
-    >,
 ) {
-    let Ok((mut indicator_tf, mut visibility)) = indicator_query.single_mut() else {
-        return;
-    };
-
     // Determine which category to show range for
     let category = if target_mode.0 {
         Some(WeaponCategory::Cannon)
@@ -507,47 +457,42 @@ fn update_range_indicator(
     };
 
     let Some(category) = category else {
-        *visibility = Visibility::Hidden;
         return;
     };
 
     let Some((ship_tf, mounts)) = selected_query.iter().next() else {
-        *visibility = Visibility::Hidden;
         return;
     };
 
-    // Find max range across all weapons of this category.
-    // Missiles use fuel range; cannons use firing range.
-    let max_range = mounts
-        .0
-        .iter()
-        .filter_map(|m| {
-            let w = m.weapon.as_ref()?;
-            let profile = w.weapon_type.profile();
-            if w.weapon_type.category() != category {
-                return None;
-            }
-            let range = if category == WeaponCategory::Missile {
-                profile.missile_fuel
-            } else {
-                profile.firing_range
-            };
-            Some(range)
-        })
-        .fold(0.0_f32, f32::max);
+    let center = Vec3::new(ship_tf.translation.x, 1.0, ship_tf.translation.z);
 
-    if max_range < 1.0 {
-        *visibility = Visibility::Hidden;
-        return;
+    // Collect distinct ranges for this weapon category
+    let mut ranges_seen = Vec::new();
+    for mount in &mounts.0 {
+        let Some(w) = mount.weapon.as_ref() else { continue };
+        if w.weapon_type.category() != category {
+            continue;
+        }
+        let profile = w.weapon_type.profile();
+        let range = if category == WeaponCategory::Missile {
+            profile.missile_fuel
+        } else {
+            profile.firing_range
+        };
+        if range >= 1.0 && !ranges_seen.iter().any(|&r: &f32| (r - range).abs() < 0.1) {
+            ranges_seen.push(range);
+        }
     }
 
-    indicator_tf.translation = Vec3::new(
-        ship_tf.translation.x,
-        0.5,
-        ship_tf.translation.z,
-    );
-    indicator_tf.scale = Vec3::splat(max_range);
-    *visibility = Visibility::Visible;
+    let range_color = if category == WeaponCategory::Missile {
+        Color::srgba(1.0, 0.5, 0.1, 0.3)
+    } else {
+        Color::srgba(1.0, 0.8, 0.2, 0.3)
+    };
+
+    for range in &ranges_seen {
+        gizmos.circle(ground_circle_isometry(center, *range), *range, range_color);
+    }
 }
 
 // ── Number-Key Ship Selection ────────────────────────────────────────────

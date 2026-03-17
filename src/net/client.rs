@@ -28,10 +28,6 @@ impl Plugin for ClientNetPlugin {
 
         // Systems
         app.init_resource::<super::materializer::DebugVisuals>();
-        app.add_systems(Startup, (
-            super::materializer::init_target_indicator_assets,
-            super::materializer::init_los_circle_assets,
-        ));
         app.add_systems(OnEnter(GameState::Connecting), setup_renet_client);
         app.add_systems(OnEnter(GameState::Playing), client_setup_scene);
         app.add_systems(
@@ -44,14 +40,12 @@ impl Plugin for ClientNetPlugin {
                 super::materializer::materialize_explosions,
                 super::materializer::materialize_laser_beams,
                 super::materializer::update_laser_beam_meshes,
-                super::materializer::update_target_indicators,
+                super::materializer::draw_targeting_gizmos,
                 super::materializer::update_ship_number_labels,
-                super::materializer::update_squad_highlight_indicators,
                 super::materializer::update_squad_connection_lines,
                 super::materializer::toggle_debug_visuals,
                 super::materializer::spawn_debug_seeker_cones,
                 super::materializer::update_debug_seeker_cones,
-                super::materializer::update_los_circle,
                 super::materializer::update_enemy_number_labels,
             )
                 .run_if(in_state(GameState::Playing)),

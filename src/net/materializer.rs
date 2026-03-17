@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
-use crate::input::{on_ship_clicked, EnemyNumbers, MoveMode, SquadHighlight};
+use crate::input::{on_ship_clicked, EnemyNumbers, SquadHighlight};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
@@ -424,81 +424,23 @@ pub fn update_debug_seeker_cones(
     }
 }
 
-// ── Targeting Indicators ────────────────────────────────────────────────
+// ── Targeting Gizmos ────────────────────────────────────────────────────
 
-/// Marker component for target indicator entities (client-only visuals).
-#[derive(Component)]
-pub struct TargetIndicator {
-    pub owner: Entity,
-}
-
-/// Cached mesh/material handles for target indicators (avoids per-frame allocation).
-#[derive(Resource)]
-pub struct TargetIndicatorAssets {
-    pub mesh: Handle<Mesh>,
-    pub material: Handle<StandardMaterial>,
-}
-
-/// Cached mesh/material handles for squad highlight indicators.
-#[derive(Resource)]
-pub struct SquadIndicatorAssets {
-    pub highlight_mesh: Handle<Mesh>,
-    pub highlight_material: Handle<StandardMaterial>,
-}
-
-/// Startup system that creates the torus mesh + red material for target indicators.
-pub fn init_target_indicator_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.insert_resource(TargetIndicatorAssets {
-        mesh: meshes.add(Torus::new(6.0, 8.0)),
-        material: materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 0.15, 0.1, 0.7),
-            emissive: LinearRgba::new(2.0, 0.3, 0.2, 1.0),
-            unlit: true,
-            alpha_mode: AlphaMode::Blend,
-            ..default()
-        }),
-    });
-
-    // Squad visual assets
-    commands.insert_resource(SquadIndicatorAssets {
-        // Dimmed gray torus for follower highlights
-        highlight_mesh: meshes.add(Torus::new(12.0, 14.0)),
-        highlight_material: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.5, 0.5, 0.5, 0.4),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
-    });
-}
-
-/// System that renders a red torus at the position of each targeted enemy ship.
-/// Only shows targets for the local player's team.
-pub fn update_target_indicators(
-    mut commands: Commands,
-    assets: Res<TargetIndicatorAssets>,
+/// Draw red lines from own-team ships to their designated targets.
+pub fn draw_targeting_gizmos(
+    mut gizmos: Gizmos,
     local_team: Res<LocalTeam>,
     secrets_query: Query<
         (&ShipSecretsOwner, &TargetDesignation),
         With<ShipSecrets>,
     >,
     ship_query: Query<(&Transform, &Team), With<Ship>>,
-    indicator_query: Query<(Entity, &TargetIndicator)>,
 ) {
-    // Despawn all existing target indicators
-    for (entity, _) in &indicator_query {
-        commands.entity(entity).despawn();
-    }
-
     let Some(my_team) = local_team.0 else { return };
 
     for (owner, target_designation) in &secrets_query {
         // Only show for own-team ships
-        let Ok((_, team)) = ship_query.get(owner.0) else {
+        let Ok((ship_tf, team)) = ship_query.get(owner.0) else {
             continue;
         };
         if *team != my_team {
@@ -506,48 +448,13 @@ pub fn update_target_indicators(
         }
 
         // Look up the target ship's position
-        let Ok((target_transform, _)) = ship_query.get(target_designation.0) else {
+        let Ok((target_tf, _)) = ship_query.get(target_designation.0) else {
             continue;
         };
 
-        let pos = target_transform.translation;
-        commands.spawn((
-            TargetIndicator { owner: owner.0 },
-            Mesh3d(assets.mesh.clone()),
-            MeshMaterial3d(assets.material.clone()),
-            Transform::from_xyz(pos.x, 1.0, pos.z),
-        ));
-    }
-}
-
-// ── Squad Visual Indicators ──────────────────────────────────────────────
-
-/// Marker for squad highlight torus entities (dimmed gray ring under followers).
-#[derive(Component)]
-pub struct SquadHighlightIndicator;
-
-/// System that renders dimmed gray torus rings under squad followers of the selected leader.
-pub fn update_squad_highlight_indicators(
-    mut commands: Commands,
-    assets: Res<SquadIndicatorAssets>,
-    highlight_query: Query<&Transform, With<SquadHighlight>>,
-    indicator_query: Query<Entity, With<SquadHighlightIndicator>>,
-) {
-    // Despawn all existing indicators
-    for entity in &indicator_query {
-        commands.entity(entity).despawn();
-    }
-
-    // Spawn new indicators for highlighted followers (at ship height)
-    for transform in &highlight_query {
-        let pos = transform.translation;
-        commands.spawn((
-            SquadHighlightIndicator,
-            Mesh3d(assets.highlight_mesh.clone()),
-            MeshMaterial3d(assets.highlight_material.clone()),
-            Transform::from_xyz(pos.x, 5.0, pos.z),
-            Pickable::IGNORE,
-        ));
+        let from = Vec3::new(ship_tf.translation.x, 5.0, ship_tf.translation.z);
+        let to = Vec3::new(target_tf.translation.x, 5.0, target_tf.translation.z);
+        gizmos.line(from, to, Color::srgba(1.0, 0.15, 0.1, 0.7));
     }
 }
 
@@ -562,7 +469,7 @@ pub struct SquadInfoLabel;
 pub fn update_squad_connection_lines(
     mut commands: Commands,
     mut gizmos: Gizmos,
-    selected_query: Query<(Entity, &Transform), (With<crate::ship::Selected>, With<Ship>)>,
+    selected_query: Query<(Entity, &Transform), (With<Selected>, With<Ship>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&crate::ship::SquadMember>, Option<&ShipNumber>), With<ShipSecrets>>,
     highlight_query: Query<(Entity, &Transform), With<SquadHighlight>>,
     ship_query: Query<&Transform, With<Ship>>,
@@ -657,78 +564,6 @@ pub fn update_squad_connection_lines(
             }
         }
     }
-}
-
-// ── LOS Circle (Move Mode) ─────────────────────────────────────────────
-
-/// Marker for the LOS (vision range) circle shown in move mode.
-#[derive(Component)]
-pub struct LosCircle;
-
-/// Cached assets for the LOS circle.
-#[derive(Resource)]
-pub struct LosCircleAssets {
-    pub mesh: Handle<Mesh>,
-    pub material: Handle<StandardMaterial>,
-}
-
-/// Startup: create LOS circle assets.
-pub fn init_los_circle_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    // Unit torus — scaled to 400m at runtime
-    commands.insert_resource(LosCircleAssets {
-        mesh: meshes.add(Torus::new(0.98, 1.0)),
-        material: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.2, 1.0, 0.3, 0.15),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
-    });
-}
-
-/// System: spawn/despawn and position the LOS circle based on move mode + selection.
-pub fn update_los_circle(
-    mut commands: Commands,
-    move_mode: Res<MoveMode>,
-    assets: Res<LosCircleAssets>,
-    selected_query: Query<(&Transform, &ShipClass), (With<Selected>, With<Ship>)>,
-    circle_query: Query<Entity, With<LosCircle>>,
-) {
-    let show = move_mode.0 && selected_query.iter().next().is_some();
-
-    if !show {
-        // Despawn all LOS circles
-        for entity in &circle_query {
-            commands.entity(entity).despawn();
-        }
-        return;
-    }
-
-    let Some((ship_tf, ship_class)) = selected_query.iter().next() else {
-        return;
-    };
-    let vision_range = ship_class.profile().vision_range;
-
-    if circle_query.iter().next().is_some() {
-        // Already exists — we can't easily update transforms here without mut query conflicts,
-        // so despawn and respawn (cheap per frame for a single entity)
-        for entity in &circle_query {
-            commands.entity(entity).despawn();
-        }
-    }
-
-    commands.spawn((
-        LosCircle,
-        Mesh3d(assets.mesh.clone()),
-        MeshMaterial3d(assets.material.clone()),
-        Transform::from_xyz(ship_tf.translation.x, 0.5, ship_tf.translation.z)
-            .with_scale(Vec3::splat(vision_range)),
-        Pickable::IGNORE,
-    ));
 }
 
 // ── Enemy Number Labels ─────────────────────────────────────────────────

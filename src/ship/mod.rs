@@ -273,8 +273,6 @@ pub struct SquadSpeedLimit(pub f32);
 #[derive(Component)]
 pub struct Selected;
 
-#[derive(Component)]
-pub struct SelectionIndicator;
 
 /// Marker for the child entity that holds team-private ship state.
 /// This entity is only visible to the owning team via replicon visibility,
