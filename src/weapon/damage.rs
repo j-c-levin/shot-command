@@ -475,4 +475,286 @@ mod tests {
         assert!(eh.hp <= floor);
         assert_eq!(eh.hp, floor);
     }
+
+    // ── End-to-end apply_damage_to_ship tests ────────────────────────
+
+    use crate::ship::{EngineHealth, RepairCooldown};
+    use crate::weapon::{Mount, MountSize, Mounts, WeaponState, WeaponType};
+
+    /// Build a test ship with known HP pools and one mount per slot.
+    fn test_ship(
+        hull: u16,
+        engine: u16,
+        mounts: Vec<(MountSize, WeaponType)>,
+    ) -> (Health, EngineHealth, Mounts, RepairCooldown) {
+        let m = mounts
+            .into_iter()
+            .map(|(size, wt)| {
+                let profile = wt.profile();
+                Mount {
+                    size,
+                    offset: Vec2::ZERO,
+                    weapon: Some(WeaponState {
+                        weapon_type: wt,
+                        ammo: 0,
+                        cooldown: 0.0,
+                        pd_retarget_cooldown: 0.0,
+                        tubes_loaded: profile.tubes,
+                        tube_reload_timer: 0.0,
+                        fire_delay: 0.0,
+                    }),
+                    hp: size.hp(),
+                    max_hp: size.hp(),
+                    offline_timer: 0.0,
+                }
+            })
+            .collect();
+        (
+            Health { hp: hull },
+            EngineHealth::new(engine),
+            Mounts(m),
+            RepairCooldown::default(),
+        )
+    }
+
+    /// Ship facing +Y, projectile coming from front (traveling -Y).
+    const FRONT_DIR: Vec2 = Vec2::new(0.0, -1.0);
+    const SHIP_FWD: Vec2 = Vec2::new(0.0, 1.0);
+    /// Projectile from behind (traveling +Y).
+    const REAR_DIR: Vec2 = Vec2::new(0.0, 1.0);
+    /// Projectile from the right (traveling -X).
+    const BROADSIDE_DIR: Vec2 = Vec2::new(-1.0, 0.0);
+
+    // ── Front hit tests (70% hull, 30% component) ───────────────────
+
+    #[test]
+    fn front_hit_deals_70pct_to_hull() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(health.hp, 230, "hull should take 70 damage");
+        assert_eq!(engine.hp, 120, "engines untouched on front hit");
+    }
+
+    #[test]
+    fn front_hit_deals_30pct_to_component() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        // 30 damage to the single component (75 HP small mount)
+        assert_eq!(mounts.0[0].hp, 45, "component should take 30 damage");
+    }
+
+    #[test]
+    fn front_hit_no_engine_damage() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            600, 180, vec![(MountSize::Medium, WeaponType::Cannon)],
+        );
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 80, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(engine.hp, 180, "engines should be untouched");
+    }
+
+    // ── Rear hit tests (70% engines, 30% component) ────────────────
+
+    #[test]
+    fn rear_hit_deals_70pct_to_engines() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(engine.hp, 50, "engines should take 70 damage");
+        assert_eq!(health.hp, 300, "hull untouched on rear hit");
+    }
+
+    #[test]
+    fn rear_hit_deals_30pct_to_component() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(mounts.0[0].hp, 45, "component should take 30 damage");
+    }
+
+    #[test]
+    fn rear_hit_no_hull_damage() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            600, 180, vec![(MountSize::Medium, WeaponType::Cannon)],
+        );
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 80, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(health.hp, 600, "hull should be untouched");
+    }
+
+    // ── Broadside hit tests (70% component, 30% hull-or-engines) ───
+
+    #[test]
+    fn broadside_hit_deals_70pct_to_component() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Medium, WeaponType::Cannon)],
+        );
+        apply_damage_to_ship(BROADSIDE_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(mounts.0[0].hp, 30, "component should take 70 damage");
+    }
+
+    #[test]
+    fn broadside_secondary_goes_to_hull_or_engines() {
+        // 30% goes to hull OR engines (random). Total HP loss across both pools = 30.
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Medium, WeaponType::Cannon)],
+        );
+        apply_damage_to_ship(BROADSIDE_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        let hull_lost = 300 - health.hp;
+        let engine_lost = 120 - engine.hp;
+        assert_eq!(hull_lost + engine_lost, 30, "secondary 30 dmg should go to hull or engines");
+    }
+
+    // ── Railgun tests (90% component, 10% hull, ignores angle) ─────
+
+    #[test]
+    fn railgun_deals_90pct_to_component_regardless_of_angle() {
+        // Even from the front, railgun targets components
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 50, true, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(mounts.0[0].hp, 30, "component should take 45 (90% of 50)");
+        assert_eq!(health.hp, 295, "hull should take 5 (10% of 50)");
+        assert_eq!(engine.hp, 120, "engines untouched by railgun");
+    }
+
+    #[test]
+    fn railgun_from_rear_still_targets_components() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            600, 180, vec![(MountSize::Large, WeaponType::HeavyCannon)],
+        );
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 50, true, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(mounts.0[0].hp, 105, "component should take 45");
+        assert_eq!(health.hp, 595, "hull should take 5");
+        assert_eq!(engine.hp, 180, "engines untouched by railgun");
+    }
+
+    // ── Engine offline on 0 HP ─────────────────────────────────────
+
+    #[test]
+    fn engine_goes_offline_at_zero() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 50, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        // Rear hit with 100 damage: 70 to engines (50 HP → 0)
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(engine.hp, 0);
+        assert!(engine.offline_timer > 0.0, "offline timer should start");
+    }
+
+    // ── Component offline on 0 HP ──────────────────────────────────
+
+    #[test]
+    fn component_goes_offline_at_zero() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)], // 75 HP
+        );
+        // Front hit with 250 damage: 75 to component (75 → 0)
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 250, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(mounts.0[0].hp, 0);
+        assert_eq!(mounts.0[0].offline_timer, offline_cooldown_secs(MountSize::Small));
+    }
+
+    #[test]
+    fn component_offline_timer_scales_by_mount_size() {
+        assert_eq!(offline_cooldown_secs(MountSize::Small), 10.0);
+        assert_eq!(offline_cooldown_secs(MountSize::Medium), 15.0);
+        assert_eq!(offline_cooldown_secs(MountSize::Large), 20.0);
+    }
+
+    // ── Damage spill tests ─────────────────────────────────────────
+
+    #[test]
+    fn component_damage_spills_to_hull_when_no_online_mounts() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![],  // no mounts
+        );
+        // Front hit: 30% to component → no targets → spills to hull
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        // 70 hull (primary) + 30 spill (no components) = 100 total hull damage
+        assert_eq!(health.hp, 200, "all damage should go to hull with no components");
+    }
+
+    #[test]
+    fn engine_damage_spills_to_hull_when_engines_already_dead() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 0, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        engine.hp = 0;
+        engine.offline_timer = 5.0;
+        // Rear hit: 70% to engines → already dead → spills to hull
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, 100, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(health.hp, 230, "engine damage should spill to hull");
+    }
+
+    // ── Repair cooldown reset ──────────────────────────────────────
+
+    #[test]
+    fn damage_resets_repair_cooldown() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            300, 120, vec![(MountSize::Small, WeaponType::CWIS)],
+        );
+        rc.0 = 0.0; // repair was active
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, 10, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        assert_eq!(rc.0, REPAIR_DELAY_SECS, "repair cooldown should reset on hit");
+    }
+
+    // ── Total damage conservation ──────────────────────────────────
+
+    #[test]
+    fn total_damage_equals_raw_damage_front() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            1200, 300, vec![(MountSize::Large, WeaponType::HeavyCannon)],
+        );
+        let raw = 80u16;
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, raw, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        let hull_lost = 1200 - health.hp;
+        let engine_lost = 300 - engine.hp;
+        let comp_lost = 150 - mounts.0[0].hp;
+        assert_eq!(hull_lost + engine_lost + comp_lost, raw, "total damage must equal raw");
+    }
+
+    #[test]
+    fn total_damage_equals_raw_damage_rear() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            1200, 300, vec![(MountSize::Large, WeaponType::HeavyCannon)],
+        );
+        let raw = 80u16;
+        apply_damage_to_ship(REAR_DIR, SHIP_FWD, raw, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        let hull_lost = 1200 - health.hp;
+        let engine_lost = 300 - engine.hp;
+        let comp_lost = 150 - mounts.0[0].hp;
+        assert_eq!(hull_lost + engine_lost + comp_lost, raw, "total damage must equal raw");
+    }
+
+    #[test]
+    fn total_damage_equals_raw_damage_broadside() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            1200, 300, vec![(MountSize::Large, WeaponType::HeavyCannon)],
+        );
+        let raw = 80u16;
+        apply_damage_to_ship(BROADSIDE_DIR, SHIP_FWD, raw, false, &mut health, &mut engine, &mut mounts, &mut rc);
+        let hull_lost = 1200 - health.hp;
+        let engine_lost = 300 - engine.hp;
+        let comp_lost = 150 - mounts.0[0].hp;
+        assert_eq!(hull_lost + engine_lost + comp_lost, raw, "total damage must equal raw");
+    }
+
+    #[test]
+    fn total_damage_equals_raw_damage_railgun() {
+        let (mut health, mut engine, mut mounts, mut rc) = test_ship(
+            1200, 300, vec![(MountSize::Large, WeaponType::HeavyCannon)],
+        );
+        let raw = 50u16;
+        apply_damage_to_ship(FRONT_DIR, SHIP_FWD, raw, true, &mut health, &mut engine, &mut mounts, &mut rc);
+        let hull_lost = 1200 - health.hp;
+        let engine_lost = 300 - engine.hp;
+        let comp_lost = 150 - mounts.0[0].hp;
+        assert_eq!(hull_lost + engine_lost + comp_lost, raw, "total damage must equal raw");
+    }
 }
