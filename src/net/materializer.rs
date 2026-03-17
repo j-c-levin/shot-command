@@ -444,8 +444,6 @@ pub struct TargetIndicatorAssets {
 pub struct SquadIndicatorAssets {
     pub highlight_mesh: Handle<Mesh>,
     pub highlight_material: Handle<StandardMaterial>,
-    pub line_mesh: Handle<Mesh>,
-    pub line_material: Handle<StandardMaterial>,
 }
 
 /// Startup system that creates the torus mesh + red material for target indicators.
@@ -471,14 +469,6 @@ pub fn init_target_indicator_assets(
         highlight_mesh: meshes.add(Torus::new(12.0, 14.0)),
         highlight_material: materials.add(StandardMaterial {
             base_color: Color::srgba(0.5, 0.5, 0.5, 0.4),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
-        // Cyan capsule for follower-to-leader connection line
-        line_mesh: meshes.add(Capsule3d::new(0.3, 1.0)),
-        line_material: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.2, 0.9, 0.9, 0.5),
             alpha_mode: AlphaMode::Blend,
             unlit: true,
             ..default()
@@ -536,10 +526,6 @@ pub fn update_target_indicators(
 #[derive(Component)]
 pub struct SquadHighlightIndicator;
 
-/// Marker for squad connection line entities (cyan line from follower to leader).
-#[derive(Component)]
-pub struct SquadConnectionLine;
-
 /// System that renders dimmed gray torus rings under squad followers of the selected leader.
 pub fn update_squad_highlight_indicators(
     mut commands: Commands,
@@ -565,62 +551,25 @@ pub fn update_squad_highlight_indicators(
     }
 }
 
-/// Helper: spawn a cyan connection line between two world XZ positions.
-/// Line is drawn at ship height (Y=5) so it's visible from the strategic camera.
-fn spawn_connection_line(
-    commands: &mut Commands,
-    assets: &SquadIndicatorAssets,
-    from_pos: Vec3,
-    to_pos: Vec3,
-) {
-    let from = Vec3::new(from_pos.x, 5.0, from_pos.z);
-    let to = Vec3::new(to_pos.x, 5.0, to_pos.z);
-    let diff = to - from;
-    let length = diff.length();
-    if length < 1.0 {
-        return;
-    }
-
-    let mid = from + diff * 0.5;
-    // Compute rotation to align Y-axis capsule along the XZ direction
-    let dir_xz = Vec3::new(diff.x, 0.0, diff.z).normalize();
-    // Rotate from Y-up to horizontal direction
-    let rotation = Quat::from_rotation_arc(Vec3::Y, dir_xz);
-
-    commands.spawn((
-        SquadConnectionLine,
-        Mesh3d(assets.line_mesh.clone()),
-        MeshMaterial3d(assets.line_material.clone()),
-        Transform::from_translation(mid)
-            .with_rotation(rotation)
-            .with_scale(Vec3::new(2.0, length, 2.0)),
-        Pickable::IGNORE,
-    ));
-}
-
 /// Marker for squad info text labels (e.g. "Following: 2" or "Squad: 3").
 #[derive(Component)]
 pub struct SquadInfoLabel;
 
-/// System that draws cyan connection lines for squad relationships:
+/// System that draws squad connection lines using Gizmos (immediate mode)
+/// and info text labels using UI entities.
 /// - Selected follower -> line to leader
 /// - Selected leader -> lines from all highlighted followers to leader
-/// Also shows squad info text near the selected ship.
 pub fn update_squad_connection_lines(
     mut commands: Commands,
-    assets: Res<SquadIndicatorAssets>,
+    mut gizmos: Gizmos,
     selected_query: Query<(Entity, &Transform), (With<crate::ship::Selected>, With<Ship>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&crate::ship::SquadMember>, Option<&ShipNumber>), With<ShipSecrets>>,
     highlight_query: Query<(Entity, &Transform), With<SquadHighlight>>,
     ship_query: Query<&Transform, With<Ship>>,
-    line_query: Query<Entity, With<SquadConnectionLine>>,
     label_query: Query<Entity, With<SquadInfoLabel>>,
     camera_query: Query<(&Camera, &GlobalTransform)>,
 ) {
-    // Despawn all existing lines and labels
-    for entity in &line_query {
-        commands.entity(entity).despawn();
-    }
+    // Despawn text labels (recreated each frame)
     for entity in &label_query {
         commands.entity(entity).despawn();
     }
@@ -628,6 +577,9 @@ pub fn update_squad_connection_lines(
     let Some((selected_entity, selected_tf)) = selected_query.iter().next() else {
         return;
     };
+
+    let line_color = Color::srgba(0.2, 0.9, 0.9, 0.7);
+    let line_y = 5.0;
 
     // Check if selected ship is a squad follower
     let selected_squad = secrets_query
@@ -638,7 +590,9 @@ pub fn update_squad_connection_lines(
     if let Some(squad) = &selected_squad {
         // Selected ship is a follower — draw line to leader
         if let Ok(leader_tf) = ship_query.get(squad.leader) {
-            spawn_connection_line(&mut commands, &assets, selected_tf.translation, leader_tf.translation);
+            let from = Vec3::new(selected_tf.translation.x, line_y, selected_tf.translation.z);
+            let to = Vec3::new(leader_tf.translation.x, line_y, leader_tf.translation.z);
+            gizmos.line(from, to, line_color);
 
             // Show "Following: N" where N is the leader's ShipNumber
             let leader_number = secrets_query
@@ -673,18 +627,18 @@ pub fn update_squad_connection_lines(
     // If selected ship is a leader, draw lines from highlighted followers to leader
     let has_followers = highlight_query.iter().next().is_some();
     if has_followers {
-        // Count followers for info label
         let follower_count = highlight_query.iter().count();
 
         for (_follower_entity, follower_tf) in &highlight_query {
-            spawn_connection_line(&mut commands, &assets, follower_tf.translation, selected_tf.translation);
+            let from = Vec3::new(follower_tf.translation.x, line_y, follower_tf.translation.z);
+            let to = Vec3::new(selected_tf.translation.x, line_y, selected_tf.translation.z);
+            gizmos.line(from, to, line_color);
         }
 
         // Show follower count near leader
         if let Ok((camera, camera_gt)) = camera_query.single() {
             let label_pos = selected_tf.translation + Vec3::Y * 15.0;
             if let Ok(screen_pos) = camera.world_to_viewport(camera_gt, label_pos) {
-                // Only show if we didn't already spawn a "Following" label
                 if selected_squad.is_none() {
                     commands.spawn((
                         SquadInfoLabel,
