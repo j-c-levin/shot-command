@@ -293,6 +293,12 @@ pub struct ShipSecretsOwner(#[entities] pub Entity);
 
 // ── Pure Functions ──────────────────────────────────────────────────────
 
+/// Rotate a 2D offset vector by the given angle (radians).
+pub fn rotate_offset(offset: Vec2, angle: f32) -> Vec2 {
+    let (sin, cos) = angle.sin_cos();
+    Vec2::new(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos)
+}
+
 /// Thrust multiplier based on angle between facing and movement direction.
 /// 0 radians (facing target) → 1.0
 /// PI radians (facing away) → thruster_factor

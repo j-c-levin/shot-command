@@ -1,11 +1,12 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
-use crate::input::{on_ship_clicked, EnemyNumbers, SquadHighlight};
+use crate::input::{on_ship_clicked, EnemyNumbers, MissileMode, SquadHighlight, TargetMode};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
-    Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner, TargetDesignation,
+    Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    TargetDesignation,
 };
 use crate::weapon::missile::{
     Explosion, Missile, MissileVelocity, SEEKER_HALF_ANGLE, SEEKER_MAX_RANGE,
@@ -96,6 +97,8 @@ pub struct ShipNumberLabel {
 pub fn update_ship_number_labels(
     mut commands: Commands,
     local_team: Res<LocalTeam>,
+    target_mode: Res<TargetMode>,
+    missile_mode: Res<MissileMode>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     ship_query: Query<(&Transform, &Team), With<Ship>>,
     label_query: Query<(Entity, &ShipNumberLabel)>,
@@ -104,6 +107,11 @@ pub fn update_ship_number_labels(
     // Despawn all existing labels
     for (entity, _) in &label_query {
         commands.entity(entity).despawn();
+    }
+
+    // Hide friendly numbers in K/M modes to avoid confusion with enemy numbers
+    if target_mode.0 || missile_mode.0 {
+        return;
     }
 
     let Some(my_team) = local_team.0 else {

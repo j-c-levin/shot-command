@@ -373,11 +373,8 @@ fn validate_ownership(
     Some(())
 }
 
-/// Rotate a 2D offset vector by the given angle (radians).
-pub fn rotate_offset(offset: Vec2, angle: f32) -> Vec2 {
-    let (sin, cos) = angle.sin_cos();
-    Vec2::new(offset.x * cos - offset.y * sin, offset.x * sin + offset.y * cos)
-}
+// rotate_offset is in crate::ship (shared between server and client)
+use crate::ship::rotate_offset;
 
 /// Observer: handle `MoveCommand` from clients.
 /// If the target ship is a squad leader, propagate the move to all followers

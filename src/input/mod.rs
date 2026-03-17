@@ -13,7 +13,7 @@ use crate::net::commands::{
 use crate::net::LocalTeam;
 use crate::ship::{
     FacingLocked, Selected, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
-    SquadMember, TargetDesignation,
+    SquadMember, TargetDesignation, rotate_offset, ship_heading,
 };
 use crate::weapon::{Mounts, WeaponCategory};
 
@@ -591,6 +591,9 @@ fn draw_gesture_preview(
     gesture: Res<MoveGestureState>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    selected_query: Query<&Transform, (With<Selected>, With<Ship>)>,
+    highlight_query: Query<Entity, With<SquadHighlight>>,
+    secrets_query: Query<(&ShipSecretsOwner, &SquadMember), With<ShipSecrets>>,
 ) {
     if !gesture.active {
         return;
@@ -600,7 +603,7 @@ fn draw_gesture_preview(
     let screen_now = window.cursor_position().unwrap_or(gesture.screen_start);
     let drag_dist = screen_now.distance(gesture.screen_start);
 
-    // Always show destination circle
+    // Always show destination circle for leader
     let dest_3d = Vec3::new(gesture.destination.x, 1.0, gesture.destination.y);
     gizmos.circle(
         Isometry3d::new(dest_3d, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
@@ -608,19 +611,61 @@ fn draw_gesture_preview(
         Color::srgba(0.3, 0.5, 1.0, 0.7),
     );
 
-    // Show facing direction line if drag exceeds threshold
-    if drag_dist >= DRAG_THRESHOLD_PX {
+    // Get selected ship transform for heading computation
+    let selected_tf: Option<&Transform> = selected_query.iter().next();
+
+    // Compute facing direction and rotation delta if dragging
+    let facing_dir = if drag_dist >= DRAG_THRESHOLD_PX {
         let Ok((camera, global_tf)) = camera_query.single() else { return };
-        if let Some(ground_end) = cursor_to_ground(window, camera, global_tf) {
+        cursor_to_ground(window, camera, global_tf).and_then(|ground_end| {
             let dir = (ground_end - gesture.destination).normalize_or_zero();
-            if dir != Vec2::ZERO {
-                let end_3d = Vec3::new(
-                    dest_3d.x + dir.x * 20.0,
-                    1.0,
-                    dest_3d.z + dir.y * 20.0,
-                );
-                gizmos.line(dest_3d, end_3d, Color::srgba(0.0, 1.0, 1.0, 0.7));
+            if dir != Vec2::ZERO { Some(dir) } else { None }
+        })
+    } else {
+        None
+    };
+
+    // Show facing direction line
+    if let Some(dir) = facing_dir {
+        let end_3d = Vec3::new(
+            dest_3d.x + dir.x * 20.0,
+            1.0,
+            dest_3d.z + dir.y * 20.0,
+        );
+        gizmos.line(dest_3d, end_3d, Color::srgba(0.0, 1.0, 1.0, 0.7));
+    }
+
+    // Show follower preview positions
+    // Preview follower destinations (gray circles showing where followers will end up)
+    let follower_color = Color::srgba(0.5, 0.5, 0.5, 0.5);
+    // Need to find followers of the selected ship via SquadHighlight (already computed)
+    if let Some(leader_tf) = selected_tf {
+        let current_heading = ship_heading(leader_tf);
+        let rotation_delta = facing_dir.map(|dir| {
+            let desired_heading = dir.y.atan2(dir.x);
+            desired_heading - current_heading
+        });
+
+        // Only show for highlighted followers (followers of the selected leader)
+        let highlighted: Vec<Entity> = highlight_query.iter().collect();
+        for (owner, squad) in &secrets_query {
+            if !highlighted.contains(&owner.0) {
+                continue;
             }
+            let offset = squad.offset;
+            let rotated = if let Some(delta) = rotation_delta {
+                rotate_offset(offset, delta)
+            } else {
+                offset
+            };
+            let follower_dest = gesture.destination + rotated;
+            let follower_3d = Vec3::new(follower_dest.x, 1.0, follower_dest.y);
+            gizmos.circle(
+                Isometry3d::new(follower_3d, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+                2.0,
+                follower_color,
+            );
+            gizmos.line(dest_3d, follower_3d, follower_color);
         }
     }
 }
