@@ -6,8 +6,8 @@ use crate::ship::{
     ship_facing_direction, ship_xz_position,
 };
 use crate::weapon::missile::{compute_intercept_point, spawn_missile};
-use crate::weapon::projectile::spawn_projectile;
-use crate::weapon::{FiringArc, MissileQueue, Mounts, WeaponCategory};
+use crate::weapon::projectile::{spawn_projectile, RailgunRound};
+use crate::weapon::{FiringArc, MissileQueue, Mounts, WeaponCategory, WeaponType};
 
 /// Half-angle of the forward firing arc: 10 degrees in radians (PI / 18).
 const FORWARD_ARC_HALF_ANGLE: f32 = std::f32::consts::PI / 18.0;
@@ -205,7 +205,7 @@ pub fn auto_fire(
                     dir_to_lead.x * sin_s + dir_to_lead.z * cos_s,
                 );
 
-                spawn_projectile(
+                let proj = spawn_projectile(
                     &mut commands,
                     origin + parallel_offset,
                     spread_dir,
@@ -213,6 +213,9 @@ pub fn auto_fire(
                     profile.damage,
                     ship_entity,
                 );
+                if weapon.weapon_type == WeaponType::Railgun {
+                    commands.entity(proj).insert(RailgunRound);
+                }
             }
 
             // Update weapon state

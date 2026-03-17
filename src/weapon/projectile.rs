@@ -28,6 +28,11 @@ pub struct ProjectileDamage(pub u16);
 #[derive(Component, Serialize, Deserialize, MapEntities, Clone)]
 pub struct ProjectileOwner(#[entities] pub Entity);
 
+/// Marker: this projectile was fired by a railgun. Damage bypasses normal
+/// zone routing and goes 90% to a random component, 10% to hull.
+#[derive(Component, Serialize, Deserialize)]
+pub struct RailgunRound;
+
 /// CWIS tracer round with remaining lifetime in seconds. These only damage missiles, not ships.
 #[derive(Component, Serialize, Deserialize)]
 pub struct CwisRound(pub f32);
@@ -118,6 +123,7 @@ fn check_projectile_hits(
             &ProjectileVelocity,
             &ProjectileDamage,
             &ProjectileOwner,
+            Option<&RailgunRound>,
         ),
         (With<Projectile>, Without<CwisRound>),
     >,
@@ -134,7 +140,7 @@ fn check_projectile_hits(
         With<Ship>,
     >,
 ) {
-    for (proj_entity, proj_transform, proj_vel, damage, owner) in &projectile_query {
+    for (proj_entity, proj_transform, proj_vel, damage, owner, railgun) in &projectile_query {
         let proj_xz = Vec2::new(proj_transform.translation.x, proj_transform.translation.z);
         let impact_dir = Vec2::new(proj_vel.0.x, proj_vel.0.z).normalize_or_zero();
 
@@ -154,6 +160,7 @@ fn check_projectile_hits(
                     impact_dir,
                     ship_forward,
                     damage.0,
+                    railgun.is_some(),
                     &mut health,
                     &mut engine_health,
                     &mut mounts,

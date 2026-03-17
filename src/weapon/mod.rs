@@ -128,7 +128,7 @@ impl WeaponType {
             WeaponType::HeavyVLS => WeaponProfile {
                 fire_rate_secs: 3.0, // per-tube reload time
                 burst_count: 1,
-                damage: 30,
+                damage: 80,
                 firing_range: 500.0,
                 projectile_speed: 150.0,
                 spread_degrees: 0.0,
@@ -140,7 +140,7 @@ impl WeaponType {
             WeaponType::LightVLS => WeaponProfile {
                 fire_rate_secs: 3.0, // per-tube reload time
                 burst_count: 1,
-                damage: 30,
+                damage: 80,
                 firing_range: 500.0,
                 projectile_speed: 150.0,
                 spread_degrees: 0.0,
@@ -332,7 +332,7 @@ mod tests {
     #[test]
     fn heavy_vls_profile_values() {
         let p = WeaponType::HeavyVLS.profile();
-        assert_eq!(p.damage, 30);
+        assert_eq!(p.damage, 80);
         assert_eq!(p.burst_count, 1);
         assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 500.0);
@@ -345,7 +345,7 @@ mod tests {
     #[test]
     fn light_vls_profile_values() {
         let p = WeaponType::LightVLS.profile();
-        assert_eq!(p.damage, 30);
+        assert_eq!(p.damage, 80);
         assert_eq!(p.burst_count, 1);
         assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 500.0);

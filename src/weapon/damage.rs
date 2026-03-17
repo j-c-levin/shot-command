@@ -76,23 +76,41 @@ pub fn route_damage(zone: HitZone, raw_damage: u16) -> (DamageTarget, u16, Damag
     }
 }
 
-pub const OFFLINE_COOLDOWN_SECS: f32 = 10.0;
+/// Offline cooldown by mount size: Small=10s, Medium=15s, Large=20s.
+pub fn offline_cooldown_secs(size: crate::weapon::MountSize) -> f32 {
+    match size {
+        crate::weapon::MountSize::Small => 10.0,
+        crate::weapon::MountSize::Medium => 15.0,
+        crate::weapon::MountSize::Large => 20.0,
+    }
+}
+/// Engine offline cooldown (engines are large systems).
+pub const ENGINE_OFFLINE_COOLDOWN_SECS: f32 = 15.0;
 pub const REPAIR_DELAY_SECS: f32 = 5.0;
 pub const REPAIR_RATE_HP_PER_SEC: f32 = 20.0;
 
 /// Apply directional damage to a ship's HP pools.
+/// If `is_railgun` is true, damage bypasses normal zone routing and goes
+/// 90% to a random component, 10% to hull (precision strike).
 pub fn apply_damage_to_ship(
     impact_dir: Vec2,
     ship_forward: Vec2,
     raw_damage: u16,
+    is_railgun: bool,
     health: &mut Health,
     engine_health: &mut EngineHealth,
     mounts: &mut Mounts,
     repair_cooldown: &mut RepairCooldown,
 ) {
-    let zone = classify_hit_zone(impact_dir, ship_forward);
-    let (primary_target, primary_dmg, secondary_target, secondary_dmg) =
-        route_damage(zone, raw_damage);
+    let (primary_target, primary_dmg, secondary_target, secondary_dmg) = if is_railgun {
+        // Railgun: precision component strike, token hull damage
+        let comp_dmg = raw_damage * 9 / 10;
+        let hull_dmg = raw_damage - comp_dmg;
+        (DamageTarget::Component, comp_dmg, DamageTarget::Hull, hull_dmg)
+    } else {
+        let zone = classify_hit_zone(impact_dir, ship_forward);
+        route_damage(zone, raw_damage)
+    };
 
     apply_to_target(primary_target, primary_dmg, health, engine_health, mounts);
     apply_to_target(secondary_target, secondary_dmg, health, engine_health, mounts);
@@ -119,7 +137,7 @@ fn apply_to_target(
             if engine_health.hp > 0 {
                 engine_health.hp = engine_health.hp.saturating_sub(damage);
                 if engine_health.hp == 0 {
-                    engine_health.offline_timer = OFFLINE_COOLDOWN_SECS;
+                    engine_health.offline_timer = ENGINE_OFFLINE_COOLDOWN_SECS;
                 }
             } else {
                 // Engines already down — spill to hull
@@ -139,7 +157,7 @@ fn apply_to_target(
                 let mount = &mut mounts.0[idx];
                 mount.hp = mount.hp.saturating_sub(damage);
                 if mount.hp == 0 {
-                    mount.offline_timer = OFFLINE_COOLDOWN_SECS;
+                    mount.offline_timer = offline_cooldown_secs(mount.size);
                 }
             } else {
                 health.hp = health.hp.saturating_sub(damage);
@@ -152,7 +170,7 @@ fn apply_to_target(
             } else if engine_health.hp > 0 {
                 engine_health.hp = engine_health.hp.saturating_sub(damage);
                 if engine_health.hp == 0 {
-                    engine_health.offline_timer = OFFLINE_COOLDOWN_SECS;
+                    engine_health.offline_timer = ENGINE_OFFLINE_COOLDOWN_SECS;
                 }
             } else {
                 health.hp = health.hp.saturating_sub(damage);

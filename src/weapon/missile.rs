@@ -391,7 +391,7 @@ pub fn check_missile_hits(
                 let ship_forward = ship_facing_direction(ship_transform);
                 let impact_dir = Vec2::new(missile_vel.0.x, missile_vel.0.z).normalize_or_zero();
                 apply_damage_to_ship(
-                    impact_dir, ship_forward, damage.0,
+                    impact_dir, ship_forward, damage.0, false,
                     &mut health, &mut engine_health, &mut mounts, &mut repair_cooldown,
                 );
                 spawn_explosion(&mut commands, missile_pos);
