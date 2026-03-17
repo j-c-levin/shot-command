@@ -612,7 +612,7 @@ fn turn_ships(
 fn apply_thrust(
     time: Res<Time>,
     mut query: Query<
-        (&Transform, &mut Velocity, &ShipClass, &WaypointQueue, Option<&SquadSpeedLimit>),
+        (&Transform, &mut Velocity, &ShipClass, &WaypointQueue, Option<&SquadSpeedLimit>, &EngineHealth),
         With<Ship>,
     >,
 ) {
@@ -621,7 +621,10 @@ fn apply_thrust(
         return;
     }
 
-    for (transform, mut velocity, class, waypoints, speed_limit) in &mut query {
+    for (transform, mut velocity, class, waypoints, speed_limit, engine_health) in &mut query {
+        if engine_health.hp == 0 {
+            continue;
+        }
         let profile = class.profile();
         let facing = ship_facing_direction(transform);
         let speed = velocity.linear.length();
