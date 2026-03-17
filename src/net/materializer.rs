@@ -822,11 +822,13 @@ pub fn update_enemy_number_labels(
                 font_size: 14.0,
                 ..default()
             },
-            TextColor(Color::srgba(1.0, 0.3, 0.3, 0.9)),
+            TextColor(Color::WHITE),
+            BackgroundColor(Color::srgba(0.7, 0.1, 0.1, 0.8)),
             Node {
                 position_type: PositionType::Absolute,
-                left: Val::Px(screen_pos.x - 4.0),
+                left: Val::Px(screen_pos.x - 6.0),
                 top: Val::Px(screen_pos.y),
+                padding: UiRect::axes(Val::Px(4.0), Val::Px(1.0)),
                 ..default()
             },
             Pickable::IGNORE,
