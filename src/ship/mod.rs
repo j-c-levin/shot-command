@@ -264,10 +264,16 @@ pub struct SquadMember {
     pub offset: Vec2,
 }
 
-/// Caps a ship's effective top_speed to the slowest member in its squad.
-/// Applied to all members (leader + followers) when a squad exists.
+/// Caps a ship's effective movement to the slowest member in its squad.
+/// Stores the minimum values across all squad members for speed, acceleration,
+/// and turn rate so that all members move, accelerate, and turn identically.
 #[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
-pub struct SquadSpeedLimit(pub f32);
+pub struct SquadSpeedLimit {
+    pub top_speed: f32,
+    pub acceleration: f32,
+    pub turn_rate: f32,
+    pub turn_acceleration: f32,
+}
 
 #[derive(Component)]
 pub struct Selected;
@@ -469,10 +475,9 @@ fn turn_ships(
 
     for (mut transform, mut velocity, class, facing_target, speed_limit) in &mut query {
         let profile = class.profile();
-        // Scale turn rate/acceleration proportionally when in a squad
+        // Cap turn rate/acceleration to squad minimum when in a squad
         let (effective_turn_rate, effective_turn_accel) = if let Some(limit) = speed_limit {
-            let speed_ratio = (limit.0 / profile.top_speed).min(1.0);
-            (profile.turn_rate * speed_ratio, profile.turn_acceleration * speed_ratio)
+            (limit.turn_rate.min(profile.turn_rate), limit.turn_acceleration.min(profile.turn_acceleration))
         } else {
             (profile.turn_rate, profile.turn_acceleration)
         };
@@ -567,10 +572,8 @@ fn apply_thrust(
         let speed = velocity.linear.length();
 
         // Effective top speed and acceleration: capped by squad speed limit if present.
-        // Scale acceleration proportionally so all squad members accelerate at the same rate.
         let (effective_top_speed, effective_acceleration) = if let Some(limit) = speed_limit {
-            let speed_ratio = (limit.0 / profile.top_speed).min(1.0);
-            (limit.0.min(profile.top_speed), profile.acceleration * speed_ratio)
+            (limit.top_speed.min(profile.top_speed), limit.acceleration.min(profile.acceleration))
         } else {
             (profile.top_speed, profile.acceleration)
         };
@@ -1183,18 +1186,28 @@ mod tests {
         let bb = ShipClass::Battleship.profile();
         assert!(scout.top_speed > bb.top_speed);
 
-        // With squad speed limit set to battleship speed, effective top is capped
-        let limit = SquadSpeedLimit(bb.top_speed);
-        let effective = scout.top_speed.min(limit.0);
-        assert!((effective - bb.top_speed).abs() < 0.01);
+        // With squad speed limit set to battleship stats, all are capped
+        let limit = SquadSpeedLimit {
+            top_speed: bb.top_speed,
+            acceleration: bb.acceleration,
+            turn_rate: bb.turn_rate,
+            turn_acceleration: bb.turn_acceleration,
+        };
+        assert!((limit.top_speed.min(scout.top_speed) - bb.top_speed).abs() < 0.01);
+        assert!((limit.acceleration.min(scout.acceleration) - bb.acceleration).abs() < 0.01);
+        assert!((limit.turn_rate.min(scout.turn_rate) - bb.turn_rate).abs() < 0.01);
     }
 
     #[test]
     fn squad_speed_limit_no_effect_when_slower() {
-        // Battleship is already slower than its limit
+        // Battleship is already slower than a very high limit
         let bb = ShipClass::Battleship.profile();
-        let limit = SquadSpeedLimit(1000.0); // very high limit
-        let effective = bb.top_speed.min(limit.0);
-        assert!((effective - bb.top_speed).abs() < 0.01);
+        let limit = SquadSpeedLimit {
+            top_speed: 1000.0,
+            acceleration: 1000.0,
+            turn_rate: 1000.0,
+            turn_acceleration: 1000.0,
+        };
+        assert!((limit.top_speed.min(bb.top_speed) - bb.top_speed).abs() < 0.01);
     }
 }

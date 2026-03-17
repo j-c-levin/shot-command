@@ -850,35 +850,44 @@ fn handle_join_squad(
 
     // Recompute squad speed limit for the new leader's squad.
     // Note: cmd.ship's SquadMember was just inserted (deferred), so recompute_squad_speed_limit
-    // won't see it in the query. We manually include cmd.ship's speed and entity.
+    // won't see it in the query. We manually include cmd.ship and compute all four stats.
     recompute_squad_speed_limit(&mut commands, cmd.leader, &class_query, &squad_query);
-    // Also apply the limit to the newly joined ship (which wasn't in the query above)
+    // Also include the newly joined ship (not yet visible in the query)
     if let Ok(ship_class) = class_query.get(cmd.ship) {
-        // Get the leader's current limit (just computed) or leader's own speed
-        let leader_speed = class_query
+        let sp = ship_class.profile();
+        let lp = class_query
             .get(cmd.leader)
-            .map(|c| c.profile().top_speed)
-            .unwrap_or(f32::MAX);
-        let ship_speed = ship_class.profile().top_speed;
-        let min_speed = leader_speed.min(ship_speed);
-        // Check existing followers too
-        let mut squad_min = min_speed;
+            .map(|c| c.profile())
+            .unwrap_or_else(|_| sp.clone());
+        let mut min_speed = lp.top_speed.min(sp.top_speed);
+        let mut min_accel = lp.acceleration.min(sp.acceleration);
+        let mut min_turn = lp.turn_rate.min(sp.turn_rate);
+        let mut min_turn_accel = lp.turn_acceleration.min(sp.turn_acceleration);
         for (follower_entity, squad) in squad_query.iter() {
             if squad.leader == cmd.leader {
                 if let Ok(fc) = class_query.get(follower_entity) {
-                    squad_min = squad_min.min(fc.profile().top_speed);
+                    let fp = fc.profile();
+                    min_speed = min_speed.min(fp.top_speed);
+                    min_accel = min_accel.min(fp.acceleration);
+                    min_turn = min_turn.min(fp.turn_rate);
+                    min_turn_accel = min_turn_accel.min(fp.turn_acceleration);
                 }
             }
         }
-        // Apply to all members including the new one
-        commands.entity(cmd.leader).insert(SquadSpeedLimit(squad_min));
-        commands.entity(cmd.ship).insert(SquadSpeedLimit(squad_min));
+        let limit = SquadSpeedLimit {
+            top_speed: min_speed,
+            acceleration: min_accel,
+            turn_rate: min_turn,
+            turn_acceleration: min_turn_accel,
+        };
+        commands.entity(cmd.leader).insert(limit);
+        commands.entity(cmd.ship).insert(limit);
         for (follower_entity, squad) in squad_query.iter() {
             if squad.leader == cmd.leader {
-                commands.entity(follower_entity).insert(SquadSpeedLimit(squad_min));
+                commands.entity(follower_entity).insert(limit);
             }
         }
-        info!("Squad speed limit set to {:.1} for leader {:?} and followers", squad_min, cmd.leader);
+        info!("Squad limits: speed={:.1} accel={:.1} turn={:.2} turn_accel={:.2}", min_speed, min_accel, min_turn, min_turn_accel);
     }
 
     info!(
@@ -888,7 +897,7 @@ fn handle_join_squad(
 }
 
 /// Recompute SquadSpeedLimit for all members of a squad led by `leader`.
-/// Sets the limit to the minimum top_speed across leader + all followers.
+/// Sets the limit to the minimum of each stat across leader + all followers.
 /// If the leader has no followers, removes the limit from the leader.
 fn recompute_squad_speed_limit(
     commands: &mut Commands,
@@ -900,26 +909,39 @@ fn recompute_squad_speed_limit(
         return;
     };
 
-    let mut min_speed = leader_class.profile().top_speed;
+    let lp = leader_class.profile();
+    let mut min_speed = lp.top_speed;
+    let mut min_accel = lp.acceleration;
+    let mut min_turn = lp.turn_rate;
+    let mut min_turn_accel = lp.turn_acceleration;
     let mut members: Vec<Entity> = vec![leader];
 
     for (follower_entity, squad) in squad_query.iter() {
         if squad.leader == leader {
             members.push(follower_entity);
             if let Ok(follower_class) = class_query.get(follower_entity) {
-                min_speed = min_speed.min(follower_class.profile().top_speed);
+                let fp = follower_class.profile();
+                min_speed = min_speed.min(fp.top_speed);
+                min_accel = min_accel.min(fp.acceleration);
+                min_turn = min_turn.min(fp.turn_rate);
+                min_turn_accel = min_turn_accel.min(fp.turn_acceleration);
             }
         }
     }
 
     if members.len() <= 1 {
-        // No followers — remove speed limit from leader
         commands.entity(leader).remove::<SquadSpeedLimit>();
         return;
     }
 
+    let limit = SquadSpeedLimit {
+        top_speed: min_speed,
+        acceleration: min_accel,
+        turn_rate: min_turn,
+        turn_acceleration: min_turn_accel,
+    };
     for &member in &members {
-        commands.entity(member).insert(SquadSpeedLimit(min_speed));
+        commands.entity(member).insert(limit);
     }
 }
 
