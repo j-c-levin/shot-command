@@ -76,7 +76,7 @@ pub fn update_radar_contacts(
         }
         let radar_pos = ship_xz_position(radar_transform);
         let team_id = radar_team.0;
-        let max_detect_range = radar_range * 2.0;
+        let max_detect_range = radar_range;
 
         // Check enemy ships
         for (target_entity, target_transform, ship_class, target_team) in all_ships.iter() {
