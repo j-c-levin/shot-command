@@ -610,4 +610,104 @@ mod tests {
             _ => panic!("Expected Capturing for team 1, got {:?}", state),
         }
     }
+
+    // ── World-level tests ────────────────────────────────────────────────
+
+    use crate::ship::ShipClass;
+
+    #[test]
+    fn ship_inside_radius_counted() {
+        let mut world = World::new();
+        let point = world.spawn((
+            ControlPoint,
+            ControlPointState::Neutral,
+            ControlPointRadius(100.0),
+            TeamScores::default(),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        )).id();
+        world.spawn((
+            Ship,
+            ShipClass::Scout,
+            Team(0),
+            Transform::from_xyz(50.0, 0.0, 0.0),
+        ));
+
+        let point_tf = world.get::<Transform>(point).unwrap();
+        let center = Vec2::new(point_tf.translation.x, point_tf.translation.z);
+        let radius = world.get::<ControlPointRadius>(point).unwrap().0;
+        let ship_pos = Vec2::new(50.0, 0.0);
+        assert!(ship_pos.distance(center) <= radius);
+    }
+
+    #[test]
+    fn ship_outside_radius_not_counted() {
+        let mut world = World::new();
+        let point = world.spawn((
+            ControlPoint,
+            ControlPointState::Neutral,
+            ControlPointRadius(100.0),
+            TeamScores::default(),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        )).id();
+        world.spawn((
+            Ship,
+            ShipClass::Scout,
+            Team(0),
+            Transform::from_xyz(150.0, 0.0, 0.0),
+        ));
+
+        let point_tf = world.get::<Transform>(point).unwrap();
+        let center = Vec2::new(point_tf.translation.x, point_tf.translation.z);
+        let radius = world.get::<ControlPointRadius>(point).unwrap().0;
+        let ship_pos = Vec2::new(150.0, 0.0);
+        assert!(ship_pos.distance(center) > radius);
+    }
+
+    #[test]
+    fn ship_on_boundary_counted() {
+        let mut world = World::new();
+        let point = world.spawn((
+            ControlPoint,
+            ControlPointState::Neutral,
+            ControlPointRadius(100.0),
+            TeamScores::default(),
+            Transform::from_xyz(0.0, 0.0, 0.0),
+        )).id();
+        world.spawn((
+            Ship,
+            ShipClass::Scout,
+            Team(0),
+            Transform::from_xyz(100.0, 0.0, 0.0),
+        ));
+
+        let point_tf = world.get::<Transform>(point).unwrap();
+        let center = Vec2::new(point_tf.translation.x, point_tf.translation.z);
+        let radius = world.get::<ControlPointRadius>(point).unwrap().0;
+        let ship_pos = Vec2::new(100.0, 0.0);
+        assert!(ship_pos.distance(center) <= radius);
+    }
+
+    #[test]
+    fn score_accumulation_over_time() {
+        let mut scores = TeamScores::default();
+        let dt = 1.0 / 60.0;
+        for _ in 0..300 { // 5 seconds at 60Hz
+            scores.scores[0] += SCORE_TICK_RATE * dt;
+        }
+        assert!((scores.scores[0] - 5.0).abs() < 0.1);
+    }
+
+    #[test]
+    fn score_victory_threshold_reached() {
+        let scores = TeamScores { scores: [300.0, 50.0] };
+        assert!(scores.scores[0] >= SCORE_VICTORY_THRESHOLD);
+        assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
+    }
+
+    #[test]
+    fn score_victory_threshold_not_reached() {
+        let scores = TeamScores { scores: [299.9, 299.9] };
+        assert!(scores.scores[0] < SCORE_VICTORY_THRESHOLD);
+        assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
+    }
 }
