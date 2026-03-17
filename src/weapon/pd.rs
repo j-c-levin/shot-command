@@ -95,6 +95,9 @@ fn laser_pd_fire(
         let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
+            if mounts.0[mount_idx].hp == 0 {
+                continue;
+            }
             let Some(ref weapon) = mounts.0[mount_idx].weapon else {
                 continue;
             };
@@ -203,6 +206,9 @@ fn cwis_fire(
         let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
+            if mounts.0[mount_idx].hp == 0 {
+                continue;
+            }
             let Some(ref weapon) = mounts.0[mount_idx].weapon else {
                 continue;
             };

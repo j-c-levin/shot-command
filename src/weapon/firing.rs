@@ -126,6 +126,9 @@ pub fn auto_fire(
 
         for mount_idx in 0..mounts.0.len() {
             let mount = &mounts.0[mount_idx];
+            if mount.hp == 0 {
+                continue;
+            }
             let Some(ref weapon) = mount.weapon else {
                 continue;
             };
