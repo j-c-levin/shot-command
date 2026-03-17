@@ -32,12 +32,11 @@ pub struct ShipVisualsPlugin;
 
 impl Plugin for ShipVisualsPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Startup, init_indicator_assets)
-            .add_systems(
-                Update,
-                (update_waypoint_markers, update_facing_indicators)
-                    .run_if(in_state(GameState::Playing)),
-            );
+        app.add_systems(
+            Update,
+            (draw_waypoint_gizmos, draw_facing_gizmos)
+                .run_if(in_state(GameState::Playing)),
+        );
     }
 }
 
@@ -285,49 +284,6 @@ pub struct ShipSecrets;
 #[derive(Component, Serialize, Deserialize, MapEntities)]
 pub struct ShipSecretsOwner(#[entities] pub Entity);
 
-/// Marker for waypoint indicator entities.
-#[derive(Component)]
-pub struct WaypointMarker {
-    pub owner: Entity,
-}
-
-/// Marker for facing direction indicator.
-#[derive(Component)]
-pub struct FacingIndicator {
-    pub owner: Entity,
-}
-
-/// Cached mesh/material handles for visual indicators (avoids per-frame allocation)
-#[derive(Resource)]
-struct IndicatorAssets {
-    waypoint_mesh: Handle<Mesh>,
-    waypoint_material: Handle<StandardMaterial>,
-    facing_mesh: Handle<Mesh>,
-    facing_material: Handle<StandardMaterial>,
-}
-
-fn init_indicator_assets(
-    mut commands: Commands,
-    mut meshes: ResMut<Assets<Mesh>>,
-    mut materials: ResMut<Assets<StandardMaterial>>,
-) {
-    commands.insert_resource(IndicatorAssets {
-        waypoint_mesh: meshes.add(Sphere::new(2.0)),
-        waypoint_material: materials.add(StandardMaterial {
-            base_color: Color::srgba(0.2, 0.8, 1.0, 0.5),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
-        facing_mesh: meshes.add(Capsule3d::new(0.5, 30.0)),
-        facing_material: materials.add(StandardMaterial {
-            base_color: Color::srgba(1.0, 0.8, 0.2, 0.6),
-            alpha_mode: AlphaMode::Blend,
-            unlit: true,
-            ..default()
-        }),
-    });
-}
 
 // ── Pure Functions ──────────────────────────────────────────────────────
 
@@ -821,61 +777,54 @@ pub fn spawn_server_ship_default(
     spawn_server_ship(commands, position, team, &spec, 0)
 }
 
-// ── Visual Indicators ───────────────────────────────────────────────────
+// ── Visual Indicators (Gizmos) ──────────────────────────────────────────
 
-fn update_waypoint_markers(
-    mut commands: Commands,
-    assets: Res<IndicatorAssets>,
+/// Draw blue gizmo lines from selected friendly ships to their waypoints.
+fn draw_waypoint_gizmos(
+    mut gizmos: Gizmos,
     local_team: Res<LocalTeam>,
     secrets_query: Query<(&ShipSecretsOwner, &WaypointQueue), With<ShipSecrets>>,
-    ship_team_query: Query<&Team, With<Ship>>,
-    marker_query: Query<(Entity, &WaypointMarker)>,
+    ship_query: Query<(&Transform, &Team), (With<Ship>, With<Selected>)>,
 ) {
-    // Despawn all existing markers
-    for (entity, _) in &marker_query {
-        commands.entity(entity).despawn();
-    }
+    let Some(my_team) = local_team.0 else { return };
 
-    let Some(my_team) = local_team.0 else { return; };
+    let line_color = Color::srgba(0.3, 0.5, 1.0, 0.7);
 
-    // Spawn markers from ShipSecrets entities (only visible for own team)
     for (owner, waypoints) in &secrets_query {
-        let Ok(team) = ship_team_query.get(owner.0) else {
+        let Ok((transform, team)) = ship_query.get(owner.0) else {
             continue;
         };
         if *team != my_team {
             continue;
         }
+        if waypoints.waypoints.is_empty() {
+            continue;
+        }
+
+        let ship_pos = Vec3::new(transform.translation.x, 1.0, transform.translation.z);
+        let mut prev = ship_pos;
         for wp in &waypoints.waypoints {
-            commands.spawn((
-                WaypointMarker { owner: owner.0 },
-                Mesh3d(assets.waypoint_mesh.clone()),
-                MeshMaterial3d(assets.waypoint_material.clone()),
-                Transform::from_xyz(wp.x, 1.0, wp.y),
-            ));
+            let wp_pos = Vec3::new(wp.x, 1.0, wp.y);
+            gizmos.line(prev, wp_pos, line_color);
+            prev = wp_pos;
         }
     }
 }
 
-fn update_facing_indicators(
-    mut commands: Commands,
-    assets: Res<IndicatorAssets>,
+/// Draw yellow gizmo lines showing facing lock direction for selected friendly ships.
+fn draw_facing_gizmos(
+    mut gizmos: Gizmos,
     local_team: Res<LocalTeam>,
     secrets_query: Query<
         (&ShipSecretsOwner, Option<&FacingLocked>, Option<&FacingTarget>),
         With<ShipSecrets>,
     >,
-    ship_query: Query<(&Transform, &Team), With<Ship>>,
-    indicator_query: Query<(Entity, &FacingIndicator)>,
+    ship_query: Query<(&Transform, &Team), (With<Ship>, With<Selected>)>,
 ) {
-    // Despawn all existing facing indicators
-    for (entity, _) in &indicator_query {
-        commands.entity(entity).despawn();
-    }
+    let Some(my_team) = local_team.0 else { return };
 
-    let Some(my_team) = local_team.0 else { return; };
+    let line_color = Color::srgba(1.0, 0.9, 0.2, 0.7);
 
-    // Spawn facing indicator for locked local team ships only, reading from ShipSecrets
     for (owner, locked, facing) in &secrets_query {
         if locked.is_none() {
             continue;
@@ -890,24 +839,13 @@ fn update_facing_indicators(
             continue;
         };
 
-        let pos = transform.translation;
-        let arrow_len = 30.0;
-        let mid = Vec3::new(
-            pos.x + target.direction.x * arrow_len / 2.0,
-            1.0,
-            pos.z + target.direction.y * arrow_len / 2.0,
+        let pos = Vec3::new(transform.translation.x, 5.0, transform.translation.z);
+        let end = Vec3::new(
+            pos.x + target.direction.x * 30.0,
+            5.0,
+            pos.z + target.direction.y * 30.0,
         );
-
-        // Capsule3d is Y-axis aligned — rotate Y-axis to match facing direction in XZ
-        let direction_3d = Vec3::new(target.direction.x, 0.0, target.direction.y);
-        let rotation = Quat::from_rotation_arc(Vec3::Y, direction_3d.normalize());
-
-        commands.spawn((
-            FacingIndicator { owner: owner.0 },
-            Mesh3d(assets.facing_mesh.clone()),
-            MeshMaterial3d(assets.facing_material.clone()),
-            Transform::from_translation(mid).with_rotation(rotation),
-        ));
+        gizmos.line(pos, end, line_color);
     }
 }
 
