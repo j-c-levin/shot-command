@@ -316,13 +316,11 @@ pub struct EngineHealth {
     pub max_hp: u16,
     /// Countdown when engines are offline. When 0, hp restores to floor.
     pub offline_timer: f32,
-    /// Seconds until passive repair is allowed after last damage. Reset on each hit.
-    pub repair_cooldown: f32,
 }
 
 impl EngineHealth {
     pub fn new(max_hp: u16) -> Self {
-        Self { hp: max_hp, max_hp, offline_timer: 0.0, repair_cooldown: 0.0 }
+        Self { hp: max_hp, max_hp, offline_timer: 0.0 }
     }
 
     /// HP floor: 10% of max, minimum 1.

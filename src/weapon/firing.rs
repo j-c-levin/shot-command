@@ -264,6 +264,10 @@ pub fn process_missile_queue(
             }
 
             let mount = &mounts.0[mount_idx];
+            // Skip offline mounts (hp == 0)
+            if mount.hp == 0 {
+                continue;
+            }
             let Some(ref weapon) = mount.weapon else {
                 continue;
             };
