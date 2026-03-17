@@ -1093,6 +1093,7 @@ fn clear_lost_targets(
     mut commands: Commands,
     targeting_ships: Query<(Entity, &TargetDesignation, &Team), With<Ship>>,
     all_ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
+    radar_ships: Query<(&Transform, &Team, &Mounts), (With<Ship>, With<RadarActive>)>,
     target_transforms: Query<&Transform, With<Ship>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
@@ -1110,24 +1111,39 @@ fn clear_lost_targets(
 
         let target_pos = ship_xz_position(target_transform);
 
-        // Check if any friendly ship has LOS on the target
-        let any_friendly_sees_target =
-            all_ships
-                .iter()
-                .any(|(_, friendly_t, friendly_class, friendly_team)| {
-                    *friendly_team == *ship_team
-                        && is_in_los(
-                            ship_xz_position(friendly_t),
-                            target_pos,
-                            friendly_class.profile().vision_range,
-                            &asteroids,
-                        )
-                });
+        // Check if any friendly ship has visual LOS on the target
+        let visual_los = all_ships
+            .iter()
+            .any(|(_, friendly_t, friendly_class, friendly_team)| {
+                *friendly_team == *ship_team
+                    && is_in_los(
+                        ship_xz_position(friendly_t),
+                        target_pos,
+                        friendly_class.profile().vision_range,
+                        &asteroids,
+                    )
+            });
 
-        if !any_friendly_sees_target {
+        // Check if any friendly radar is tracking the target
+        let radar_tracked = radar_ships.iter().any(|(radar_t, radar_team, mounts)| {
+            if *radar_team != *ship_team {
+                return false;
+            }
+            let radar_pos = ship_xz_position(radar_t);
+            let radar_range = mounts.0.iter()
+                .filter_map(|m| m.weapon.as_ref())
+                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+                .map(|w| w.weapon_type.profile().firing_range)
+                .fold(0.0_f32, f32::max);
+            let distance = radar_pos.distance(target_pos);
+            distance <= radar_range
+                && !crate::fog::ray_blocked_by_asteroid(radar_pos, target_pos, &asteroids)
+        });
+
+        if !visual_los && !radar_tracked {
             commands.entity(ship_entity).remove::<TargetDesignation>();
             info!(
-                "Target {:?} lost LOS — clearing designation on ship {:?}",
+                "Target {:?} lost LOS+radar — clearing designation on ship {:?}",
                 target_designation.0, ship_entity
             );
         }
