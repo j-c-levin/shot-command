@@ -310,15 +310,19 @@ fn draw_control_point_gizmos(
             base_color.with_alpha(0.6)
         };
 
-        // Horizontal circle (XZ plane)
+        // Vertical circle in XY plane (facing +Z)
         gizmos.circle(
-            Isometry3d::new(center, Quat::from_rotation_x(std::f32::consts::FRAC_PI_2)),
+            Isometry3d::new(center, Quat::IDENTITY),
             r,
             color,
         );
 
-        // Vertical circle (XY plane, perpendicular)
-        gizmos.circle(Isometry3d::new(center, Quat::IDENTITY), r, color);
+        // Vertical circle in YZ plane (facing +X)
+        gizmos.circle(
+            Isometry3d::new(center, Quat::from_rotation_y(std::f32::consts::FRAC_PI_2)),
+            r,
+            color,
+        );
     }
 }
 
