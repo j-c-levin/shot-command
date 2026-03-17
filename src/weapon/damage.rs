@@ -1,5 +1,6 @@
 use std::collections::{HashMap, HashSet};
 
+use bevy::math::Vec2;
 use bevy::prelude::*;
 use bevy::time::Timer;
 use bevy_replicon::prelude::*;
@@ -7,6 +8,70 @@ use bevy_replicon::prelude::*;
 use crate::game::{Destroyed, DestroyTimer, GameState, Health, Team};
 use crate::net::commands::GameResult;
 use crate::ship::{Ship, ShipSecrets, ShipSecretsOwner};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HitZone {
+    Front,     // ±45° from nose. Primary: Hull.
+    Rear,      // ±45° from tail (135–180°). Primary: Engines.
+    Broadside, // 45–135° from nose. Primary: Component.
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DamageTarget {
+    Hull,
+    Engines,
+    Component,     // randomly chosen mounted component
+    HullOrEngines, // randomly pick hull or engines
+}
+
+/// Classify hit zone from incoming direction and ship forward.
+/// impact_dir: normalized direction projectile was traveling.
+/// ship_forward: normalized facing direction (XZ plane).
+pub fn classify_hit_zone(impact_dir: Vec2, ship_forward: Vec2) -> HitZone {
+    let from_attacker = -impact_dir.normalize_or_zero();
+    let fwd = ship_forward.normalize_or_zero();
+    let cos_angle = from_attacker.dot(fwd).clamp(-1.0, 1.0);
+    let angle = cos_angle.acos(); // 0 = nose-on, PI = tail-on
+
+    const FRONT_MAX: f32 = std::f32::consts::FRAC_PI_4; // 45°
+    const REAR_MIN: f32 = 3.0 * std::f32::consts::FRAC_PI_4; // 135°
+
+    if angle < FRONT_MAX {
+        HitZone::Front
+    } else if angle > REAR_MIN {
+        HitZone::Rear
+    } else {
+        HitZone::Broadside
+    }
+}
+
+/// Return (primary_target, primary_damage, secondary_target, secondary_damage).
+/// 70% to primary, 30% to secondary. Total always equals raw_damage.
+pub fn route_damage(zone: HitZone, raw_damage: u16) -> (DamageTarget, u16, DamageTarget, u16) {
+    let primary_dmg = raw_damage * 7 / 10;
+    let secondary_dmg = raw_damage - primary_dmg;
+
+    match zone {
+        HitZone::Front => (
+            DamageTarget::Hull,
+            primary_dmg,
+            DamageTarget::Component,
+            secondary_dmg,
+        ),
+        HitZone::Rear => (
+            DamageTarget::Engines,
+            primary_dmg,
+            DamageTarget::Component,
+            secondary_dmg,
+        ),
+        HitZone::Broadside => (
+            DamageTarget::Component,
+            primary_dmg,
+            DamageTarget::HullOrEngines,
+            secondary_dmg,
+        ),
+    }
+}
 
 pub struct DamagePlugin;
 
@@ -99,5 +164,98 @@ fn check_win_condition(
             message: GameResult { winning_team },
         });
         next_state.set(GameState::GameOver);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use bevy::math::Vec2;
+
+    #[test]
+    fn front_hit_nose_on() {
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let impact_dir = Vec2::new(0.0, -1.0);
+        assert_eq!(classify_hit_zone(impact_dir, ship_forward), HitZone::Front);
+    }
+
+    #[test]
+    fn rear_hit_tail_on() {
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let impact_dir = Vec2::new(0.0, 1.0);
+        assert_eq!(classify_hit_zone(impact_dir, ship_forward), HitZone::Rear);
+    }
+
+    #[test]
+    fn broadside_hit_right() {
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let impact_dir = Vec2::new(-1.0, 0.0);
+        assert_eq!(
+            classify_hit_zone(impact_dir, ship_forward),
+            HitZone::Broadside
+        );
+    }
+
+    #[test]
+    fn broadside_hit_left() {
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let impact_dir = Vec2::new(1.0, 0.0);
+        assert_eq!(
+            classify_hit_zone(impact_dir, ship_forward),
+            HitZone::Broadside
+        );
+    }
+
+    #[test]
+    fn front_boundary_44_degrees() {
+        let angle_rad = 44_f32.to_radians();
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let from_attacker = Vec2::new(angle_rad.sin(), angle_rad.cos());
+        let impact_dir = -from_attacker;
+        assert_eq!(classify_hit_zone(impact_dir, ship_forward), HitZone::Front);
+    }
+
+    #[test]
+    fn rear_boundary_136_degrees() {
+        let angle_rad = 136_f32.to_radians();
+        let ship_forward = Vec2::new(0.0, 1.0);
+        let from_attacker = Vec2::new(angle_rad.sin(), angle_rad.cos());
+        let impact_dir = -from_attacker;
+        assert_eq!(classify_hit_zone(impact_dir, ship_forward), HitZone::Rear);
+    }
+
+    #[test]
+    fn front_damage_split_70_30() {
+        let (primary, primary_dmg, _secondary, secondary_dmg) =
+            route_damage(HitZone::Front, 100);
+        assert_eq!(primary, DamageTarget::Hull);
+        assert_eq!(primary_dmg, 70);
+        assert_eq!(secondary_dmg, 30);
+    }
+
+    #[test]
+    fn rear_damage_split_70_30() {
+        let (primary, primary_dmg, _secondary, secondary_dmg) =
+            route_damage(HitZone::Rear, 100);
+        assert_eq!(primary, DamageTarget::Engines);
+        assert_eq!(primary_dmg, 70);
+        assert_eq!(secondary_dmg, 30);
+    }
+
+    #[test]
+    fn broadside_damage_split_70_30() {
+        let (primary, primary_dmg, _secondary, secondary_dmg) =
+            route_damage(HitZone::Broadside, 100);
+        assert_eq!(primary, DamageTarget::Component);
+        assert_eq!(primary_dmg, 70);
+        assert_eq!(secondary_dmg, 30);
+    }
+
+    #[test]
+    fn damage_split_totals_match_raw() {
+        for raw in [1u16, 2, 3, 10, 15, 99, 100] {
+            let (_, p, _, s) = route_damage(HitZone::Front, raw);
+            assert_eq!(p + s, raw, "total must equal raw for damage={raw}");
+        }
     }
 }
