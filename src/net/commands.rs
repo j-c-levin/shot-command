@@ -81,6 +81,13 @@ pub struct JoinSquadCommand {
     pub leader: Entity,
 }
 
+/// Client → server: toggle radar on/off for a ship.
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
+pub struct RadarToggleCommand {
+    #[entities]
+    pub ship: Entity,
+}
+
 /// Server → client: tells the client which team it controls.
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct TeamAssignment {

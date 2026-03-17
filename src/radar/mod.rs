@@ -2,7 +2,12 @@ pub mod contacts;
 pub mod rwr;
 pub mod visuals;
 
+use bevy::ecs::entity::MapEntities;
 use bevy::prelude::*;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+
+use crate::game::Team;
 
 /// Minimum SNR to appear as a signature (fuzzy blob on radar).
 pub const SIGNATURE_THRESHOLD: f32 = 0.1;
@@ -39,6 +44,56 @@ pub fn compute_snr(radar_range: f32, distance: f32, target_rcs: f32, aspect_fact
         return f32::MAX;
     }
     (radar_range * radar_range / (distance * distance)) * target_rcs * aspect_factor
+}
+
+/// Marker for a ship with its radar currently active. SERVER-ONLY — not replicated.
+#[derive(Component, Clone, Debug)]
+pub struct RadarActive;
+
+/// Replicated component on ShipSecrets to tell the owning team if radar is on.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default)]
+pub struct RadarActiveSecret(pub bool);
+
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactLevel {
+    Signature,
+    Track,
+}
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+pub struct RadarContact;
+
+/// Links a RadarContact back to the actual ship it represents.
+/// Uses #[derive(MapEntities)] with #[entities] for replication entity mapping.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, MapEntities)]
+pub struct ContactSourceShip(#[entities] pub Entity);
+
+#[derive(Component, Serialize, Deserialize, Clone, Debug)]
+pub struct ContactTeam(pub Team);
+
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct ContactId(pub u8);
+
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ContactKind {
+    Ship,
+    Missile,
+    Projectile,
+}
+
+#[derive(Resource, Default, Debug)]
+pub struct ContactTracker {
+    pub contacts: HashMap<(u8, Entity), Entity>,
+    pub next_id: HashMap<u8, u8>,
+}
+
+impl ContactTracker {
+    pub fn allocate_id(&mut self, team_id: u8) -> ContactId {
+        let id = self.next_id.entry(team_id).or_insert(1);
+        let contact_id = ContactId(*id);
+        *id = id.wrapping_add(1).max(1);
+        contact_id
+    }
 }
 
 #[cfg(test)]
