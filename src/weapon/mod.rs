@@ -30,6 +30,15 @@ impl MountSize {
     pub fn fits(self, weapon_size: MountSize) -> bool {
         self.rank() >= weapon_size.rank()
     }
+
+    /// Component HP for this mount size. Larger mounts are tougher.
+    pub fn hp(self) -> u16 {
+        match self {
+            MountSize::Large => 150,
+            MountSize::Medium => 100,
+            MountSize::Small => 75,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

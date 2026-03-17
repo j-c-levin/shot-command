@@ -66,7 +66,6 @@ pub enum ShipClass {
 pub struct ShipProfile {
     pub hp: u16,
     pub engine_hp: u16,
-    pub component_hp: u16,
     pub acceleration: f32,
     pub thruster_factor: f32,
     pub turn_rate: f32,
@@ -190,7 +189,7 @@ impl ShipClass {
             ShipClass::Battleship => ShipProfile {
                 hp: 1200,
                 engine_hp: 400,
-                component_hp: 150,
+
                 acceleration: 6.0,
                 thruster_factor: 0.2,
                 turn_rate: 0.8,
@@ -203,7 +202,7 @@ impl ShipClass {
             ShipClass::Destroyer => ShipProfile {
                 hp: 600,
                 engine_hp: 300,
-                component_hp: 100,
+
                 acceleration: 10.0,
                 thruster_factor: 0.3,
                 turn_rate: 1.5,
@@ -216,7 +215,7 @@ impl ShipClass {
             ShipClass::Scout => ShipProfile {
                 hp: 300,
                 engine_hp: 200,
-                component_hp: 75,
+
                 acceleration: 14.0,
                 thruster_factor: 0.5,
                 turn_rate: 3.0,
@@ -771,7 +770,6 @@ pub fn spawn_server_ship(
 ) -> Entity {
     let class = spec.class;
     let layout = class.mount_layout();
-    let component_hp = class.profile().component_hp;
     let mounts: Vec<Mount> = layout
         .into_iter()
         .zip(spec.loadout.iter())
@@ -788,7 +786,7 @@ pub fn spawn_server_ship(
                     fire_delay: 0.0,
                 }
             });
-            let hp = if weapon.is_some() { component_hp } else { 0 };
+            let hp = if weapon.is_some() { size.hp() } else { 0 };
             Mount::new(size, offset, weapon, hp)
         })
         .collect();
@@ -1294,7 +1292,7 @@ mod tests {
         let p = ShipClass::Battleship.profile();
         assert_eq!(p.hp, 1200);
         assert_eq!(p.engine_hp, 400);
-        assert_eq!(p.component_hp, 150);
+        // component_hp removed — HP is per mount size, not per ship class
     }
 
     #[test]
@@ -1302,7 +1300,7 @@ mod tests {
         let p = ShipClass::Destroyer.profile();
         assert_eq!(p.hp, 600);
         assert_eq!(p.engine_hp, 300);
-        assert_eq!(p.component_hp, 100);
+        // component_hp removed — HP is per mount size, not per ship class
     }
 
     #[test]
@@ -1310,7 +1308,7 @@ mod tests {
         let p = ShipClass::Scout.profile();
         assert_eq!(p.hp, 300);
         assert_eq!(p.engine_hp, 200);
-        assert_eq!(p.component_hp, 75);
+        // component_hp removed — HP is per mount size, not per ship class
     }
 
     #[test]
