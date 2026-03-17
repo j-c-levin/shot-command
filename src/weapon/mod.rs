@@ -37,6 +37,7 @@ pub enum WeaponCategory {
     Cannon,
     Missile,
     PointDefense,
+    Sensor,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -48,6 +49,8 @@ pub enum WeaponType {
     LightVLS,
     LaserPD,
     CWIS,
+    SearchRadar,
+    NavRadar,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -80,6 +83,7 @@ impl WeaponType {
             }
             WeaponType::HeavyVLS | WeaponType::LightVLS => WeaponCategory::Missile,
             WeaponType::LaserPD | WeaponType::CWIS => WeaponCategory::PointDefense,
+            WeaponType::SearchRadar | WeaponType::NavRadar => WeaponCategory::Sensor,
         }
     }
 
@@ -169,6 +173,30 @@ impl WeaponType {
                 missile_fuel: 0.0,
                 pd_cylinder_radius: 100.0,
             },
+            WeaponType::SearchRadar => WeaponProfile {
+                fire_rate_secs: 0.0,
+                burst_count: 0,
+                damage: 0,
+                firing_range: 800.0,
+                projectile_speed: 0.0,
+                spread_degrees: 0.0,
+                arc: FiringArc::Turret,
+                tubes: 0,
+                missile_fuel: 0.0,
+                pd_cylinder_radius: 0.0,
+            },
+            WeaponType::NavRadar => WeaponProfile {
+                fire_rate_secs: 0.0,
+                burst_count: 0,
+                damage: 0,
+                firing_range: 500.0,
+                projectile_speed: 0.0,
+                spread_degrees: 0.0,
+                arc: FiringArc::Turret,
+                tubes: 0,
+                missile_fuel: 0.0,
+                pd_cylinder_radius: 0.0,
+            },
         }
     }
 
@@ -181,6 +209,8 @@ impl WeaponType {
             WeaponType::LightVLS => MountSize::Medium,
             WeaponType::LaserPD => MountSize::Medium,
             WeaponType::CWIS => MountSize::Small,
+            WeaponType::SearchRadar => MountSize::Medium,
+            WeaponType::NavRadar => MountSize::Small,
         }
     }
 }
@@ -367,5 +397,35 @@ mod tests {
         assert_eq!(WeaponType::LightVLS.category(), WeaponCategory::Missile);
         assert_eq!(WeaponType::LaserPD.category(), WeaponCategory::PointDefense);
         assert_eq!(WeaponType::CWIS.category(), WeaponCategory::PointDefense);
+    }
+
+    #[test]
+    fn search_radar_is_sensor() {
+        assert_eq!(WeaponType::SearchRadar.category(), WeaponCategory::Sensor);
+    }
+
+    #[test]
+    fn nav_radar_is_sensor() {
+        assert_eq!(WeaponType::NavRadar.category(), WeaponCategory::Sensor);
+    }
+
+    #[test]
+    fn search_radar_mount_size_medium() {
+        assert_eq!(WeaponType::SearchRadar.mount_size(), MountSize::Medium);
+    }
+
+    #[test]
+    fn nav_radar_mount_size_small() {
+        assert_eq!(WeaponType::NavRadar.mount_size(), MountSize::Small);
+    }
+
+    #[test]
+    fn search_radar_range_800() {
+        assert_eq!(WeaponType::SearchRadar.profile().firing_range, 800.0);
+    }
+
+    #[test]
+    fn nav_radar_range_500() {
+        assert_eq!(WeaponType::NavRadar.profile().firing_range, 500.0);
     }
 }

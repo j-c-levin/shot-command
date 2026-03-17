@@ -38,6 +38,8 @@ pub fn weapon_cost(weapon: WeaponType) -> u16 {
         WeaponType::LightVLS => 25,
         WeaponType::LaserPD => 30,
         WeaponType::CWIS => 15,
+        WeaponType::SearchRadar => 35,
+        WeaponType::NavRadar => 20,
     }
 }
 
@@ -259,6 +261,16 @@ mod tests {
     #[test]
     fn validate_empty_fleet() {
         assert_eq!(validate_fleet(&[]), Err(FleetError::EmptyFleet));
+    }
+
+    #[test]
+    fn search_radar_cost() {
+        assert_eq!(weapon_cost(WeaponType::SearchRadar), 35);
+    }
+
+    #[test]
+    fn nav_radar_cost() {
+        assert_eq!(weapon_cost(WeaponType::NavRadar), 20);
     }
 
     #[test]

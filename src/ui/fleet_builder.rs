@@ -34,13 +34,15 @@ const ALL_SHIP_CLASSES: [ShipClass; 3] = [
     ShipClass::Scout,
 ];
 
-const ALL_WEAPONS: [WeaponType; 7] = [
+const ALL_WEAPONS: [WeaponType; 9] = [
     WeaponType::Railgun,
     WeaponType::HeavyVLS,
     WeaponType::HeavyCannon,
+    WeaponType::SearchRadar,
     WeaponType::LaserPD,
     WeaponType::LightVLS,
     WeaponType::Cannon,
+    WeaponType::NavRadar,
     WeaponType::CWIS,
 ];
 
