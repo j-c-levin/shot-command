@@ -565,41 +565,15 @@ pub fn update_squad_highlight_indicators(
     }
 }
 
-/// System that draws a cyan connection line from a selected follower to its leader.
-pub fn update_squad_connection_lines(
-    mut commands: Commands,
-    assets: Res<SquadIndicatorAssets>,
-    selected_query: Query<(Entity, &Transform), (With<crate::ship::Selected>, With<Ship>)>,
-    secrets_query: Query<(&ShipSecretsOwner, &crate::ship::SquadMember), With<ShipSecrets>>,
-    ship_query: Query<&Transform, With<Ship>>,
-    line_query: Query<Entity, With<SquadConnectionLine>>,
+/// Helper: spawn a cyan connection line between two world XZ positions.
+fn spawn_connection_line(
+    commands: &mut Commands,
+    assets: &SquadIndicatorAssets,
+    from_pos: Vec3,
+    to_pos: Vec3,
 ) {
-    // Despawn all existing lines
-    for entity in &line_query {
-        commands.entity(entity).despawn();
-    }
-
-    // Check if selected ship is a squad follower (via ShipSecrets)
-    let Some((selected_entity, selected_tf)) = selected_query.iter().next() else {
-        return;
-    };
-
-    let squad_member = secrets_query
-        .iter()
-        .find(|(owner, _)| owner.0 == selected_entity)
-        .map(|(_, sm)| sm);
-
-    let Some(squad) = squad_member else {
-        return;
-    };
-
-    let Ok(leader_tf) = ship_query.get(squad.leader) else {
-        return;
-    };
-
-    // Draw a cyan line from follower to leader
-    let from = Vec3::new(selected_tf.translation.x, 1.0, selected_tf.translation.z);
-    let to = Vec3::new(leader_tf.translation.x, 1.0, leader_tf.translation.z);
+    let from = Vec3::new(from_pos.x, 1.0, from_pos.z);
+    let to = Vec3::new(to_pos.x, 1.0, to_pos.z);
     let diff = to - from;
     let length = diff.length();
     if length < 1.0 {
@@ -619,6 +593,113 @@ pub fn update_squad_connection_lines(
             .with_scale(Vec3::new(1.0, length, 1.0)),
         Pickable::IGNORE,
     ));
+}
+
+/// Marker for squad info text labels (e.g. "Following: 2" or "Squad: 3").
+#[derive(Component)]
+pub struct SquadInfoLabel;
+
+/// System that draws cyan connection lines for squad relationships:
+/// - Selected follower -> line to leader
+/// - Selected leader -> lines from all highlighted followers to leader
+/// Also shows squad info text near the selected ship.
+pub fn update_squad_connection_lines(
+    mut commands: Commands,
+    assets: Res<SquadIndicatorAssets>,
+    selected_query: Query<(Entity, &Transform), (With<crate::ship::Selected>, With<Ship>)>,
+    secrets_query: Query<(&ShipSecretsOwner, Option<&crate::ship::SquadMember>, Option<&ShipNumber>), With<ShipSecrets>>,
+    highlight_query: Query<(Entity, &Transform), With<SquadHighlight>>,
+    ship_query: Query<&Transform, With<Ship>>,
+    line_query: Query<Entity, With<SquadConnectionLine>>,
+    label_query: Query<Entity, With<SquadInfoLabel>>,
+    camera_query: Query<(&Camera, &GlobalTransform)>,
+) {
+    // Despawn all existing lines and labels
+    for entity in &line_query {
+        commands.entity(entity).despawn();
+    }
+    for entity in &label_query {
+        commands.entity(entity).despawn();
+    }
+
+    let Some((selected_entity, selected_tf)) = selected_query.iter().next() else {
+        return;
+    };
+
+    // Check if selected ship is a squad follower
+    let selected_squad = secrets_query
+        .iter()
+        .find(|(owner, _, _)| owner.0 == selected_entity)
+        .and_then(|(_, sm, _)| sm.cloned());
+
+    if let Some(squad) = &selected_squad {
+        // Selected ship is a follower — draw line to leader
+        if let Ok(leader_tf) = ship_query.get(squad.leader) {
+            spawn_connection_line(&mut commands, &assets, selected_tf.translation, leader_tf.translation);
+
+            // Show "Following: N" where N is the leader's ShipNumber
+            let leader_number = secrets_query
+                .iter()
+                .find(|(owner, _, _)| owner.0 == squad.leader)
+                .and_then(|(_, _, sn)| sn.map(|n| n.0))
+                .unwrap_or(0);
+
+            if leader_number > 0 {
+                if let Ok((camera, camera_gt)) = camera_query.single() {
+                    let label_pos = selected_tf.translation + Vec3::Y * 15.0;
+                    if let Ok(screen_pos) = camera.world_to_viewport(camera_gt, label_pos) {
+                        commands.spawn((
+                            SquadInfoLabel,
+                            Text::new(format!("Following: {}", leader_number)),
+                            TextFont { font_size: 12.0, ..default() },
+                            TextColor(Color::srgba(0.2, 0.9, 0.9, 0.8)),
+                            Node {
+                                position_type: PositionType::Absolute,
+                                left: Val::Px(screen_pos.x - 30.0),
+                                top: Val::Px(screen_pos.y - 8.0),
+                                ..default()
+                            },
+                            Pickable::IGNORE,
+                        ));
+                    }
+                }
+            }
+        }
+    }
+
+    // If selected ship is a leader, draw lines from highlighted followers to leader
+    let has_followers = highlight_query.iter().next().is_some();
+    if has_followers {
+        // Count followers for info label
+        let follower_count = highlight_query.iter().count();
+
+        for (_follower_entity, follower_tf) in &highlight_query {
+            spawn_connection_line(&mut commands, &assets, follower_tf.translation, selected_tf.translation);
+        }
+
+        // Show follower count near leader
+        if let Ok((camera, camera_gt)) = camera_query.single() {
+            let label_pos = selected_tf.translation + Vec3::Y * 15.0;
+            if let Ok(screen_pos) = camera.world_to_viewport(camera_gt, label_pos) {
+                // Only show if we didn't already spawn a "Following" label
+                if selected_squad.is_none() {
+                    commands.spawn((
+                        SquadInfoLabel,
+                        Text::new(format!("Squad: {}", follower_count)),
+                        TextFont { font_size: 12.0, ..default() },
+                        TextColor(Color::srgba(0.2, 0.9, 0.9, 0.8)),
+                        Node {
+                            position_type: PositionType::Absolute,
+                            left: Val::Px(screen_pos.x - 20.0),
+                            top: Val::Px(screen_pos.y - 8.0),
+                            ..default()
+                        },
+                        Pickable::IGNORE,
+                    ));
+                }
+            }
+        }
+    }
 }
 
 // ── LOS Circle (Move Mode) ─────────────────────────────────────────────
