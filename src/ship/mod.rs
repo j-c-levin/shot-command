@@ -263,6 +263,11 @@ pub struct SquadMember {
     pub offset: Vec2,
 }
 
+/// Caps a ship's effective top_speed to the slowest member in its squad.
+/// Applied to all members (leader + followers) when a squad exists.
+#[derive(Component, Clone, Copy, Debug, Serialize, Deserialize)]
+pub struct SquadSpeedLimit(pub f32);
+
 impl MapEntities for SquadMember {
     fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, mapper: &mut M) {
         self.leader = mapper.get_mapped(self.leader);
@@ -590,7 +595,7 @@ fn turn_ships(
 fn apply_thrust(
     time: Res<Time>,
     mut query: Query<
-        (&Transform, &mut Velocity, &ShipClass, &WaypointQueue),
+        (&Transform, &mut Velocity, &ShipClass, &WaypointQueue, Option<&SquadSpeedLimit>),
         With<Ship>,
     >,
 ) {
@@ -599,10 +604,17 @@ fn apply_thrust(
         return;
     }
 
-    for (transform, mut velocity, class, waypoints) in &mut query {
+    for (transform, mut velocity, class, waypoints, speed_limit) in &mut query {
         let profile = class.profile();
         let facing = ship_facing_direction(transform);
         let speed = velocity.linear.length();
+
+        // Effective top speed: capped by squad speed limit if present
+        let effective_top_speed = if let Some(limit) = speed_limit {
+            profile.top_speed.min(limit.0)
+        } else {
+            profile.top_speed
+        };
 
         // No waypoints — always brake to a stop
         if waypoints.waypoints.is_empty() {
@@ -645,7 +657,7 @@ fn apply_thrust(
         let desired = desired_velocity_to_target(
             to_target,
             dist,
-            profile.top_speed,
+            effective_top_speed,
             min_decel,
             is_last,
         );
@@ -661,10 +673,10 @@ fn apply_thrust(
 
         velocity.linear += correction;
 
-        // Clamp to top speed
+        // Clamp to effective top speed
         let new_speed = velocity.linear.length();
-        if new_speed > profile.top_speed {
-            velocity.linear = velocity.linear.normalize() * profile.top_speed;
+        if new_speed > effective_top_speed {
+            velocity.linear = velocity.linear.normalize() * effective_top_speed;
         }
     }
 }
@@ -1221,5 +1233,27 @@ mod tests {
         // Default ships (not from fleet list) get ShipNumber(0)
         let sn = ShipNumber(0);
         assert_eq!(sn.0, 0);
+    }
+
+    #[test]
+    fn squad_speed_limit_caps_effective_speed() {
+        // Scout top_speed is much higher than battleship
+        let scout = ShipClass::Scout.profile();
+        let bb = ShipClass::Battleship.profile();
+        assert!(scout.top_speed > bb.top_speed);
+
+        // With squad speed limit set to battleship speed, effective top is capped
+        let limit = SquadSpeedLimit(bb.top_speed);
+        let effective = scout.top_speed.min(limit.0);
+        assert!((effective - bb.top_speed).abs() < 0.01);
+    }
+
+    #[test]
+    fn squad_speed_limit_no_effect_when_slower() {
+        // Battleship is already slower than its limit
+        let bb = ShipClass::Battleship.profile();
+        let limit = SquadSpeedLimit(1000.0); // very high limit
+        let effective = bb.top_speed.min(limit.0);
+        assert!((effective - bb.top_speed).abs() < 0.01);
     }
 }

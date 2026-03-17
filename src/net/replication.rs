@@ -17,7 +17,7 @@ use crate::net::commands::{
 };
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
-    SquadMember, TargetDesignation, WaypointQueue,
+    SquadMember, SquadSpeedLimit, TargetDesignation, WaypointQueue,
 };
 use crate::weapon::{MissileQueue, Mounts};
 use crate::weapon::missile::{
@@ -71,7 +71,8 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<TargetDesignation>()
             .replicate::<MissileQueue>()
             .replicate::<ShipNumber>()
-            .replicate::<SquadMember>();
+            .replicate::<SquadMember>()
+            .replicate::<SquadSpeedLimit>();
 
         // ── Client→server triggers ─────────────────────────────────────
         app.add_mapped_client_event::<MoveCommand>(Channel::Ordered)

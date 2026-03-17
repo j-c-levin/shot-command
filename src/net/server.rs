@@ -28,7 +28,7 @@ use crate::net::commands::{
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
     FacingLocked, FacingTarget, Ship, ShipClass, ShipSecrets, ShipSecretsOwner, SquadMember,
-    TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
+    SquadSpeedLimit, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
 use crate::weapon::missile::{Missile, MissileOwner};
@@ -384,6 +384,7 @@ fn handle_move_command(
     team_query: Query<&Team, With<Ship>>,
     mut waypoint_query: Query<(&mut WaypointQueue, Option<&SquadMember>), With<Ship>>,
     follower_query: Query<(Entity, &SquadMember), With<Ship>>,
+    class_query: Query<&ShipClass, With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -399,8 +400,12 @@ fn handle_move_command(
         let Ok((_, squad)) = waypoint_query.get(cmd.ship) else {
             return;
         };
-        if squad.is_some() {
+        if let Some(squad) = squad {
+            let old_leader = squad.leader;
             commands.entity(cmd.ship).remove::<SquadMember>();
+            commands.entity(cmd.ship).remove::<SquadSpeedLimit>();
+            // Recompute speed limit for remaining squad members
+            recompute_squad_speed_limit(&mut commands, old_leader, &class_query, &follower_query);
             info!("Ship {:?} received direct move — leaving squad", cmd.ship);
         }
     }
@@ -696,6 +701,7 @@ fn handle_join_squad(
     team_query: Query<&Team, With<Ship>>,
     transform_query: Query<&Transform, With<Ship>>,
     squad_query: Query<(Entity, &SquadMember), With<Ship>>,
+    class_query: Query<&ShipClass, With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -788,10 +794,49 @@ fn handle_join_squad(
         offset,
     });
 
+    // Recompute squad speed limit for the new leader's squad
+    recompute_squad_speed_limit(&mut commands, cmd.leader, &class_query, &squad_query);
+
     info!(
         "JoinSquadCommand applied: ship {:?} joined squad of {:?} with offset ({:.0}, {:.0})",
         cmd.ship, cmd.leader, offset.x, offset.y
     );
+}
+
+/// Recompute SquadSpeedLimit for all members of a squad led by `leader`.
+/// Sets the limit to the minimum top_speed across leader + all followers.
+/// If the leader has no followers, removes the limit from the leader.
+fn recompute_squad_speed_limit(
+    commands: &mut Commands,
+    leader: Entity,
+    class_query: &Query<&ShipClass, With<Ship>>,
+    squad_query: &Query<(Entity, &SquadMember), With<Ship>>,
+) {
+    let Ok(leader_class) = class_query.get(leader) else {
+        return;
+    };
+
+    let mut min_speed = leader_class.profile().top_speed;
+    let mut members: Vec<Entity> = vec![leader];
+
+    for (follower_entity, squad) in squad_query.iter() {
+        if squad.leader == leader {
+            members.push(follower_entity);
+            if let Ok(follower_class) = class_query.get(follower_entity) {
+                min_speed = min_speed.min(follower_class.profile().top_speed);
+            }
+        }
+    }
+
+    if members.len() <= 1 {
+        // No followers — remove speed limit from leader
+        commands.entity(leader).remove::<SquadSpeedLimit>();
+        return;
+    }
+
+    for &member in &members {
+        commands.entity(member).insert(SquadSpeedLimit(min_speed));
+    }
 }
 
 /// Remove SquadMember from ships whose leader no longer exists or is destroyed,
@@ -800,19 +845,31 @@ fn cleanup_orphan_squad_members(
     mut commands: Commands,
     squad_query: Query<(Entity, &SquadMember), With<Ship>>,
     ship_query: Query<Entity, With<Ship>>,
+    class_query: Query<&ShipClass, With<Ship>>,
     destroyed_query: Query<Entity, With<crate::game::Destroyed>>,
 ) {
+    let mut affected_leaders: Vec<Entity> = Vec::new();
+
     for (entity, squad) in &squad_query {
         let leader_gone = ship_query.get(squad.leader).is_err();
         let leader_destroyed = destroyed_query.get(squad.leader).is_ok();
         let self_destroyed = destroyed_query.get(entity).is_ok();
         if leader_gone || leader_destroyed || self_destroyed {
             commands.entity(entity).remove::<SquadMember>();
+            commands.entity(entity).remove::<SquadSpeedLimit>();
+            if !leader_gone && !leader_destroyed {
+                affected_leaders.push(squad.leader);
+            }
             info!(
                 "Orphan cleanup: ship {:?} lost leader {:?}",
                 entity, squad.leader
             );
         }
+    }
+
+    // Recompute speed limits for affected leaders
+    for leader in affected_leaders {
+        recompute_squad_speed_limit(&mut commands, leader, &class_query, &squad_query);
     }
 }
 
@@ -894,6 +951,7 @@ fn sync_ship_secrets(
             Option<&TargetDesignation>,
             &MissileQueue,
             Option<&SquadMember>,
+            Option<&SquadSpeedLimit>,
         ),
         With<Ship>,
     >,
@@ -903,7 +961,7 @@ fn sync_ship_secrets(
     >,
 ) {
     for (secrets_entity, owner, mut secrets_waypoints, mut secrets_missiles) in &mut secrets_query {
-        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles, ship_squad)) =
+        let Ok((ship_waypoints, ship_facing, ship_locked, ship_target, ship_missiles, ship_squad, ship_speed_limit)) =
             ship_query.get(owner.0)
         else {
             continue;
@@ -943,6 +1001,13 @@ fn sync_ship_secrets(
             commands.entity(secrets_entity).insert(squad.clone());
         } else {
             commands.entity(secrets_entity).remove::<SquadMember>();
+        }
+
+        // Sync SquadSpeedLimit: insert or remove on the ShipSecrets entity
+        if let Some(limit) = ship_speed_limit {
+            commands.entity(secrets_entity).insert(*limit);
+        } else {
+            commands.entity(secrets_entity).remove::<SquadSpeedLimit>();
         }
     }
 }
