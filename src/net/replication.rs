@@ -22,8 +22,8 @@ use crate::radar::{
 };
 use crate::radar::rwr::RwrBearings;
 use crate::ship::{
-    FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
-    SquadMember, SquadSpeedLimit, TargetDesignation, WaypointQueue,
+    EngineHealth, FacingLocked, FacingTarget, Ship, ShipClass, ShipNumber, ShipSecrets,
+    ShipSecretsOwner, SquadMember, SquadSpeedLimit, TargetDesignation, WaypointQueue,
 };
 use crate::weapon::{MissileQueue, Mounts};
 use crate::weapon::missile::{
@@ -47,6 +47,7 @@ impl Plugin for SharedReplicationPlugin {
             .replicate::<Team>()
             .replicate::<Transform>()
             .replicate::<Health>()
+            .replicate::<EngineHealth>()
             .replicate::<Mounts>()
             .replicate::<Asteroid>()
             .replicate::<AsteroidSize>()

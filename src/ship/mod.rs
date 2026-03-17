@@ -770,13 +770,12 @@ pub fn spawn_server_ship(
 ) -> Entity {
     let class = spec.class;
     let layout = class.mount_layout();
+    let component_hp = class.profile().component_hp;
     let mounts: Vec<Mount> = layout
         .into_iter()
         .zip(spec.loadout.iter())
-        .map(|((size, offset), weapon_opt)| Mount {
-            size,
-            offset,
-            weapon: weapon_opt.map(|wt| {
+        .map(|((size, offset), weapon_opt)| {
+            let weapon = weapon_opt.map(|wt| {
                 let profile = wt.profile();
                 WeaponState {
                     weapon_type: wt,
@@ -787,10 +786,9 @@ pub fn spawn_server_ship(
                     tube_reload_timer: 0.0,
                     fire_delay: 0.0,
                 }
-            }),
-            hp: 0,
-            max_hp: 0,
-            offline_timer: 0.0,
+            });
+            let hp = if weapon.is_some() { component_hp } else { 0 };
+            Mount::new(size, offset, weapon, hp)
         })
         .collect();
 
@@ -805,6 +803,8 @@ pub fn spawn_server_ship(
             MissileQueue::default(),
             Transform::from_xyz(position.x, 5.0, position.y),
             Health { hp: class.profile().hp },
+            EngineHealth::new(class.profile().engine_hp),
+            RepairCooldown::default(),
             Mounts(mounts),
         ))
         .id();
