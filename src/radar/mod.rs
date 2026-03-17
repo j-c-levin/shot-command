@@ -1,0 +1,137 @@
+pub mod contacts;
+pub mod rwr;
+pub mod visuals;
+
+use bevy::prelude::*;
+
+/// Minimum SNR to appear as a signature (fuzzy blob on radar).
+pub const SIGNATURE_THRESHOLD: f32 = 0.1;
+/// Minimum SNR to achieve a track (precise position and heading).
+pub const TRACK_THRESHOLD: f32 = 0.4;
+/// Radius of the fuzzy position blob for signature-level contacts.
+pub const SIGNATURE_FUZZ_RADIUS: f32 = 75.0;
+/// Radar cross-section for missiles.
+pub const MISSILE_RCS: f32 = 0.05;
+/// Radar cross-section for projectiles.
+pub const PROJECTILE_RCS: f32 = 0.02;
+
+/// Compute the aspect factor for radar detection.
+///
+/// Broadside presentation (perpendicular to radar bearing) yields 1.0.
+/// Nose-on or tail-on (parallel to radar bearing) yields 0.25.
+/// Uses cross product magnitude to measure perpendicularity.
+pub fn compute_aspect_factor(radar_bearing: Vec2, target_facing: Vec2) -> f32 {
+    let cross = radar_bearing.x * target_facing.y - radar_bearing.y * target_facing.x;
+    let sin_angle = cross.abs().clamp(0.0, 1.0);
+    0.25 + 0.75 * sin_angle
+}
+
+/// Compute signal-to-noise ratio for radar detection.
+///
+/// Formula: (radar_range² / distance²) × target_rcs × aspect_factor
+///
+/// Returns a value where:
+/// - >= TRACK_THRESHOLD means precise track
+/// - >= SIGNATURE_THRESHOLD means fuzzy signature
+/// - < SIGNATURE_THRESHOLD means undetected
+pub fn compute_snr(radar_range: f32, distance: f32, target_rcs: f32, aspect_factor: f32) -> f32 {
+    if distance <= 0.0 {
+        return f32::MAX;
+    }
+    (radar_range * radar_range / (distance * distance)) * target_rcs * aspect_factor
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn aspect_broadside_is_max() {
+        let factor = compute_aspect_factor(Vec2::X, Vec2::Y);
+        assert!((factor - 1.0).abs() < 0.01);
+    }
+
+    #[test]
+    fn aspect_nose_on_is_min() {
+        let factor = compute_aspect_factor(Vec2::X, Vec2::NEG_X);
+        assert!((factor - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn aspect_tail_on_is_min() {
+        let factor = compute_aspect_factor(Vec2::X, Vec2::X);
+        assert!((factor - 0.25).abs() < 0.01);
+    }
+
+    #[test]
+    fn aspect_factor_range() {
+        for angle_deg in (0..360).step_by(10) {
+            let angle = (angle_deg as f32).to_radians();
+            let target_facing = Vec2::new(angle.cos(), angle.sin());
+            let factor = compute_aspect_factor(Vec2::X, target_facing);
+            assert!(factor >= 0.24, "factor {factor} below min at {angle_deg}°");
+            assert!(factor <= 1.01, "factor {factor} above max at {angle_deg}°");
+        }
+    }
+
+    #[test]
+    fn snr_at_zero_distance_is_high() {
+        let snr = compute_snr(800.0, 1.0, 1.0, 1.0);
+        assert!(snr > TRACK_THRESHOLD);
+    }
+
+    #[test]
+    fn snr_decreases_with_distance() {
+        let near = compute_snr(800.0, 200.0, 1.0, 1.0);
+        let far = compute_snr(800.0, 600.0, 1.0, 1.0);
+        assert!(near > far);
+    }
+
+    #[test]
+    fn snr_increases_with_rcs() {
+        let small = compute_snr(800.0, 400.0, 0.25, 1.0);
+        let large = compute_snr(800.0, 400.0, 1.0, 1.0);
+        assert!(large > small);
+    }
+
+    #[test]
+    fn snr_increases_with_aspect() {
+        let nose = compute_snr(800.0, 400.0, 1.0, 0.25);
+        let broadside = compute_snr(800.0, 400.0, 1.0, 1.0);
+        assert!(broadside > nose);
+    }
+
+    #[test]
+    fn battleship_broadside_tracked_at_800() {
+        let snr = compute_snr(800.0, 800.0, 1.0, 1.0);
+        assert!(
+            snr >= TRACK_THRESHOLD,
+            "BB broadside at max range should be tracked, got {snr}"
+        );
+    }
+
+    #[test]
+    fn scout_nose_on_not_tracked_at_800() {
+        let snr = compute_snr(800.0, 800.0, 0.25, 0.25);
+        assert!(
+            snr < TRACK_THRESHOLD,
+            "Scout nose-on at max range should not be tracked, got {snr}"
+        );
+    }
+
+    #[test]
+    fn scout_nose_on_signature_at_500() {
+        let snr = compute_snr(800.0, 500.0, 0.25, 0.25);
+        assert!(
+            snr >= SIGNATURE_THRESHOLD,
+            "Scout nose-on at 500m should be signature, got {snr}"
+        );
+    }
+
+    #[test]
+    fn nav_radar_shorter_range() {
+        let search = compute_snr(800.0, 400.0, 0.5, 1.0);
+        let nav = compute_snr(500.0, 400.0, 0.5, 1.0);
+        assert!(search > nav);
+    }
+}
