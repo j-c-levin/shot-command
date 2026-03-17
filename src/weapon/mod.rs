@@ -126,7 +126,7 @@ impl WeaponType {
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::HeavyVLS => WeaponProfile {
-                fire_rate_secs: 10.0, // full reload time after all tubes spent
+                fire_rate_secs: 3.0, // per-tube reload time
                 burst_count: 1,
                 damage: 30,
                 firing_range: 500.0,
@@ -138,7 +138,7 @@ impl WeaponType {
                 pd_cylinder_radius: 0.0,
             },
             WeaponType::LightVLS => WeaponProfile {
-                fire_rate_secs: 10.0, // full reload time after all tubes spent
+                fire_rate_secs: 3.0, // per-tube reload time
                 burst_count: 1,
                 damage: 30,
                 firing_range: 500.0,
@@ -315,7 +315,7 @@ mod tests {
         let p = WeaponType::HeavyVLS.profile();
         assert_eq!(p.damage, 30);
         assert_eq!(p.burst_count, 1);
-        assert_eq!(p.fire_rate_secs, 10.0);
+        assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 8);
         assert_eq!(p.projectile_speed, 150.0);
@@ -328,7 +328,7 @@ mod tests {
         let p = WeaponType::LightVLS.profile();
         assert_eq!(p.damage, 30);
         assert_eq!(p.burst_count, 1);
-        assert_eq!(p.fire_rate_secs, 10.0);
+        assert_eq!(p.fire_rate_secs, 3.0);
         assert_eq!(p.firing_range, 500.0);
         assert_eq!(p.tubes, 4);
         assert_eq!(p.projectile_speed, 150.0);

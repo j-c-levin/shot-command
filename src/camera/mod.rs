@@ -12,11 +12,16 @@ impl Plugin for CameraPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(CameraSettings::default())
             .insert_resource(CameraLookAt(Vec3::ZERO))
+            .insert_resource(NeedsCameraCenter(false))
             .add_systems(Startup, spawn_camera)
-            .add_systems(OnEnter(GameState::Playing), center_camera_on_fleet)
-            .add_systems(Update, (camera_pan, camera_zoom, camera_rotate));
+            .add_systems(OnEnter(GameState::Playing), flag_camera_center)
+            .add_systems(Update, (camera_pan, camera_zoom, camera_rotate, deferred_center_camera));
     }
 }
+
+/// Flag that triggers deferred camera centering (waits for ships to replicate).
+#[derive(Resource)]
+struct NeedsCameraCenter(bool);
 
 #[derive(Component)]
 pub struct GameCamera;
@@ -279,18 +284,22 @@ fn camera_rotate(
     transform.look_at(look_at.0, Vec3::Y);
 }
 
-/// Center the camera above the player's fleet when entering Playing.
-/// TeamAssignment is sent by the server after fleet spawning, so ships
-/// should already be replicated by the time this runs.
-fn center_camera_on_fleet(
+fn flag_camera_center(mut needs: ResMut<NeedsCameraCenter>) {
+    needs.0 = true;
+}
+
+/// Deferred camera centering — waits until own-team ships exist (replication delay).
+fn deferred_center_camera(
+    mut needs: ResMut<NeedsCameraCenter>,
     local_team: Res<LocalTeam>,
     mut look_at: ResMut<CameraLookAt>,
     ships: Query<(&Transform, &Team), With<Ship>>,
     mut camera: Query<&mut Transform, (With<GameCamera>, Without<Ship>)>,
 ) {
-    let Some(my_team) = local_team.0 else {
+    if !needs.0 {
         return;
-    };
+    }
+    let Some(my_team) = local_team.0 else { return };
 
     let mut sum = Vec3::ZERO;
     let mut count = 0u32;
@@ -302,13 +311,13 @@ fn center_camera_on_fleet(
     }
 
     if count == 0 {
-        return;
+        return; // Ships not replicated yet, try next frame
     }
 
+    needs.0 = false;
+
     let center = sum / count as f32;
-    let Ok(mut cam) = camera.single_mut() else {
-        return;
-    };
+    let Ok(mut cam) = camera.single_mut() else { return };
 
     let height = 400.0;
     let offset_z = 200.0;

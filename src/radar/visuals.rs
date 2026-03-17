@@ -93,7 +93,7 @@ pub fn draw_radar_track_gizmos(
         }
         let pos = transform.translation;
         let color = Color::srgb(1.0, 0.2, 0.2);
-        let size = 5.0;
+        let size = 10.0;
         let top = pos + Vec3::Z * size;
         let bottom = pos - Vec3::Z * size;
         let left = pos - Vec3::X * size;

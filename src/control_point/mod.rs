@@ -10,7 +10,7 @@ use crate::ship::Ship;
 // ── Constants ────────────────────────────────────────────────────────────
 pub const BASE_CAPTURE_TIME: f32 = 20.0;
 pub const DECAY_RATE: f32 = 0.025;
-pub const SCORE_VICTORY_THRESHOLD: f32 = 300.0;
+pub const SCORE_VICTORY_THRESHOLD: f32 = 30.0;
 pub const SCORE_TICK_RATE: f32 = 1.0;
 pub const DEFAULT_ZONE_RADIUS: f32 = 100.0;
 
@@ -691,14 +691,14 @@ mod tests {
 
     #[test]
     fn score_victory_threshold_reached() {
-        let scores = TeamScores { scores: [300.0, 50.0] };
+        let scores = TeamScores { scores: [30.0, 10.0] };
         assert!(scores.scores[0] >= SCORE_VICTORY_THRESHOLD);
         assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
     }
 
     #[test]
     fn score_victory_threshold_not_reached() {
-        let scores = TeamScores { scores: [299.9, 299.9] };
+        let scores = TeamScores { scores: [29.9, 29.9] };
         assert!(scores.scores[0] < SCORE_VICTORY_THRESHOLD);
         assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
     }
