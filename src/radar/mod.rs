@@ -106,6 +106,7 @@ impl Plugin for RadarPlugin {
             (
                 contacts::update_radar_contacts,
                 contacts::cleanup_stale_contacts,
+                rwr::update_rwr_bearings,
             )
                 .chain()
                 .run_if(in_state(GameState::Playing)),
@@ -244,5 +245,32 @@ mod tests {
             snr >= SIGNATURE_THRESHOLD,
             "Missile at 200m should be at least signature, got {snr}"
         );
+    }
+
+    #[test]
+    fn rwr_detects_radar_within_range() {
+        assert!(rwr::is_in_rwr_range(
+            Vec2::ZERO,
+            800.0,
+            Vec2::new(600.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn rwr_no_detection_outside_range() {
+        assert!(!rwr::is_in_rwr_range(
+            Vec2::ZERO,
+            800.0,
+            Vec2::new(900.0, 0.0)
+        ));
+    }
+
+    #[test]
+    fn rwr_exact_boundary() {
+        assert!(rwr::is_in_rwr_range(
+            Vec2::ZERO,
+            800.0,
+            Vec2::new(800.0, 0.0)
+        ));
     }
 }
