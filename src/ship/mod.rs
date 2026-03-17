@@ -605,16 +605,13 @@ fn apply_thrust(
         let facing = ship_facing_direction(transform);
         let speed = velocity.linear.length();
 
-        // Effective top speed: capped by squad speed limit if present
-        let effective_top_speed = if let Some(limit) = speed_limit {
-            let capped = profile.top_speed.min(limit.0);
-            if (capped - profile.top_speed).abs() > 0.1 {
-                // Only log when actually capping (avoids spam when limit == top_speed)
-                info!("Speed limited: {:.1} -> {:.1}", profile.top_speed, capped);
-            }
-            capped
+        // Effective top speed and acceleration: capped by squad speed limit if present.
+        // Scale acceleration proportionally so all squad members accelerate at the same rate.
+        let (effective_top_speed, effective_acceleration) = if let Some(limit) = speed_limit {
+            let speed_ratio = (limit.0 / profile.top_speed).min(1.0);
+            (limit.0.min(profile.top_speed), profile.acceleration * speed_ratio)
         } else {
-            profile.top_speed
+            (profile.top_speed, profile.acceleration)
         };
 
         // No waypoints — always brake to a stop
@@ -624,7 +621,7 @@ fn apply_thrust(
                     velocity.linear,
                     Vec2::ZERO, // desired: stop
                     facing,
-                    profile.acceleration,
+                    effective_acceleration,
                     profile.thruster_factor,
                     dt,
                 );
@@ -653,7 +650,7 @@ fn apply_thrust(
         // Worst-case deceleration: ship faces target and must brake with
         // rear thrusters only (thruster_factor). Using worst-case ensures
         // the ship starts braking early enough to stop at the waypoint.
-        let min_decel = profile.acceleration * profile.thruster_factor;
+        let min_decel = effective_acceleration * profile.thruster_factor;
 
         let desired = desired_velocity_to_target(
             to_target,
@@ -667,7 +664,7 @@ fn apply_thrust(
             velocity.linear,
             desired,
             facing,
-            profile.acceleration,
+            effective_acceleration,
             profile.thruster_factor,
             dt,
         );
