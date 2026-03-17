@@ -3,6 +3,7 @@ use bevy_replicon::prelude::*;
 use bevy_replicon_renet::RepliconRenetPlugins;
 use clap::Parser;
 
+use nebulous_shot_command::control_point::ControlPointPlugin;
 use nebulous_shot_command::fleet::FleetPlugin;
 use nebulous_shot_command::fleet::lobby::LobbyPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
@@ -47,6 +48,7 @@ fn main() {
         .add_plugins((
             RadarPlugin,
             DamagePlugin,
+            ControlPointPlugin,
             ServerNetPlugin,
         ))
         .insert_resource(ServerBindAddress(cli.bind))

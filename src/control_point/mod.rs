@@ -2,6 +2,10 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use crate::game::{Destroyed, GameState, Team};
+use crate::net::commands::GameResult;
+use crate::ship::Ship;
+
 // ── Constants ────────────────────────────────────────────────────────────
 pub const BASE_CAPTURE_TIME: f32 = 20.0;
 pub const DECAY_RATE: f32 = 0.025;
@@ -159,6 +163,82 @@ pub fn compute_next_state(
                     }
                 }
             }
+        }
+    }
+}
+
+// ── Server plugin ────────────────────────────────────────────────────────
+
+pub struct ControlPointPlugin;
+
+impl Plugin for ControlPointPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            (update_control_points, check_score_victory)
+                .chain()
+                .run_if(in_state(GameState::Playing)),
+        );
+    }
+}
+
+fn update_control_points(
+    time: Res<Time>,
+    ships: Query<(&Transform, &Team), (With<Ship>, Without<Destroyed>)>,
+    mut points: Query<
+        (&Transform, &ControlPointRadius, &mut ControlPointState, &mut TeamScores),
+        With<ControlPoint>,
+    >,
+) {
+    let dt = time.delta_secs();
+
+    for (point_tf, radius, mut state, mut scores) in &mut points {
+        let center = Vec2::new(point_tf.translation.x, point_tf.translation.z);
+        let r_sq = radius.0 * radius.0;
+
+        let mut team0_count = 0u32;
+        let mut team1_count = 0u32;
+
+        for (ship_tf, team) in &ships {
+            let ship_pos = Vec2::new(ship_tf.translation.x, ship_tf.translation.z);
+            if ship_pos.distance_squared(center) <= r_sq {
+                match team.0 {
+                    0 => team0_count += 1,
+                    1 => team1_count += 1,
+                    _ => {}
+                }
+            }
+        }
+
+        let (new_state, scoring_team) = compute_next_state(&state, team0_count, team1_count, dt);
+        if let Some(team_id) = scoring_team {
+            scores.scores[team_id as usize] += SCORE_TICK_RATE * dt;
+        }
+        *state = new_state;
+    }
+}
+
+fn check_score_victory(
+    mut commands: Commands,
+    mut next_state: ResMut<NextState<GameState>>,
+    points: Query<&TeamScores, With<ControlPoint>>,
+) {
+    let mut totals = [0.0f32; 2];
+    for scores in &points {
+        totals[0] += scores.scores[0];
+        totals[1] += scores.scores[1];
+    }
+
+    for (team_idx, &score) in totals.iter().enumerate() {
+        if score >= SCORE_VICTORY_THRESHOLD {
+            let winning_team = Team(team_idx as u8);
+            info!("Team {} wins by score! ({:.0} points)", winning_team.0, score);
+            commands.server_trigger(ToClients {
+                mode: SendMode::Broadcast,
+                message: GameResult { winning_team },
+            });
+            next_state.set(GameState::GameOver);
+            return;
         }
     }
 }
