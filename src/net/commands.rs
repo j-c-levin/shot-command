@@ -41,6 +41,16 @@ pub struct TargetCommand {
     pub target: Entity,
 }
 
+/// Client → server: designate a target for a ship via a radar contact entity.
+/// The server resolves the contact's source ship and sets TargetDesignation to that.
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
+pub struct TargetByContactCommand {
+    #[entities]
+    pub ship: Entity,
+    #[entities]
+    pub contact: Entity,
+}
+
 /// Client → server: clear a ship's target designation.
 #[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
 pub struct ClearTargetCommand {

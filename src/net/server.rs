@@ -23,8 +23,8 @@ use crate::game::{GameState, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand, TargetCommand,
-    TeamAssignment,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand,
+    TargetByContactCommand, TargetCommand, TeamAssignment,
 };
 use crate::net::PROTOCOL_ID;
 use crate::ship::{
@@ -32,7 +32,7 @@ use crate::ship::{
     SquadSpeedLimit, TargetDesignation, WaypointQueue, ship_xz_position, spawn_server_ship,
     spawn_server_ship_default,
 };
-use crate::radar::{RadarActive, RadarActiveSecret, RadarContact, ContactTeam};
+use crate::radar::{ContactSourceShip, RadarActive, RadarActiveSecret, RadarContact, ContactTeam};
 use crate::weapon::missile::{Missile, MissileOwner};
 use crate::weapon::{MissileQueue, MissileQueueEntry, Mounts, WeaponCategory};
 use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldowns};
@@ -129,6 +129,7 @@ impl Plugin for ServerNetPlugin {
         app.add_observer(handle_facing_lock_command);
         app.add_observer(handle_facing_unlock_command);
         app.add_observer(handle_target_command);
+        app.add_observer(handle_target_by_contact);
         app.add_observer(handle_clear_target_command);
         app.add_observer(handle_fire_missile);
         app.add_observer(handle_cancel_missiles);
@@ -646,6 +647,48 @@ fn handle_target_command(
     info!(
         "TargetCommand applied: ship {:?} targeting {:?}",
         cmd.ship, cmd.target
+    );
+}
+
+/// Observer: handle `TargetByContactCommand` from clients.
+/// Resolves the radar contact's source ship and sets TargetDesignation to that ship.
+fn handle_target_by_contact(
+    trigger: On<FromClient<TargetByContactCommand>>,
+    mut commands: Commands,
+    client_teams: Res<ClientTeams>,
+    team_query: Query<&Team, With<Ship>>,
+    contact_query: Query<&ContactSourceShip, With<RadarContact>>,
+) {
+    let from = trigger.event();
+    let cmd = &from.message;
+
+    if validate_ownership(
+        from.client_id,
+        cmd.ship,
+        &client_teams,
+        &team_query,
+        "TargetByContactCommand",
+    )
+    .is_none()
+    {
+        return;
+    }
+
+    let Ok(source) = contact_query.get(cmd.contact) else {
+        warn!(
+            "TargetByContactCommand rejected: contact {:?} is not a RadarContact",
+            cmd.contact
+        );
+        return;
+    };
+
+    commands
+        .entity(cmd.ship)
+        .insert(TargetDesignation(source.0));
+
+    info!(
+        "TargetByContactCommand: ship {:?} targeting source {:?} via contact {:?}",
+        cmd.ship, source.0, cmd.contact
     );
 }
 

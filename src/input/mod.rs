@@ -8,9 +8,11 @@ use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
-    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand, TargetCommand,
+    FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand,
+    TargetByContactCommand, TargetCommand,
 };
 use crate::net::LocalTeam;
+use crate::radar::{ContactKind, ContactLevel, ContactSourceShip, ContactTeam, RadarContact};
 use crate::ship::{
     FacingLocked, Selected, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
     SquadMember, TargetDesignation, rotate_offset, ship_heading,
@@ -710,6 +712,7 @@ fn handle_number_keys(
     selected_query: Query<Entity, With<Selected>>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     enemy_numbers: Res<EnemyNumbers>,
+    contact_transform_query: Query<(&Transform, &ContactSourceShip), With<RadarContact>>,
 ) {
     let Some(my_team) = local_team.0 else {
         return;
@@ -734,10 +737,20 @@ fn handle_number_keys(
             let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
             if let Some(enemy_entity) = enemy {
                 for selected_ship in &selected_query {
-                    commands.client_trigger(TargetCommand {
-                        ship: selected_ship,
-                        target: enemy_entity,
-                    });
+                    // If the entity is a ship, send TargetCommand directly.
+                    // If it's a RadarContact, send TargetByContactCommand so the
+                    // server can resolve the source ship.
+                    if ship_query.get(enemy_entity).is_ok() {
+                        commands.client_trigger(TargetCommand {
+                            ship: selected_ship,
+                            target: enemy_entity,
+                        });
+                    } else {
+                        commands.client_trigger(TargetByContactCommand {
+                            ship: selected_ship,
+                            contact: enemy_entity,
+                        });
+                    }
                 }
                 target_mode.0 = false;
             }
@@ -748,13 +761,24 @@ fn handle_number_keys(
         if missile_mode.0 && enemy_numbers.active {
             let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
             if let Some(enemy_entity) = enemy {
-                if let Ok((_, _, transform)) = ship_query.get(enemy_entity) {
-                    let target_pos = Vec2::new(transform.translation.x, transform.translation.z);
+                // Get position and target entity — either from a ship or a radar contact
+                let fire_info = if let Ok((_, _, transform)) = ship_query.get(enemy_entity) {
+                    let pos = Vec2::new(transform.translation.x, transform.translation.z);
+                    Some((pos, Some(enemy_entity)))
+                } else if let Ok((transform, source)) = contact_transform_query.get(enemy_entity) {
+                    let pos = Vec2::new(transform.translation.x, transform.translation.z);
+                    // Use the source ship entity as the missile tracking target
+                    Some((pos, Some(source.0)))
+                } else {
+                    None
+                };
+
+                if let Some((target_pos, target_entity)) = fire_info {
                     for selected_ship in &selected_query {
                         commands.client_trigger(FireMissileCommand {
                             ship: selected_ship,
                             target_point: target_pos,
-                            target_entity: Some(enemy_entity),
+                            target_entity,
                         });
                     }
                 }
@@ -859,12 +883,18 @@ fn update_mode_indicator(
 // ── Enemy Numbers ───────────────────────────────────────────────────────
 
 /// System that populates/clears EnemyNumbers based on current mode.
+/// Assigns numbers 1-9 to visible enemy ships, then to radar-tracked contacts
+/// (Track level, Ship kind) whose source isn't already numbered.
 fn update_enemy_numbers(
     target_mode: Res<TargetMode>,
     missile_mode: Res<MissileMode>,
     local_team: Res<LocalTeam>,
     mut enemy_numbers: ResMut<EnemyNumbers>,
     ship_query: Query<(Entity, &Team), With<Ship>>,
+    contact_query: Query<
+        (Entity, &ContactLevel, &ContactTeam, &ContactKind, &ContactSourceShip),
+        With<RadarContact>,
+    >,
 ) {
     let should_be_active = target_mode.0 || missile_mode.0;
 
@@ -880,10 +910,12 @@ fn update_enemy_numbers(
         return;
     };
 
-    // Remove assignments for enemies that are no longer visible (despawned by replicon)
-    enemy_numbers.assignments.retain(|entity, _| ship_query.get(*entity).is_ok());
+    // Remove assignments for entities that no longer exist
+    enemy_numbers.assignments.retain(|entity, _| {
+        ship_query.get(*entity).is_ok() || contact_query.get(*entity).is_ok()
+    });
 
-    // Assign numbers to newly visible enemies (stable: existing assignments kept)
+    // Assign numbers to visible enemy ships first (stable: existing assignments kept)
     let mut new_enemies: Vec<Entity> = ship_query
         .iter()
         .filter(|(_, team)| **team != my_team)
@@ -893,7 +925,43 @@ fn update_enemy_numbers(
     new_enemies.sort_by_key(|e| e.index());
 
     for entity in new_enemies {
-        // Find the lowest unused number 1-9
+        let next = (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n));
+        if let Some(num) = next {
+            enemy_numbers.assignments.insert(entity, num);
+        }
+    }
+
+    // Collect source entities that are already numbered (either as ships or via another contact)
+    let already_numbered_sources: std::collections::HashSet<Entity> = enemy_numbers
+        .assignments
+        .keys()
+        .filter_map(|e| {
+            // If it's a ship entity, that ship is covered
+            if ship_query.get(*e).is_ok() {
+                return Some(*e);
+            }
+            // If it's a contact entity, its source is covered
+            contact_query.get(*e).ok().map(|(_, _, _, _, src)| src.0)
+        })
+        .collect();
+
+    // Assign numbers to radar track contacts (Ship kind, enemy team)
+    // whose source ship isn't already numbered
+    let mut new_contacts: Vec<Entity> = contact_query
+        .iter()
+        .filter(|(_, level, team, kind, source)| {
+            **level == ContactLevel::Track
+                && **kind == ContactKind::Ship
+                && team.0 != my_team
+                && !enemy_numbers.assignments.contains_key(&source.0)
+                && !already_numbered_sources.contains(&source.0)
+        })
+        .filter(|(e, _, _, _, _)| !enemy_numbers.assignments.contains_key(e))
+        .map(|(e, _, _, _, _)| e)
+        .collect();
+    new_contacts.sort_by_key(|e| e.index());
+
+    for entity in new_contacts {
         let next = (1..=9u8).find(|n| !enemy_numbers.assignments.values().any(|v| v == n));
         if let Some(num) = next {
             enemy_numbers.assignments.insert(entity, num);
