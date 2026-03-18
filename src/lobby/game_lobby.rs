@@ -576,5 +576,14 @@ pub fn sync_ready_state(
             &player_name.0,
             fleet_state.submitted,
         );
+        // Optimistic local update — immediately reflect our own ready state
+        if let Some(ref mut detail) = state.detail {
+            for p in &mut detail.players {
+                if p.name == player_name.0 {
+                    p.ready = fleet_state.submitted;
+                }
+            }
+            state.detail_changed = true;
+        }
     }
 }
