@@ -1,0 +1,199 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  infrastructure:
+    name: Infrastructure + Server
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Extract version from tag
+        id: version
+        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+
+      # -- Pulumi --
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install Pulumi CLI
+        uses: pulumi/actions@v6
+        with:
+          command: version
+
+      - name: Install infra dependencies
+        run: cd infra && npm ci && cd functions && npm ci
+
+      # Write service account key to file for GCP auth
+      - name: Write GCP credentials
+        run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}' > /tmp/gcp-key.json
+
+      - name: Pulumi up
+        uses: pulumi/actions@v6
+        with:
+          command: up
+          stack-name: dev
+          work-dir: infra
+        env:
+          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+
+      # -- Sync maps --
+      - name: Install sync script dependencies
+        run: cd scripts && npm ci
+
+      - name: Sync maps to Firestore
+        run: npx ts-node scripts/sync-maps.ts
+        env:
+          FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
+          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
+
+      # -- Server Docker --
+      # Build entirely inside Docker (Dockerfile handles nightly + build-std).
+      # No host Rust toolchain needed for server.
+      - name: Build and push Docker image
+        env:
+          EDGEGAP_DOCKER_PASSWORD: ${{ secrets.EDGEGAP_DOCKER_PASSWORD }}
+          EDGEGAP_DOCKER_USERNAME: ${{ secrets.EDGEGAP_DOCKER_USERNAME }}
+          EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          echo "$EDGEGAP_DOCKER_PASSWORD" | \
+            docker login registry.edgegap.com -u "$EDGEGAP_DOCKER_USERNAME" --password-stdin
+          docker build -t "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}" .
+          docker push "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}"
+
+      # -- Edgegap version --
+      - name: Create Edgegap app version
+        env:
+          EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
+          EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
+          EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          curl -s -X POST "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
+            -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"name\": \"${VERSION}\",
+              \"docker_repository\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
+              \"docker_image\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
+              \"docker_tag\": \"${VERSION}\",
+              \"req_cpu\": 256,
+              \"req_memory\": 256,
+              \"ports\": [
+                {
+                  \"port\": 5000,
+                  \"protocol\": \"UDP\",
+                  \"name\": \"gameport\"
+                }
+              ]
+            }"
+
+  client-macos-arm:
+    name: Client (macOS ARM)
+    needs: infrastructure
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: aarch64-apple-darwin
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --bin client --target aarch64-apple-darwin
+      - name: Package
+        env:
+          VERSION: ${{ needs.infrastructure.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/aarch64-apple-darwin/release/client dist/nebulous-client
+          cd dist && zip "nebulous-client-v${VERSION}-macos-arm64.zip" nebulous-client
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+
+  client-macos-intel:
+    name: Client (macOS Intel)
+    needs: infrastructure
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-apple-darwin
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --bin client --target x86_64-apple-darwin
+      - name: Package
+        env:
+          VERSION: ${{ needs.infrastructure.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/x86_64-apple-darwin/release/client dist/nebulous-client
+          cd dist && zip "nebulous-client-v${VERSION}-macos-x86_64.zip" nebulous-client
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+
+  client-windows:
+    name: Client (Windows)
+    needs: infrastructure
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-pc-windows-msvc
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --bin client --target x86_64-pc-windows-msvc
+      - name: Package
+        shell: bash
+        env:
+          VERSION: ${{ needs.infrastructure.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/x86_64-pc-windows-msvc/release/client.exe dist/nebulous-client.exe
+          cd dist && 7z a "nebulous-client-v${VERSION}-windows-x86_64.zip" nebulous-client.exe
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
+
+  client-linux:
+    name: Client (Linux)
+    needs: infrastructure
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Linux deps
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+      - uses: dtolnay/rust-toolchain@nightly
+        with:
+          targets: x86_64-unknown-linux-gnu
+          components: rust-src
+      - uses: Swatinem/rust-cache@v2
+      - name: Build
+        run: cargo build --release --bin client --target x86_64-unknown-linux-gnu
+      - name: Package
+        env:
+          VERSION: ${{ needs.infrastructure.outputs.version }}
+        run: |
+          mkdir -p dist
+          cp target/x86_64-unknown-linux-gnu/release/client dist/nebulous-client
+          cd dist && zip "nebulous-client-v${VERSION}-linux-x86_64.zip" nebulous-client
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*.zip
