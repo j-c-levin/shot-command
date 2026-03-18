@@ -65,6 +65,15 @@ pub fn materialize_ships(
             })
         };
 
+        // Invisible picking sphere at 2x collision radius for easier selection
+        let pick_radius = class.profile().collision_radius * 2.0;
+        let pick_mesh = meshes.add(Sphere::new(pick_radius));
+        let pick_material = materials.add(StandardMaterial {
+            base_color: Color::srgba(0.0, 0.0, 0.0, 0.0),
+            alpha_mode: AlphaMode::Blend,
+            ..default()
+        });
+
         commands
             .entity(entity)
             .insert(Visibility::Visible)
@@ -72,6 +81,11 @@ pub fn materialize_ships(
                 Mesh3d(ship_mesh),
                 MeshMaterial3d(ship_material),
                 mesh_transform,
+            ))
+            .with_child((
+                Mesh3d(pick_mesh),
+                MeshMaterial3d(pick_material),
+                Transform::IDENTITY,
             ))
             .observe(on_ship_clicked);
 

@@ -2,6 +2,7 @@ use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll};
 use bevy::prelude::*;
 
 use crate::game::GameState;
+use crate::input::InputMode;
 use crate::net::LocalTeam;
 use crate::game::Team;
 use crate::ship::Ship;
@@ -13,15 +14,29 @@ impl Plugin for CameraPlugin {
         app.insert_resource(CameraSettings::default())
             .insert_resource(CameraLookAt(Vec3::ZERO))
             .insert_resource(NeedsCameraCenter(false))
+            .insert_resource(LeftDragState::default())
             .add_systems(Startup, spawn_camera)
             .add_systems(OnEnter(GameState::Playing), flag_camera_center)
-            .add_systems(Update, (camera_pan, camera_zoom, camera_rotate, deferred_center_camera));
+            .add_systems(Update, (camera_pan, camera_zoom, camera_orbit, camera_drag_pan, deferred_center_camera));
     }
 }
 
 /// Flag that triggers deferred camera centering (waits for ships to replicate).
 #[derive(Resource)]
 struct NeedsCameraCenter(bool);
+
+/// Tracks left-click drag state for pan vs selection discrimination.
+#[derive(Resource, Default)]
+pub struct LeftDragState {
+    /// Whether left mouse button is currently held.
+    pub pressed: bool,
+    /// Screen position where left-click started.
+    pub start_screen: Vec2,
+    /// Whether the drag exceeded the threshold (becomes a pan).
+    pub is_dragging: bool,
+}
+
+const DRAG_THRESHOLD_PX: f32 = 5.0;
 
 #[derive(Component)]
 pub struct GameCamera;
@@ -256,14 +271,46 @@ fn camera_zoom(
     transform.look_at(actual_look, Vec3::Y);
 }
 
-fn camera_rotate(
+/// Compute a new camera position after orbiting around a pivot point.
+/// Returns the new camera position after applying yaw (Y-axis) and pitch (right-axis) rotations.
+pub fn compute_orbit(
+    cam_pos: Vec3,
+    pivot: Vec3,
+    yaw_delta: f32,
+    pitch_delta: f32,
+) -> Vec3 {
+    let offset = cam_pos - pivot;
+
+    // Yaw: rotate around world Y axis
+    let yaw_rot = Quat::from_rotation_y(yaw_delta);
+    let offset = yaw_rot * offset;
+
+    // Pitch: rotate around the camera's local right axis (perpendicular to offset and Y)
+    let right = Vec3::Y.cross(offset).normalize_or_zero();
+    if right.length_squared() < 0.001 {
+        // Camera is directly above/below pivot — skip pitch to avoid singularity
+        return pivot + offset;
+    }
+    let pitch_rot = Quat::from_axis_angle(right, pitch_delta);
+    let offset = pitch_rot * offset;
+
+    pivot + offset
+}
+
+fn camera_orbit(
     mouse_button: Res<ButtonInput<MouseButton>>,
     mouse_motion: Res<AccumulatedMouseMotion>,
     settings: Res<CameraSettings>,
+    mode: Res<InputMode>,
     look_at: Res<CameraLookAt>,
     mut query: Query<&mut Transform, With<GameCamera>>,
 ) {
-    if !mouse_button.pressed(MouseButton::Middle) {
+    if !mouse_button.pressed(MouseButton::Right) {
+        return;
+    }
+
+    // Only orbit in Normal mode — other modes use right-click for commands
+    if *mode != InputMode::Normal {
         return;
     }
 
@@ -276,13 +323,74 @@ fn camera_rotate(
     };
 
     let yaw = -mouse_motion.delta.x * settings.rotate_speed;
-    let rotation = Quat::from_rotation_y(yaw);
+    let pitch = -mouse_motion.delta.y * settings.rotate_speed;
 
-    let offset = transform.translation - look_at.0;
-    let rotated_offset = rotation * offset;
-    transform.translation = look_at.0 + rotated_offset;
+    let new_pos = compute_orbit(transform.translation, look_at.0, yaw, pitch);
+    transform.translation = new_pos;
     transform.look_at(look_at.0, Vec3::Y);
 }
+
+fn camera_drag_pan(
+    mouse_button: Res<ButtonInput<MouseButton>>,
+    windows: Query<&Window>,
+    mut drag: ResMut<LeftDragState>,
+    mut look_at: ResMut<CameraLookAt>,
+    mut cam_query: Query<(&mut Transform, &Camera, &GlobalTransform), With<GameCamera>>,
+) {
+    // Track left-click press
+    if mouse_button.just_pressed(MouseButton::Left) {
+        let screen_pos = windows
+            .single()
+            .ok()
+            .and_then(|w| w.cursor_position())
+            .unwrap_or(Vec2::ZERO);
+        drag.pressed = true;
+        drag.start_screen = screen_pos;
+        drag.is_dragging = false;
+    }
+
+    // Track left-click release — keep is_dragging so click observers can check it
+    if mouse_button.just_released(MouseButton::Left) {
+        drag.pressed = false;
+        // is_dragging stays true until next press so observers can read it
+    }
+
+    if !drag.pressed {
+        return;
+    }
+
+    let Ok(window) = windows.single() else { return };
+    let Some(cursor_pos) = window.cursor_position() else { return };
+
+    // Check drag threshold
+    if !drag.is_dragging {
+        if cursor_pos.distance(drag.start_screen) >= DRAG_THRESHOLD_PX {
+            drag.is_dragging = true;
+        } else {
+            return;
+        }
+    }
+
+    // Pan: project screen delta to world-space movement
+    let Ok((mut cam_tf, _camera, _global_tf)) = cam_query.single_mut() else { return };
+
+    let screen_delta = cursor_pos - drag.start_screen;
+    drag.start_screen = cursor_pos; // Update for next frame
+
+    // Project screen delta to world movement using camera orientation
+    let cam_forward = cam_tf.forward().as_vec3();
+    let forward_xz = Vec3::new(cam_forward.x, 0.0, cam_forward.z).normalize_or_zero();
+    let right_xz = Vec3::new(-forward_xz.z, 0.0, forward_xz.x);
+
+    // Scale by height to make pan speed consistent at different zoom levels
+    let height_scale = cam_tf.translation.y / 400.0;
+    let world_delta = (-right_xz * screen_delta.x + forward_xz * screen_delta.y)
+        * height_scale;
+
+    cam_tf.translation += world_delta;
+    look_at.0 += world_delta;
+}
+
 
 fn flag_camera_center(mut needs: ResMut<NeedsCameraCenter>) {
     needs.0 = true;
@@ -512,5 +620,61 @@ mod tests {
         let start_dist = Vec2::new(0.0 - cursor.x, 200.0 - cursor.z).length();
         assert!(final_dist < start_dist * 0.5,
             "should be much closer after 10 zoom steps: start={} final={}", start_dist, final_dist);
+    }
+
+    // ── compute_orbit ────────────────────────────────────────────────
+
+    #[test]
+    fn orbit_yaw_preserves_distance() {
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let pivot = Vec3::ZERO;
+        let new_pos = compute_orbit(cam_pos, pivot, 0.5, 0.0);
+        let old_dist = (cam_pos - pivot).length();
+        let new_dist = (new_pos - pivot).length();
+        assert!((old_dist - new_dist).abs() < 0.01,
+            "yaw should preserve distance: {} vs {}", old_dist, new_dist);
+    }
+
+    #[test]
+    fn orbit_pitch_preserves_distance() {
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let pivot = Vec3::ZERO;
+        let new_pos = compute_orbit(cam_pos, pivot, 0.0, 0.3);
+        let old_dist = (cam_pos - pivot).length();
+        let new_dist = (new_pos - pivot).length();
+        assert!((old_dist - new_dist).abs() < 0.01,
+            "pitch should preserve distance: {} vs {}", old_dist, new_dist);
+    }
+
+    #[test]
+    fn orbit_yaw_rotates_around_y_axis() {
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let pivot = Vec3::ZERO;
+        let new_pos = compute_orbit(cam_pos, pivot, 0.5, 0.0);
+        // Y component should stay the same (yaw only rotates in XZ)
+        assert!((new_pos.y - cam_pos.y).abs() < 0.01,
+            "yaw should not change height: {} vs {}", new_pos.y, cam_pos.y);
+        // XZ should change
+        assert!((new_pos.x - cam_pos.x).abs() > 1.0 || (new_pos.z - cam_pos.z).abs() > 1.0,
+            "yaw should change XZ position");
+    }
+
+    #[test]
+    fn orbit_pitch_changes_height() {
+        let cam_pos = Vec3::new(0.0, 400.0, 200.0);
+        let pivot = Vec3::ZERO;
+        // Positive pitch should tilt camera upward (increase height)
+        let new_pos = compute_orbit(cam_pos, pivot, 0.0, 0.3);
+        assert!(new_pos.y != cam_pos.y,
+            "pitch should change height: {} vs {}", new_pos.y, cam_pos.y);
+    }
+
+    #[test]
+    fn orbit_zero_deltas_unchanged() {
+        let cam_pos = Vec3::new(100.0, 300.0, 150.0);
+        let pivot = Vec3::new(50.0, 0.0, 50.0);
+        let new_pos = compute_orbit(cam_pos, pivot, 0.0, 0.0);
+        assert!((new_pos - cam_pos).length() < 0.01,
+            "zero orbit should not move camera: {:?} vs {:?}", new_pos, cam_pos);
     }
 }

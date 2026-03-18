@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use bevy::prelude::*;
 use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 
-use crate::camera::GameCamera;
+use crate::camera::{GameCamera, LeftDragState};
 use crate::game::Team;
 use crate::map::GroundPlane;
 use crate::net::commands::{
@@ -125,6 +125,7 @@ pub fn on_ship_clicked(
     keys: Res<ButtonInput<KeyCode>>,
     local_team: Res<LocalTeam>,
     mut mode: ResMut<InputMode>,
+    drag: Res<LeftDragState>,
     ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
@@ -136,6 +137,11 @@ pub fn on_ship_clicked(
     let Some(my_team) = local_team.0 else {
         return;
     };
+
+    // If left-click was a drag (camera pan), skip all left-click actions
+    if click.button == PointerButton::Primary && drag.is_dragging {
+        return;
+    }
 
     // Alt+right-click on own ship: unlock facing
     if click.button == PointerButton::Secondary
@@ -218,6 +224,7 @@ pub fn on_ground_clicked(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     mut mode: ResMut<InputMode>,
+    drag: Res<LeftDragState>,
     local_team: Res<LocalTeam>,
     ground_query: Query<Entity, With<GroundPlane>>,
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
@@ -227,6 +234,11 @@ pub fn on_ground_clicked(
         return;
     };
     let destination = Vec2::new(hit_pos.x, hit_pos.z);
+
+    // If left-click was a drag (camera pan), skip all left-click actions
+    if click.button == PointerButton::Primary && drag.is_dragging {
+        return;
+    }
 
     let Some(my_team) = local_team.0 else {
         return;
