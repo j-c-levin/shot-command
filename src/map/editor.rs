@@ -352,6 +352,7 @@ fn handle_editor_ground_click(
     mut editor: ResMut<EditorState>,
     mut editor_data: ResMut<EditorMapData>,
     ground_query: Query<(), With<GroundPlane>>,
+    spawn_entities: Query<(Entity, &EditorSpawn)>,
 ) {
     // Only respond to primary button
     if click.button != PointerButton::Primary {
@@ -368,7 +369,16 @@ fn handle_editor_ground_click(
         return;
     };
 
-    let world_pos = Vec2::new(hit_pos.x, hit_pos.z);
+    let raw_pos = Vec2::new(hit_pos.x, hit_pos.z);
+
+    // Clamp placement to map bounds
+    let world_pos = {
+        let bounds = &editor_data.0.bounds;
+        Vec2::new(
+            raw_pos.x.clamp(-bounds.half_x, bounds.half_x),
+            raw_pos.y.clamp(-bounds.half_y, bounds.half_y),
+        )
+    };
 
     match editor.tool {
         EditorTool::Select => {
@@ -406,31 +416,23 @@ fn handle_editor_ground_click(
             });
         }
         EditorTool::PlaceSpawn => {
-            // Auto-assign team: 0 first, then 1. If both exist, replace oldest.
-            let team0_count = editor_data
-                .0
-                .spawns
-                .iter()
-                .filter(|s| s.team == 0)
-                .count();
-            let team1_count = editor_data
-                .0
-                .spawns
-                .iter()
-                .filter(|s| s.team == 1)
-                .count();
+            let has_team0 = editor_data.0.spawns.iter().any(|s| s.team == 0);
+            let has_team1 = editor_data.0.spawns.iter().any(|s| s.team == 1);
 
-            let team = if team0_count == 0 {
+            let team = if !has_team0 {
                 0
-            } else if team1_count == 0 {
+            } else if !has_team1 {
                 1
             } else {
-                // Both teams have spawns — replace the first spawn in the list
-                // Remove the oldest spawn entity and data entry
-                editor_data.0.spawns.remove(0);
-                // We also need to despawn the oldest spawn entity, but we can't easily
-                // match here. Just add the new one; the oldest will be orphaned visually
-                // but that's acceptable for now. A more robust approach would track entity-data mapping.
+                // Both exist — replace team 0 (oldest pattern)
+                // Despawn the old team 0 entity
+                for (entity, spawn) in &spawn_entities {
+                    if spawn.0 == 0 {
+                        commands.entity(entity).despawn();
+                        break;
+                    }
+                }
+                editor_data.0.spawns.retain(|s| s.team != 0);
                 0
             };
 
@@ -455,6 +457,8 @@ fn handle_editor_entity_click(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     mut editor: ResMut<EditorState>,
+    mut drag: ResMut<EditorDragState>,
+    transforms: Query<&Transform>,
 ) {
     if click.button != PointerButton::Primary {
         return;
@@ -476,6 +480,12 @@ fn handle_editor_entity_click(
     commands.entity(entity).insert(EditorSelected);
     editor.selected = Some(entity);
     info!("Editor: selected entity {:?}", entity);
+
+    // Start drag immediately so the user can click-and-drag in one motion
+    if let Ok(tf) = transforms.get(entity) {
+        drag.dragging = true;
+        drag.start_world = Vec2::new(tf.translation.x, tf.translation.z);
+    }
 }
 
 // ── Hotkeys ──────────────────────────────────────────────────────────────
@@ -582,6 +592,7 @@ fn handle_editor_drag(
     mut editor_data: ResMut<EditorMapData>,
     mut transforms: Query<&mut Transform>,
     cam_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
+    bounds: Option<Res<MapBounds>>,
     asteroids: Query<(), With<EditorAsteroid>>,
     control_points: Query<(), With<EditorControlPoint>>,
     spawns: Query<&EditorSpawn>,
@@ -622,16 +633,8 @@ fn handle_editor_drag(
         Err(_) => return,
     };
 
-    if mouse_button.just_pressed(MouseButton::Left) {
-        // Check if cursor is near the selected entity to start drag
-        if let Ok(tf) = transforms.get(entity) {
-            let entity_pos = Vec2::new(tf.translation.x, tf.translation.z);
-            if entity_pos.distance(world_pos) < 50.0 {
-                drag.dragging = true;
-                drag.start_world = entity_pos;
-            }
-        }
-    }
+    // Drag start is handled by handle_editor_entity_click observer.
+    // Here we only handle movement and release.
 
     if mouse_button.just_released(MouseButton::Left) {
         if drag.dragging {
@@ -658,10 +661,15 @@ fn handle_editor_drag(
         return;
     }
 
-    // Move entity
+    // Move entity (clamped to map bounds)
+    let clamped = if let Some(ref bounds) = bounds {
+        bounds.clamp(world_pos)
+    } else {
+        world_pos
+    };
     if let Ok(mut tf) = transforms.get_mut(entity) {
-        tf.translation.x = world_pos.x;
-        tf.translation.z = world_pos.y;
+        tf.translation.x = clamped.x;
+        tf.translation.z = clamped.y;
     }
 }
 
