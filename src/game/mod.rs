@@ -32,6 +32,8 @@ pub enum GameState {
     FleetComposition,
     Playing,
     GameOver,
+    /// Map editor mode (standalone, no server/client networking)
+    Editor,
 }
 
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -131,6 +133,7 @@ mod tests {
             GameState::FleetComposition,
             GameState::Playing,
             GameState::GameOver,
+            GameState::Editor,
         ];
         for (i, a) in states.iter().enumerate() {
             for (j, b) in states.iter().enumerate() {
