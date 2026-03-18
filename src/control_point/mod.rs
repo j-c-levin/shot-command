@@ -320,7 +320,7 @@ struct ScoreDisplayText;
 fn spawn_score_ui(mut commands: Commands) {
     commands.spawn((
         ScoreDisplayText,
-        Text::new("0  ───  0"),
+        Text::new("0  -  NEUTRAL  -  0"),
         TextFont {
             font_size: 22.0,
             ..default()
@@ -342,26 +342,55 @@ fn spawn_score_ui(mut commands: Commands) {
 
 fn update_score_display(
     local_team: Res<LocalTeam>,
-    points: Query<&TeamScores, With<ControlPoint>>,
-    mut query: Query<&mut Text, With<ScoreDisplayText>>,
+    points: Query<(&TeamScores, &ControlPointState), With<ControlPoint>>,
+    mut query: Query<(&mut Text, &mut TextColor), With<ScoreDisplayText>>,
 ) {
-    let Ok(mut text) = query.single_mut() else {
+    let Ok((mut text, mut text_color)) = query.single_mut() else {
         return;
     };
 
     let mut totals = [0.0f32; 2];
-    for scores in &points {
+    let mut capture_info = String::new();
+    for (scores, state) in &points {
         totals[0] += scores.scores[0];
         totals[1] += scores.scores[1];
+
+        let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
+        capture_info = match state {
+            ControlPointState::Neutral => "NEUTRAL".to_string(),
+            ControlPointState::Capturing { team, progress } => {
+                let pct = (progress * 100.0) as u32;
+                if *team as usize == local_id { format!("CAPTURING {pct}%") }
+                else { format!("ENEMY CAP {pct}%") }
+            }
+            ControlPointState::Decapturing { team, progress } => {
+                let pct = (progress * 100.0) as u32;
+                if *team as usize == local_id { format!("LOSING {pct}%") }
+                else { format!("CONTESTING {pct}%") }
+            }
+            ControlPointState::Captured { team } => {
+                if *team as usize == local_id { "HELD".to_string() }
+                else { "ENEMY HELD".to_string() }
+            }
+        };
     }
 
     let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
     let enemy_id = local_team.0.map(|t| t.opponent().index()).unwrap_or(1);
 
     *text = Text::new(format!(
-        "{}  ───  {}",
-        totals[local_id] as u32, totals[enemy_id] as u32
+        "{}  -  {}  -  {}",
+        totals[local_id] as u32, capture_info, totals[enemy_id] as u32
     ));
+
+    // Color based on who's winning
+    text_color.0 = if totals[local_id] > totals[enemy_id] {
+        Color::srgb(0.3, 1.0, 0.3)
+    } else if totals[enemy_id] > totals[local_id] {
+        Color::srgb(1.0, 0.3, 0.3)
+    } else {
+        Color::WHITE
+    };
 }
 
 #[cfg(test)]
