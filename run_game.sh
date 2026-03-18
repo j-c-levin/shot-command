@@ -7,7 +7,7 @@ trap 'kill 0; exit' SIGINT SIGTERM
 cargo build --bin server --bin client 2>&1 || exit 1
 
 echo "=== Starting server ==="
-cargo run --bin server 2>&1 | sed 's/^/[SERVER] /' &
+cargo run --bin server -- --map my_map.ron 2>&1 | sed 's/^/[SERVER] /' &
 sleep 2
 
 echo "=== Starting client 1 ==="

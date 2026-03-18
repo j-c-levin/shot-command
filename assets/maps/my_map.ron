@@ -1,0 +1,36 @@
+(
+    bounds: (
+        half_x: 500.0,
+        half_y: 500.0,
+    ),
+    spawns: [
+        (
+            team: 0,
+            position: (-321.80902, 385.27548),
+        ),
+        (
+            team: 1,
+            position: (357.78833, -327.23187),
+        ),
+    ],
+    asteroids: [
+        (
+            position: (57.939842, -25.965637),
+            radius: 100.0,
+        ),
+        (
+            position: (-286.18848, -36.85669),
+            radius: 25.0,
+        ),
+        (
+            position: (-165.1653, -34.967102),
+            radius: 25.0,
+        ),
+    ],
+    control_points: [
+        (
+            position: (-190.6236, 238.2826),
+            radius: 100.0,
+        ),
+    ],
+)

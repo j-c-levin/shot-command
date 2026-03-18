@@ -36,7 +36,7 @@ First build from clean is ~4-5 minutes (Bevy is large). Subsequent builds are fa
 ### Philosophy
 
 All tests are **pure-function or World-level only** — no full App, no render context, no asset
-server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 286 tests.
+server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 293 tests.
 
 - **Pure math** (physics, LOS, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
 - **Resource/component presence**: `World::new()` + `world.insert_resource()` / `world.spawn()`
@@ -58,7 +58,7 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file:
 | `src/fog/mod.rs` | 11 | Ray-asteroid intersection, LOS range+occlusion, opacity fade in/out/clamp |
 | `src/weapon/firing.rs` | 9 | Lead calculation (stationary, moving, zero speed), firing arc (turret, forward cone), fire_delay tick, cannon stagger |
 | `src/game/mod.rs` | 8 | Team constants, GameState default/variants/fleet_composition, EnemyVisibility default, Health damage/saturation |
-| `src/net/server.rs` | 8 | Asteroid exclusion zones (near corners, outside, boundary), rotate_offset (0/90/180/-90 degrees) |
+| `src/net/server.rs` | 15 | Asteroid exclusion zones (near corners, outside, boundary), rotate_offset (0/90/180/-90 degrees), build_default_map_data (bounds, 2 spawns, 12 asteroids with valid radii/bounds/exclusion zones, 1 control point) |
 | `src/weapon/projectile.rs` | 6 | Projectile spawning, direction normalization, advancement, bounds despawn |
 | `src/control_point/mod.rs` | 30 | Capture speed (zero/one/four/nine/diminishing), state machine (neutral→capturing→captured→decapturing, all transitions, freezing, decay, multi-frame accumulation, team1 capture), world-level (ship inside/outside/boundary radius, score accumulation, threshold reached/not-reached) |
 | `src/map/mod.rs` | 6 | MapBounds contains/clamp/size |
@@ -307,10 +307,7 @@ bounds gizmos. See design doc at
 - (none currently)
 
 **Recently completed (this session):**
-- Ship-asteroid collision (hard stop + push out)
-- Camera controls overhaul (left-drag pan, right-drag orbit, 2x selection radius)
-- Shift+click fleet status cards for multi-select
-- Multi-ship formation spread on move commands
+- Phase 6: Maps & Editor (map editor dev tool, RON map files, server --map loading)
 
 ## Pre-approvals
 

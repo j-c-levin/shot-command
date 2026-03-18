@@ -1528,4 +1528,67 @@ mod tests {
         assert!(rotated.x.abs() < 0.001);
         assert!((rotated.y - (-10.0)).abs() < 0.001);
     }
+
+    // ── build_default_map_data tests ────────────────────────────────────
+
+    #[test]
+    fn default_map_has_correct_bounds() {
+        let map = build_default_map_data();
+        assert_eq!(map.bounds.half_x, MAP_HALF_EXTENT);
+        assert_eq!(map.bounds.half_y, MAP_HALF_EXTENT);
+    }
+
+    #[test]
+    fn default_map_has_two_spawn_points() {
+        let map = build_default_map_data();
+        assert_eq!(map.spawns.len(), 2);
+        assert_eq!(map.spawns[0].team, 0);
+        assert_eq!(map.spawns[1].team, 1);
+        assert_eq!(map.spawns[0].position, (TEAM0_CORNER.x, TEAM0_CORNER.y));
+        assert_eq!(map.spawns[1].position, (TEAM1_CORNER.x, TEAM1_CORNER.y));
+    }
+
+    #[test]
+    fn default_map_has_12_asteroids() {
+        let map = build_default_map_data();
+        assert_eq!(map.asteroids.len(), 12);
+    }
+
+    #[test]
+    fn default_map_asteroids_have_valid_radii() {
+        let map = build_default_map_data();
+        for a in &map.asteroids {
+            assert!(a.radius >= 15.0 && a.radius <= 40.0,
+                "asteroid radius {} out of range", a.radius);
+        }
+    }
+
+    #[test]
+    fn default_map_asteroids_inside_bounds() {
+        let map = build_default_map_data();
+        for a in &map.asteroids {
+            assert!(a.position.0.abs() < MAP_HALF_EXTENT,
+                "asteroid x {} out of bounds", a.position.0);
+            assert!(a.position.1.abs() < MAP_HALF_EXTENT,
+                "asteroid y {} out of bounds", a.position.1);
+        }
+    }
+
+    #[test]
+    fn default_map_asteroids_avoid_exclusion_zones() {
+        let map = build_default_map_data();
+        for a in &map.asteroids {
+            let pos = Vec2::new(a.position.0, a.position.1);
+            assert!(!is_in_asteroid_exclusion_zone(pos),
+                "asteroid at ({}, {}) in exclusion zone", a.position.0, a.position.1);
+        }
+    }
+
+    #[test]
+    fn default_map_has_one_control_point() {
+        let map = build_default_map_data();
+        assert_eq!(map.control_points.len(), 1);
+        assert_eq!(map.control_points[0].position, (0.0, 0.0));
+        assert_eq!(map.control_points[0].radius, DEFAULT_ZONE_RADIUS);
+    }
 }
