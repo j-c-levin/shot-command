@@ -11,6 +11,9 @@ pub struct FleetUiPlugin;
 
 impl Plugin for FleetUiPlugin {
     fn build(&self, app: &mut App) {
+        let fleet_builder_active = in_state(GameState::FleetComposition)
+            .or(in_state(GameState::GameLobby));
+
         app.init_resource::<FleetBuilderState>()
             .add_systems(OnEnter(GameState::FleetComposition), spawn_fleet_ui)
             .add_systems(OnExit(GameState::FleetComposition), despawn_fleet_ui)
@@ -21,11 +24,16 @@ impl Plugin for FleetUiPlugin {
                     rebuild_ship_detail,
                     spawn_popup,
                     update_budget_text,
-                    update_status_text,
                     update_submit_button,
                     handle_add_ship_button,
                     handle_ship_entry_click,
                     handle_remove_ship_button,
+                )
+                    .run_if(fleet_builder_active.clone()),
+            )
+            .add_systems(
+                Update,
+                (
                     handle_clone_ship_button,
                     handle_ship_picker_option,
                     handle_change_weapon_button,
@@ -34,6 +42,11 @@ impl Plugin for FleetUiPlugin {
                     handle_submit_button,
                     handle_popup_close,
                 )
+                    .run_if(fleet_builder_active.clone()),
+            )
+            .add_systems(
+                Update,
+                update_status_text
                     .run_if(in_state(GameState::FleetComposition)),
             );
     }

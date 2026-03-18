@@ -56,6 +56,21 @@ pub struct FleetBuilderState {
     pub popup: Option<PopupKind>,
 }
 
+/// Controls how the fleet builder submit button behaves.
+#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+pub enum FleetBuilderMode {
+    /// Connected to server, submit triggers network event.
+    Online,
+    /// In lobby, submit just validates and stores locally.
+    Lobby,
+}
+
+impl Default for FleetBuilderMode {
+    fn default() -> Self {
+        Self::Online
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum PopupKind {
     AddShip,
@@ -134,119 +149,128 @@ pub fn spawn_fleet_ui(mut commands: Commands) {
             GlobalZIndex(5),
         ))
         .with_children(|root| {
-            // ── Header bar ──
-            root.spawn(Node {
-                width: Val::Percent(100.0),
-                height: Val::Px(60.0),
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                padding: UiRect::horizontal(Val::Px(20.0)),
-                ..default()
-            })
-            .with_children(|header| {
-                header.spawn((
-                    Text::new("FLEET COMPOSITION"),
+            spawn_fleet_builder_content(root);
+        });
+}
+
+/// Spawn the fleet builder panels as children of the given parent entity.
+/// Used by both FleetComposition (standalone) and GameLobby (embedded).
+pub fn spawn_fleet_builder_content(parent: &mut ChildSpawnerCommands<'_>) {
+    // ── Header bar ──
+    parent
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(60.0),
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            padding: UiRect::horizontal(Val::Px(20.0)),
+            ..default()
+        })
+        .with_children(|header| {
+            header.spawn((
+                Text::new("FLEET COMPOSITION"),
+                TextFont {
+                    font_size: 28.0,
+                    ..default()
+                },
+                TextColor(TEXT_WHITE),
+            ));
+            header.spawn((
+                BudgetText,
+                Text::new(format!("Budget: 0 / {}", FLEET_BUDGET)),
+                TextFont {
+                    font_size: 22.0,
+                    ..default()
+                },
+                TextColor(TEXT_WHITE),
+            ));
+        });
+
+    // ── Main area (two panels side by side) ──
+    parent
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            flex_grow: 1.0,
+            flex_direction: FlexDirection::Row,
+            padding: UiRect::all(Val::Px(10.0)),
+            column_gap: Val::Px(10.0),
+            ..default()
+        })
+        .with_children(|main_area| {
+            // Fleet list panel (left)
+            main_area.spawn((
+                FleetListPanel,
+                Node {
+                    width: Val::Percent(35.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(10.0)),
+                    row_gap: Val::Px(6.0),
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                BackgroundColor(BG_PANEL),
+            ));
+
+            // Ship detail panel (right)
+            main_area.spawn((
+                ShipDetailPanel,
+                Node {
+                    width: Val::Percent(65.0),
+                    height: Val::Percent(100.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(10.0)),
+                    row_gap: Val::Px(6.0),
+                    overflow: Overflow::scroll_y(),
+                    ..default()
+                },
+                BackgroundColor(BG_PANEL),
+            ));
+        });
+
+    // ── Bottom bar ──
+    parent
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            height: Val::Px(60.0),
+            justify_content: JustifyContent::SpaceBetween,
+            align_items: AlignItems::Center,
+            padding: UiRect::horizontal(Val::Px(20.0)),
+            ..default()
+        })
+        .with_children(|bottom| {
+            // Submit button
+            bottom
+                .spawn((
+                    SubmitButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(24.0), Val::Px(10.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(BG_DISABLED),
+                ))
+                .with_child((
+                    Text::new("Submit Fleet"),
                     TextFont {
-                        font_size: 28.0,
+                        font_size: 20.0,
                         ..default()
                     },
                     TextColor(TEXT_WHITE),
                 ));
-                header.spawn((
-                    BudgetText,
-                    Text::new(format!("Budget: 0 / {}", FLEET_BUDGET)),
-                    TextFont {
-                        font_size: 22.0,
-                        ..default()
-                    },
-                    TextColor(TEXT_WHITE),
-                ));
-            });
 
-            // ── Main area (two panels side by side) ──
-            root.spawn(Node {
-                width: Val::Percent(100.0),
-                flex_grow: 1.0,
-                flex_direction: FlexDirection::Row,
-                padding: UiRect::all(Val::Px(10.0)),
-                column_gap: Val::Px(10.0),
-                ..default()
-            })
-            .with_children(|main_area| {
-                // Fleet list panel (left)
-                main_area.spawn((
-                    FleetListPanel,
-                    Node {
-                        width: Val::Percent(35.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(10.0)),
-                        row_gap: Val::Px(6.0),
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    },
-                    BackgroundColor(BG_PANEL),
-                ));
-
-                // Ship detail panel (right)
-                main_area.spawn((
-                    ShipDetailPanel,
-                    Node {
-                        width: Val::Percent(65.0),
-                        height: Val::Percent(100.0),
-                        flex_direction: FlexDirection::Column,
-                        padding: UiRect::all(Val::Px(10.0)),
-                        row_gap: Val::Px(6.0),
-                        overflow: Overflow::scroll_y(),
-                        ..default()
-                    },
-                    BackgroundColor(BG_PANEL),
-                ));
-            });
-
-            // ── Bottom bar ──
-            root.spawn(Node {
-                width: Val::Percent(100.0),
-                height: Val::Px(60.0),
-                justify_content: JustifyContent::SpaceBetween,
-                align_items: AlignItems::Center,
-                padding: UiRect::horizontal(Val::Px(20.0)),
-                ..default()
-            })
-            .with_children(|bottom| {
-                // Submit button
-                bottom
-                    .spawn((
-                        SubmitButton,
-                        Button,
-                        Node {
-                            padding: UiRect::axes(Val::Px(24.0), Val::Px(10.0)),
-                            justify_content: JustifyContent::Center,
-                            align_items: AlignItems::Center,
-                            ..default()
-                        },
-                        BackgroundColor(BG_DISABLED),
-                    ))
-                    .with_child((
-                        Text::new("Submit Fleet"),
-                        TextFont {
-                            font_size: 20.0,
-                            ..default()
-                        },
-                        TextColor(TEXT_WHITE),
-                    ));
-
-                // Status text
-                bottom.spawn((
-                    StatusText,
-                    Text::new("Composing fleet..."),
-                    TextFont {
-                        font_size: 18.0,
-                        ..default()
-                    },
-                    TextColor(TEXT_GRAY),
-                ));
-            });
+            // Status text
+            bottom.spawn((
+                StatusText,
+                Text::new("Composing fleet..."),
+                TextFont {
+                    font_size: 18.0,
+                    ..default()
+                },
+                TextColor(TEXT_GRAY),
+            ));
         });
 }
 
@@ -978,20 +1002,27 @@ pub fn handle_submit_button(
     query: Query<&Interaction, (Changed<Interaction>, With<SubmitButton>)>,
     mut state: ResMut<FleetBuilderState>,
     mut commands: Commands,
+    mode: Option<Res<FleetBuilderMode>>,
 ) {
+    let mode = mode.map(|m| m.clone()).unwrap_or(FleetBuilderMode::Online);
+
     for interaction in &query {
         if *interaction == Interaction::Pressed {
             if state.submitted {
                 // Cancel submission
-                commands.client_trigger(CancelSubmission);
+                if mode == FleetBuilderMode::Online {
+                    commands.client_trigger(CancelSubmission);
+                }
                 state.submitted = false;
             } else {
                 // Validate and submit
                 let validation = validate_fleet(&state.ships);
                 if validation.is_ok() {
-                    commands.client_trigger(FleetSubmission {
-                        ships: state.ships.clone(),
-                    });
+                    if mode == FleetBuilderMode::Online {
+                        commands.client_trigger(FleetSubmission {
+                            ships: state.ships.clone(),
+                        });
+                    }
                     state.submitted = true;
                 }
             }
