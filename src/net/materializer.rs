@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 
 use crate::game::Team;
-use crate::input::{on_ship_clicked, EnemyNumbers, MissileMode, SquadHighlight, TargetMode};
+use crate::input::{on_ship_clicked, EnemyNumbers, InputMode, SquadHighlight};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::ship::{
@@ -39,10 +39,7 @@ pub fn materialize_ships(
     query: Query<(Entity, &ShipClass, &Team), Added<Ship>>,
 ) {
     for (entity, class, team) in &query {
-        let is_own_team = local_team
-            .0
-            .map(|lt| lt == *team)
-            .unwrap_or(false);
+        let is_own_team = team.is_friendly(&local_team);
 
         let color = if is_own_team {
             Color::srgb(0.2, 0.6, 1.0)
@@ -97,8 +94,7 @@ pub struct ShipNumberLabel {
 pub fn update_ship_number_labels(
     mut commands: Commands,
     local_team: Res<LocalTeam>,
-    target_mode: Res<TargetMode>,
-    missile_mode: Res<MissileMode>,
+    mode: Res<InputMode>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     ship_query: Query<(&Transform, &Team), With<Ship>>,
     label_query: Query<(Entity, &ShipNumberLabel)>,
@@ -110,7 +106,7 @@ pub fn update_ship_number_labels(
     }
 
     // Hide friendly numbers in K/M modes to avoid confusion with enemy numbers
-    if target_mode.0 || missile_mode.0 {
+    if *mode == InputMode::Target || *mode == InputMode::Missile {
         return;
     }
 
@@ -669,6 +665,7 @@ pub struct EnemyNumberLabel;
 /// when EnemyNumbers is active.
 pub fn update_enemy_number_labels(
     mut commands: Commands,
+    mode: Res<InputMode>,
     enemy_numbers: Res<EnemyNumbers>,
     transform_query: Query<&Transform>,
     label_query: Query<Entity, With<EnemyNumberLabel>>,
@@ -679,7 +676,7 @@ pub fn update_enemy_number_labels(
         commands.entity(entity).despawn();
     }
 
-    if !enemy_numbers.active {
+    if *mode != InputMode::Target && *mode != InputMode::Missile {
         return;
     }
 

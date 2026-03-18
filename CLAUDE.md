@@ -272,7 +272,42 @@ RWR asteroid LOS blocking fix. See design doc at
 `docs/plans/2026-03-17-phase5-damage-repair-design.md` and
 `docs/plans/2026-03-17-fleet-status-sidebar-design.md`.
 
-**Next up: Phase 6** (TBD — beam weapons, maps, or polish)
+**Next up:**
+
+1. **ECS Review** — Audit codebase for ECS antipatterns (magic numbers vs components,
+   duplicated systems, missing markers, god systems). Clean up before adding features.
+
+2. **Phase 6: Maps & Editor** — Designed maps with multiple control points and asteroid
+   layouts. Map editor mode for placing/dragging asteroids and control points, saving to
+   disk. Procedural generation rules for chokepoints and open spaces.
+
+3. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
+   client auto-update, on-demand match servers. See plan at
+   `docs/plans/2026-03-17-edgegap-deployment-plan.md`.
+
+4. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
+   Linux (.zip) via GitHub Releases CI/CD pipeline.
+
+**Dropped:** Beam weapons (from original Phase 5 brainstorm).
+
+**TODO:**
+- Ammo limits — cannons/railguns and missiles all need finite ammo. Currently disabled
+  for development, re-enable for production. VLS tube reload is a cooldown mechanic,
+  not an ammo limit.
+- Multi-ship targeting & missile waves — selecting multiple ships and entering K or M
+  mode should let all selected ships fire/target together. Current one-ship-at-a-time
+  workflow (select, mode, fire, back out, select next) is too slow for coordinated strikes.
+- Scouts too radar-sneaky — scouts should be auto-tracked (not just signature) when they
+  enter visual LOS range (400m), regardless of nose-on RCS. Visual LOS should guarantee
+  track-level contact.
+
+**Known bugs:**
+- Ships pass through asteroids (missiles correctly explode on contact, projectiles are
+  correctly removed). Need ship-asteroid collision: ships should stop on contact with
+  asteroids, not pass through
+- Destroyed radar can still be toggled on and returns target information. Offline mounts
+  (hp == 0) should not function — radar toggle should be rejected for offline radar mounts,
+  and SNR computation should skip offline sensor mounts
 
 ## Pre-approvals
 

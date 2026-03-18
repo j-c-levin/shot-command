@@ -4,7 +4,7 @@ use bevy_replicon::prelude::Replicated;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
-use crate::game::{GameState, Health, Team};
+use crate::game::{GameState, Health, Player, Team};
 use crate::net::LocalTeam;
 use crate::radar::rwr::RwrBearings;
 use crate::radar::RadarActiveSecret;
@@ -610,7 +610,7 @@ fn apply_thrust(
     time: Res<Time>,
     mut query: Query<
         (&Transform, &mut Velocity, &ShipClass, &WaypointQueue, Option<&SquadSpeedLimit>, &EngineHealth),
-        With<Ship>,
+        (With<Ship>, Without<crate::game::EngineOffline>),
     >,
 ) {
     let dt = time.delta_secs();
@@ -618,10 +618,7 @@ fn apply_thrust(
         return;
     }
 
-    for (transform, mut velocity, class, waypoints, speed_limit, engine_health) in &mut query {
-        if engine_health.hp == 0 {
-            continue;
-        }
+    for (transform, mut velocity, class, waypoints, speed_limit, _engine_health) in &mut query {
         let profile = class.profile();
         let facing = ship_facing_direction(transform);
         let speed = velocity.linear.length();
@@ -767,6 +764,7 @@ pub fn spawn_server_ship(
     team: Team,
     spec: &crate::fleet::ShipSpec,
     ship_number: u8,
+    player: Entity,
 ) -> Entity {
     let class = spec.class;
     let layout = class.mount_layout();
@@ -796,6 +794,7 @@ pub fn spawn_server_ship(
             Ship,
             Replicated,
             team,
+            Player(player),
             class,
             Velocity::default(),
             WaypointQueue::default(),
@@ -831,12 +830,13 @@ pub fn spawn_server_ship_default(
     position: Vec2,
     team: Team,
     class: ShipClass,
+    player: Entity,
 ) -> Entity {
     let spec = crate::fleet::ShipSpec {
         class,
         loadout: class.default_loadout(),
     };
-    spawn_server_ship(commands, position, team, &spec, 0)
+    spawn_server_ship(commands, position, team, &spec, 0, player)
 }
 
 // ── Visual Indicators (Gizmos) ──────────────────────────────────────────

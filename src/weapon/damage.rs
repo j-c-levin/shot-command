@@ -1,5 +1,3 @@
-use std::collections::{HashMap, HashSet};
-
 use bevy::math::Vec2;
 use bevy::prelude::*;
 use bevy::time::Timer;
@@ -7,7 +5,7 @@ use bevy_replicon::prelude::*;
 use rand::prelude::IndexedRandom;
 use rand::Rng;
 
-use crate::game::{Destroyed, DestroyTimer, GameState, Health, Team};
+use crate::game::{Destroyed, DestroyTimer, EngineOffline, GameState, Health, Team};
 use crate::net::commands::GameResult;
 use crate::ship::{EngineHealth, RepairCooldown, Ship, ShipSecrets, ShipSecretsOwner};
 use crate::weapon::Mounts;
@@ -92,6 +90,7 @@ pub const REPAIR_RATE_HP_PER_SEC: f32 = 20.0;
 /// Apply directional damage to a ship's HP pools.
 /// If `is_railgun` is true, damage bypasses normal zone routing and goes
 /// 90% to a random component, 10% to hull (precision strike).
+/// Returns `true` if engines went offline (hp hit 0) during this call.
 pub fn apply_damage_to_ship(
     impact_dir: Vec2,
     ship_forward: Vec2,
@@ -101,7 +100,9 @@ pub fn apply_damage_to_ship(
     engine_health: &mut EngineHealth,
     mounts: &mut Mounts,
     repair_cooldown: &mut RepairCooldown,
-) {
+) -> bool {
+    let was_online = engine_health.hp > 0;
+
     let (primary_target, primary_dmg, secondary_target, secondary_dmg) = if is_railgun {
         // Railgun: precision component strike, token hull damage
         let comp_dmg = raw_damage * 9 / 10;
@@ -117,6 +118,9 @@ pub fn apply_damage_to_ship(
 
     // Reset repair cooldown on any hit
     repair_cooldown.0 = REPAIR_DELAY_SECS;
+
+    // Return true if engines just went offline
+    was_online && engine_health.hp == 0
 }
 
 fn apply_to_target(
@@ -181,13 +185,14 @@ fn apply_to_target(
 
 fn tick_repair(
     time: Res<Time>,
+    mut commands: Commands,
     mut query: Query<
-        (&mut EngineHealth, &mut Mounts, &mut RepairCooldown),
+        (Entity, &mut EngineHealth, &mut Mounts, &mut RepairCooldown, Has<EngineOffline>),
         (With<Ship>, Without<Destroyed>),
     >,
 ) {
     let dt = time.delta_secs();
-    for (mut engine_health, mut mounts, mut repair_cooldown) in &mut query {
+    for (entity, mut engine_health, mut mounts, mut repair_cooldown, is_engine_offline) in &mut query {
         // Tick repair cooldown
         if repair_cooldown.0 > 0.0 {
             repair_cooldown.0 = (repair_cooldown.0 - dt).max(0.0);
@@ -195,10 +200,11 @@ fn tick_repair(
         let repair_active = repair_cooldown.0 <= 0.0;
 
         // --- Engine health ---
-        if engine_health.hp == 0 && engine_health.offline_timer > 0.0 {
+        if is_engine_offline && engine_health.offline_timer > 0.0 {
             engine_health.offline_timer = (engine_health.offline_timer - dt).max(0.0);
             if engine_health.offline_timer <= 0.0 {
                 engine_health.hp = engine_health.floor();
+                commands.entity(entity).remove::<EngineOffline>();
             }
         } else if repair_active && engine_health.hp > 0 {
             let floor = engine_health.floor();
@@ -286,28 +292,28 @@ fn check_win_condition(
     mut next_state: ResMut<NextState<GameState>>,
     ships: Query<(&Team, Option<&Destroyed>), With<Ship>>,
 ) {
-    let mut alive_counts: HashMap<u8, u32> = HashMap::new();
-    let mut teams_seen: HashSet<u8> = HashSet::new();
+    let mut alive_counts = [0u32; 2];
+    let mut teams_seen = [false; 2];
 
     for (team, destroyed) in &ships {
-        teams_seen.insert(team.0);
-        if destroyed.is_none() {
-            *alive_counts.entry(team.0).or_insert(0) += 1;
+        let idx = team.index();
+        if idx < 2 {
+            teams_seen[idx] = true;
+            if destroyed.is_none() {
+                alive_counts[idx] += 1;
+            }
         }
     }
 
-    // Only check once both teams have been spawned (at least seen)
-    if teams_seen.len() < 2 {
+    // Only check once both teams have been spawned
+    if !teams_seen[0] || !teams_seen[1] {
         return;
     }
 
-    let team0_alive = alive_counts.get(&0).copied().unwrap_or(0);
-    let team1_alive = alive_counts.get(&1).copied().unwrap_or(0);
-
-    let winner = if team0_alive == 0 {
-        Some(Team(1))
-    } else if team1_alive == 0 {
-        Some(Team(0))
+    let winner = if alive_counts[0] == 0 {
+        Some(Team(0).opponent())
+    } else if alive_counts[1] == 0 {
+        Some(Team(1).opponent())
     } else {
         None
     };

@@ -156,7 +156,7 @@ fn check_projectile_hits(
 
             if dist < class.profile().collision_radius {
                 let ship_forward = ship_facing_direction(ship_transform);
-                apply_damage_to_ship(
+                let engines_went_offline = apply_damage_to_ship(
                     impact_dir,
                     ship_forward,
                     damage.0,
@@ -166,6 +166,9 @@ fn check_projectile_hits(
                     &mut mounts,
                     &mut repair_cooldown,
                 );
+                if engines_went_offline {
+                    commands.entity(ship_entity).insert(crate::game::EngineOffline);
+                }
                 commands.entity(proj_entity).despawn();
                 break;
             }

@@ -66,6 +66,26 @@ pub fn is_in_pd_cylinder(pd_pos: Vec3, missile_pos: Vec3, radius: f32) -> bool {
     (dx * dx + dz * dz).sqrt() <= radius
 }
 
+/// Compute the best sensor range from a ship's mounts. Returns 0.0 if radar is not active.
+fn best_sensor_range(mounts: &Mounts, has_radar: bool) -> f32 {
+    if !has_radar {
+        return 0.0;
+    }
+    mounts.0.iter()
+        .filter_map(|m| m.weapon.as_ref())
+        .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+        .map(|w| w.weapon_type.profile().firing_range)
+        .fold(0.0_f32, f32::max)
+}
+
+/// Check if a missile belongs to the same team as a ship.
+fn is_friendly_missile(ship_team: Option<&Team>, owner: &MissileOwner, team_query: &Query<&Team>) -> bool {
+    match (ship_team, team_query.get(owner.0)) {
+        (Some(my), Ok(their)) => my == their,
+        _ => false,
+    }
+}
+
 // ── Systems ────────────────────────────────────────────────────────────
 
 /// Laser PD: fires once per second, 60% chance to destroy the missile outright.
@@ -83,15 +103,7 @@ fn laser_pd_fire(
         let ship_team = team_query.get(ship_entity).ok();
 
         // Precompute radar range for this ship (0.0 if no radar)
-        let radar_range = if radar_active.is_some() {
-            mounts.0.iter()
-                .filter_map(|m| m.weapon.as_ref())
-                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
-                .map(|w| w.weapon_type.profile().firing_range)
-                .fold(0.0_f32, f32::max)
-        } else {
-            0.0
-        };
+        let radar_range = best_sensor_range(&mounts, radar_active.is_some());
         let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
@@ -117,12 +129,8 @@ fn laser_pd_fire(
             let mut closest_entity = None;
 
             for (missile_entity, missile_transform, missile_owner) in &missile_query {
-                if let (Some(my_team), Ok(owner_team)) =
-                    (ship_team, team_query.get(missile_owner.0))
-                {
-                    if my_team == owner_team {
-                        continue;
-                    }
+                if is_friendly_missile(ship_team, missile_owner, &team_query) {
+                    continue;
                 }
 
                 let missile_pos = missile_transform.translation;
@@ -194,15 +202,7 @@ fn cwis_fire(
         let ship_team = team_query.get(ship_entity).ok();
 
         // Precompute radar range for this ship (0.0 if no radar)
-        let radar_range = if radar_active.is_some() {
-            mounts.0.iter()
-                .filter_map(|m| m.weapon.as_ref())
-                .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
-                .map(|w| w.weapon_type.profile().firing_range)
-                .fold(0.0_f32, f32::max)
-        } else {
-            0.0
-        };
+        let radar_range = best_sensor_range(&mounts, radar_active.is_some());
         let vision_range = ship_class.profile().vision_range;
 
         for mount_idx in 0..mounts.0.len() {
@@ -230,12 +230,8 @@ fn cwis_fire(
             let mut closest_radar_tracked = false;
 
             for (missile_entity, missile_transform, _, missile_owner) in &missile_query {
-                if let (Some(my_team), Ok(owner_team)) =
-                    (ship_team, team_query.get(missile_owner.0))
-                {
-                    if my_team == owner_team {
-                        continue;
-                    }
+                if is_friendly_missile(ship_team, missile_owner, &team_query) {
+                    continue;
                 }
 
                 let missile_pos = missile_transform.translation;

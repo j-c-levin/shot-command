@@ -8,7 +8,7 @@
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 
-use crate::game::{Health, Team};
+use crate::game::{EngineOffline, Health, Player, Team};
 use crate::map::{Asteroid, AsteroidSize};
 use crate::net::commands::{
     CancelMissilesCommand, CancelSubmission, ClearTargetCommand, FacingLockCommand,
@@ -45,6 +45,8 @@ impl Plugin for SharedReplicationPlugin {
         app.replicate::<Ship>()
             .replicate::<ShipClass>()
             .replicate::<Team>()
+            .replicate::<Player>()
+            .replicate::<EngineOffline>()
             .replicate::<Transform>()
             .replicate::<Health>()
             .replicate::<EngineHealth>()

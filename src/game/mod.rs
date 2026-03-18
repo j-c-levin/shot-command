@@ -30,7 +30,38 @@ pub struct Team(pub u8);
 impl Team {
     pub const PLAYER: Self = Self(0);
     pub const ENEMY: Self = Self(1);
+
+    /// The opposing team (assumes 2-team game).
+    pub fn opponent(&self) -> Self {
+        Team(1 - self.0)
+    }
+
+    /// Array index for this team (for `[f32; 2]` score arrays, etc.).
+    pub fn index(&self) -> usize {
+        self.0 as usize
+    }
+
+    /// Whether this team matches the local player's team.
+    pub fn is_friendly(&self, local: &crate::net::LocalTeam) -> bool {
+        local.0.map(|lt| lt == *self).unwrap_or(false)
+    }
 }
+
+/// Identifies which connected client owns/controls a ship.
+/// Same-team players can see each other's ships but only command their own.
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Player(pub Entity);
+
+impl bevy::ecs::entity::MapEntities for Player {
+    fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, mapper: &mut M) {
+        self.0 = mapper.get_mapped(self.0);
+    }
+}
+
+/// Marker: this ship's engines are offline (hp == 0, timer counting down).
+/// Inserted by damage system, removed by repair system.
+#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+pub struct EngineOffline;
 
 /// Marker: this enemy is currently in line of sight of a player ship.
 #[derive(Component, Clone, Debug, Default)]
@@ -126,5 +157,17 @@ mod tests {
     fn health_saturates_at_zero() {
         let h = Health { hp: 0u16 };
         assert_eq!(h.hp.saturating_sub(1), 0);
+    }
+
+    #[test]
+    fn team_opponent() {
+        assert_eq!(Team(0).opponent(), Team(1));
+        assert_eq!(Team(1).opponent(), Team(0));
+    }
+
+    #[test]
+    fn team_index() {
+        assert_eq!(Team(0).index(), 0);
+        assert_eq!(Team(1).index(), 1);
     }
 }

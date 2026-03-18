@@ -21,25 +21,17 @@ use crate::weapon::{Mounts, WeaponCategory};
 
 pub struct InputPlugin;
 
-/// Resource: when true, next right-click sets facing lock direction
-#[derive(Resource, Default)]
-pub struct LockMode(pub bool);
-
-/// Resource: when true, next left-click on enemy designates target
-#[derive(Resource, Default)]
-pub struct TargetMode(pub bool);
-
-/// Resource: when true, clicks queue missile launches
-#[derive(Resource, Default)]
-pub struct MissileMode(pub bool);
-
-/// Resource: when true, next click on friendly ship or number-key assigns squad
-#[derive(Resource, Default)]
-pub struct JoinMode(pub bool);
-
-/// Resource: when true, right-click issues move commands
-#[derive(Resource, Default)]
-pub struct MoveMode(pub bool);
+/// The current input mode. Only one mode can be active at a time.
+#[derive(Resource, Default, PartialEq, Eq, Clone, Copy, Debug)]
+pub enum InputMode {
+    #[default]
+    Normal,
+    Move,
+    Lock,
+    Target,
+    Missile,
+    Join,
+}
 
 /// Tracks a right-click drag gesture for move+facing commands.
 #[derive(Resource, Debug, Default)]
@@ -63,7 +55,6 @@ pub struct EnemyNumbers {
     pub assignments: HashMap<Entity, u8>,
     /// Maps source ship entity → assigned number, for stable contact numbering.
     pub source_numbers: HashMap<Entity, u8>,
-    pub active: bool,
 }
 
 /// Marker for the mode indicator text in the bottom-left corner.
@@ -77,11 +68,7 @@ pub struct SquadHighlight;
 
 impl Plugin for InputPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<LockMode>()
-            .init_resource::<TargetMode>()
-            .init_resource::<MissileMode>()
-            .init_resource::<JoinMode>()
-            .init_resource::<MoveMode>()
+        app.init_resource::<InputMode>()
             .init_resource::<MoveGestureState>()
             .init_resource::<EnemyNumbers>()
             .add_systems(
@@ -137,11 +124,7 @@ pub fn on_ship_clicked(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     local_team: Res<LocalTeam>,
-    mut lock_mode: ResMut<LockMode>,
-    mut target_mode: ResMut<TargetMode>,
-    mut missile_mode: ResMut<MissileMode>,
-    mut join_mode: ResMut<JoinMode>,
-    mut move_mode: ResMut<MoveMode>,
+    mut mode: ResMut<InputMode>,
     ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
 ) {
@@ -166,7 +149,7 @@ pub fn on_ship_clicked(
     // Right-click modes on enemy ships
     if click.button == PointerButton::Secondary && *team != my_team {
         // Missile mode: right-click on enemy queues a missile
-        if missile_mode.0 {
+        if *mode == InputMode::Missile {
             let target_pos = Vec2::new(transform.translation.x, transform.translation.z);
             for selected_ship in &selected_query {
                 commands.client_trigger(FireMissileCommand {
@@ -179,14 +162,14 @@ pub fn on_ship_clicked(
         }
 
         // Target mode: right-click on enemy designates target
-        if target_mode.0 {
+        if *mode == InputMode::Target {
             for selected_ship in &selected_query {
                 commands.client_trigger(TargetCommand {
                     ship: selected_ship,
                     target: entity,
                 });
             }
-            target_mode.0 = false;
+            *mode = InputMode::Normal;
             return;
         }
     }
@@ -196,7 +179,7 @@ pub fn on_ship_clicked(
     }
 
     // Join mode: left-click on friendly ship assigns squad
-    if join_mode.0 && *team == my_team {
+    if *mode == InputMode::Join && *team == my_team {
         for selected_ship in &selected_query {
             if selected_ship != entity {
                 commands.client_trigger(JoinSquadCommand {
@@ -205,7 +188,7 @@ pub fn on_ship_clicked(
                 });
             }
         }
-        join_mode.0 = false;
+        *mode = InputMode::Normal;
         return;
     }
 
@@ -217,11 +200,7 @@ pub fn on_ship_clicked(
     for prev in &selected_query {
         commands.entity(prev).remove::<Selected>();
     }
-    lock_mode.0 = false;
-    target_mode.0 = false;
-    missile_mode.0 = false;
-    join_mode.0 = false;
-    move_mode.0 = false;
+    *mode = InputMode::Normal;
 
     commands.entity(entity).insert(Selected);
 }
@@ -230,11 +209,7 @@ pub fn on_ground_clicked(
     click: On<Pointer<Click>>,
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    mut lock_mode: ResMut<LockMode>,
-    mut target_mode: ResMut<TargetMode>,
-    mut missile_mode: ResMut<MissileMode>,
-    mut join_mode: ResMut<JoinMode>,
-    mut move_mode: ResMut<MoveMode>,
+    mut mode: ResMut<InputMode>,
     local_team: Res<LocalTeam>,
     ground_query: Query<Entity, With<GroundPlane>>,
     selected_query: Query<(Entity, &Transform, &Team), With<Selected>>,
@@ -254,7 +229,7 @@ pub fn on_ground_clicked(
     // Alt+right-click or lock-mode right-click: set facing direction and lock.
     // Works on any surface (ground, asteroid, etc.) — direction is what matters.
     if click.button == PointerButton::Secondary
-        && (keys.pressed(KeyCode::AltLeft) || lock_mode.0)
+        && (keys.pressed(KeyCode::AltLeft) || *mode == InputMode::Lock)
     {
         for (entity, transform, team) in &selected_query {
             if *team != my_team {
@@ -269,7 +244,7 @@ pub fn on_ground_clicked(
                 });
             }
         }
-        lock_mode.0 = false;
+        *mode = InputMode::Normal;
         return;
     }
 
@@ -279,7 +254,7 @@ pub fn on_ground_clicked(
     }
 
     // Missile mode: right-click on ground queues a missile at that position
-    if click.button == PointerButton::Secondary && missile_mode.0 {
+    if click.button == PointerButton::Secondary && *mode == InputMode::Missile {
         for (entity, _transform, team) in &selected_query {
             if *team != my_team {
                 continue;
@@ -299,11 +274,7 @@ pub fn on_ground_clicked(
         for (entity, _, _) in &selected_query {
             commands.entity(entity).remove::<Selected>();
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
+        *mode = InputMode::Normal;
         return;
     }
 
@@ -314,11 +285,7 @@ pub fn on_ground_clicked(
 fn handle_keyboard(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
-    mut lock_mode: ResMut<LockMode>,
-    mut target_mode: ResMut<TargetMode>,
-    mut missile_mode: ResMut<MissileMode>,
-    mut join_mode: ResMut<JoinMode>,
-    mut move_mode: ResMut<MoveMode>,
+    mut mode: ResMut<InputMode>,
     selected_query: Query<(Entity, &Transform), With<Selected>>,
     locked_query: Query<Entity, (With<Selected>, With<FacingLocked>)>,
     secrets_query: Query<(&ShipSecretsOwner, Option<&TargetDesignation>), With<ShipSecrets>>,
@@ -328,26 +295,20 @@ fn handle_keyboard(
         for (entity, _) in &selected_query {
             commands.entity(entity).remove::<Selected>();
         }
-        if missile_mode.0 {
+        if *mode == InputMode::Missile {
             for (entity, _) in &selected_query {
                 commands.client_trigger(CancelMissilesCommand { ship: entity });
             }
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
+        *mode = InputMode::Normal;
     }
 
     // Space: toggle move mode
     if keys.just_pressed(KeyCode::Space) {
-        move_mode.0 = !move_mode.0;
-        if move_mode.0 {
-            lock_mode.0 = false;
-            target_mode.0 = false;
-            missile_mode.0 = false;
-            join_mode.0 = false;
+        if *mode == InputMode::Move {
+            *mode = InputMode::Normal;
+        } else {
+            *mode = InputMode::Move;
         }
     }
 
@@ -356,14 +317,12 @@ fn handle_keyboard(
             for entity in &locked_query {
                 commands.client_trigger(FacingUnlockCommand { ship: entity });
             }
-            lock_mode.0 = false;
+            *mode = InputMode::Normal;
+        } else if *mode == InputMode::Lock {
+            *mode = InputMode::Normal;
         } else {
-            lock_mode.0 = !lock_mode.0;
+            *mode = InputMode::Lock;
         }
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyK) {
@@ -379,14 +338,14 @@ fn handle_keyboard(
             }
         }
         if !has_target {
-            target_mode.0 = !target_mode.0;
+            if *mode == InputMode::Target {
+                *mode = InputMode::Normal;
+            } else {
+                *mode = InputMode::Target;
+            }
         } else {
-            target_mode.0 = false;
+            *mode = InputMode::Normal;
         }
-        lock_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyM) {
@@ -398,27 +357,27 @@ fn handle_keyboard(
             })
         });
         if has_vls {
-            missile_mode.0 = !missile_mode.0;
+            if *mode == InputMode::Missile {
+                *mode = InputMode::Normal;
+            } else {
+                *mode = InputMode::Missile;
+            }
         } else {
-            missile_mode.0 = false;
+            *mode = InputMode::Normal;
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
     }
 
     if keys.just_pressed(KeyCode::KeyJ) {
         // Toggle join mode (only if a ship is selected)
         if selected_query.iter().next().is_some() {
-            join_mode.0 = !join_mode.0;
+            if *mode == InputMode::Join {
+                *mode = InputMode::Normal;
+            } else {
+                *mode = InputMode::Join;
+            }
         } else {
-            join_mode.0 = false;
+            *mode = InputMode::Normal;
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        move_mode.0 = false;
     }
 
     // S key: full stop
@@ -435,11 +394,7 @@ fn handle_keyboard(
             commands.client_trigger(ClearTargetCommand { ship: entity });
             commands.client_trigger(CancelMissilesCommand { ship: entity });
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
+        *mode = InputMode::Normal;
     }
 
     // R key: toggle radar for all selected ships
@@ -455,14 +410,13 @@ fn handle_keyboard(
 /// Draw weapon range circles as gizmos when in target or missile mode.
 fn draw_range_gizmos(
     mut gizmos: Gizmos,
-    target_mode: Res<TargetMode>,
-    missile_mode: Res<MissileMode>,
+    mode: Res<InputMode>,
     selected_query: Query<(&Transform, &Mounts), (With<Selected>, With<Ship>)>,
 ) {
     // Determine which category to show range for
-    let category = if target_mode.0 {
+    let category = if *mode == InputMode::Target {
         Some(WeaponCategory::Cannon)
-    } else if missile_mode.0 {
+    } else if *mode == InputMode::Missile {
         Some(WeaponCategory::Missile)
     } else {
         None
@@ -539,10 +493,7 @@ fn handle_move_gesture(
     mouse: Res<ButtonInput<MouseButton>>,
     keys: Res<ButtonInput<KeyCode>>,
     local_team: Res<LocalTeam>,
-    move_mode: Res<MoveMode>,
-    missile_mode: Res<MissileMode>,
-    target_mode: Res<TargetMode>,
-    lock_mode: Res<LockMode>,
+    mode: Res<InputMode>,
     mut gesture: ResMut<MoveGestureState>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
@@ -551,11 +502,11 @@ fn handle_move_gesture(
     let Some(my_team) = local_team.0 else { return };
 
     // Don't start gesture in modes that consume right-click differently
-    let right_click_consumed = missile_mode.0 || target_mode.0
-        || keys.pressed(KeyCode::AltLeft) || lock_mode.0;
+    let right_click_consumed = *mode == InputMode::Missile || *mode == InputMode::Target
+        || keys.pressed(KeyCode::AltLeft) || *mode == InputMode::Lock;
 
     // Right-click press: start gesture
-    if mouse.just_pressed(MouseButton::Right) && move_mode.0 && !right_click_consumed {
+    if mouse.just_pressed(MouseButton::Right) && *mode == InputMode::Move && !right_click_consumed {
         let Ok(window) = windows.single() else { return };
         let Ok((camera, global_tf)) = camera_query.single() else { return };
 
@@ -713,11 +664,7 @@ fn handle_number_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     local_team: Res<LocalTeam>,
-    mut lock_mode: ResMut<LockMode>,
-    mut target_mode: ResMut<TargetMode>,
-    mut missile_mode: ResMut<MissileMode>,
-    mut join_mode: ResMut<JoinMode>,
-    mut move_mode: ResMut<MoveMode>,
+    mut mode: ResMut<InputMode>,
     ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
@@ -743,7 +690,7 @@ fn handle_number_keys(
         };
 
         // K mode: target enemy by number
-        if target_mode.0 && enemy_numbers.active {
+        if *mode == InputMode::Target {
             let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
             if let Some(enemy_entity) = enemy {
                 for selected_ship in &selected_query {
@@ -762,13 +709,13 @@ fn handle_number_keys(
                         });
                     }
                 }
-                target_mode.0 = false;
+                *mode = InputMode::Normal;
             }
             return;
         }
 
         // M mode: fire missile at enemy by number
-        if missile_mode.0 && enemy_numbers.active {
+        if *mode == InputMode::Missile {
             let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
             if let Some(enemy_entity) = enemy {
                 // Get position and target entity — either from a ship or a radar contact
@@ -812,7 +759,7 @@ fn handle_number_keys(
         };
 
         // In join mode: assign squad instead of selecting
-        if join_mode.0 {
+        if *mode == InputMode::Join {
             for selected_ship in &selected_query {
                 if selected_ship != target_ship {
                     commands.client_trigger(JoinSquadCommand {
@@ -821,7 +768,7 @@ fn handle_number_keys(
                     });
                 }
             }
-            join_mode.0 = false;
+            *mode = InputMode::Normal;
             return;
         }
 
@@ -829,11 +776,7 @@ fn handle_number_keys(
         for prev in &selected_query {
             commands.entity(prev).remove::<Selected>();
         }
-        lock_mode.0 = false;
-        target_mode.0 = false;
-        missile_mode.0 = false;
-        join_mode.0 = false;
-        move_mode.0 = false;
+        *mode = InputMode::Normal;
 
         commands.entity(target_ship).insert(Selected);
         return;
@@ -861,29 +804,20 @@ fn setup_mode_indicator(mut commands: Commands) {
 }
 
 fn update_mode_indicator(
-    move_mode: Res<MoveMode>,
-    target_mode: Res<TargetMode>,
-    missile_mode: Res<MissileMode>,
-    join_mode: Res<JoinMode>,
-    lock_mode: Res<LockMode>,
+    mode: Res<InputMode>,
     mut query: Query<(&mut Text, &mut TextColor), With<ModeIndicatorText>>,
 ) {
     let Ok((mut text, mut color)) = query.single_mut() else {
         return;
     };
 
-    let (label, c) = if target_mode.0 {
-        ("TARGET", Color::srgba(1.0, 0.3, 0.3, 0.9))
-    } else if missile_mode.0 {
-        ("MISSILE", Color::srgba(1.0, 0.5, 0.1, 0.9))
-    } else if move_mode.0 {
-        ("MOVE", Color::srgba(0.3, 1.0, 0.3, 0.9))
-    } else if join_mode.0 {
-        ("JOIN", Color::srgba(0.3, 1.0, 0.8, 0.9))
-    } else if lock_mode.0 {
-        ("LOCK", Color::srgba(1.0, 0.8, 0.2, 0.9))
-    } else {
-        ("", Color::srgba(1.0, 1.0, 1.0, 0.0))
+    let (label, c) = match *mode {
+        InputMode::Target => ("TARGET", Color::srgba(1.0, 0.3, 0.3, 0.9)),
+        InputMode::Missile => ("MISSILE", Color::srgba(1.0, 0.5, 0.1, 0.9)),
+        InputMode::Move => ("MOVE", Color::srgba(0.3, 1.0, 0.3, 0.9)),
+        InputMode::Join => ("JOIN", Color::srgba(0.3, 1.0, 0.8, 0.9)),
+        InputMode::Lock => ("LOCK", Color::srgba(1.0, 0.8, 0.2, 0.9)),
+        InputMode::Normal => ("", Color::srgba(1.0, 1.0, 1.0, 0.0)),
     };
 
     *text = Text::new(label);
@@ -896,8 +830,7 @@ fn update_mode_indicator(
 /// Assigns numbers 1-9 to visible enemy ships, then to radar-tracked contacts
 /// (Track level, Ship kind) whose source isn't already numbered.
 fn update_enemy_numbers(
-    target_mode: Res<TargetMode>,
-    missile_mode: Res<MissileMode>,
+    mode: Res<InputMode>,
     local_team: Res<LocalTeam>,
     mut enemy_numbers: ResMut<EnemyNumbers>,
     ship_query: Query<(Entity, &Team), With<Ship>>,
@@ -906,11 +839,10 @@ fn update_enemy_numbers(
         With<RadarContact>,
     >,
 ) {
-    let should_be_active = target_mode.0 || missile_mode.0;
+    let should_be_active = *mode == InputMode::Target || *mode == InputMode::Missile;
 
     if !should_be_active {
-        if enemy_numbers.active {
-            enemy_numbers.active = false;
+        if !enemy_numbers.assignments.is_empty() {
             enemy_numbers.assignments.clear();
             // Keep source_numbers so re-entering K/M mode reuses the same numbers
         }
@@ -1013,8 +945,6 @@ fn update_enemy_numbers(
             enemy_numbers.source_numbers.insert(source, num);
         }
     }
-
-    enemy_numbers.active = true;
 }
 
 // ── Squad Highlights ─────────────────────────────────────────────────────

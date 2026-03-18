@@ -19,7 +19,7 @@ use bevy_replicon_renet::{
 };
 
 use crate::fog::is_in_los;
-use crate::game::{GameState, Team};
+use crate::game::{GameState, Player, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
@@ -264,16 +264,16 @@ fn server_setup_game(
     });
 
     // Spawn fleets from lobby submissions (or default fleets as fallback)
-    let team_corners = [
+    let team_corners: [(Team, Vec2); 2] = [
         (Team(0), TEAM0_CORNER),
         (Team(1), TEAM1_CORNER),
     ];
 
-    // Build a mapping: team_id -> Vec<ShipSpec>
-    let mut team_specs: HashMap<u8, Vec<crate::fleet::ShipSpec>> = HashMap::new();
+    // Build a mapping: client_entity -> (team, Vec<ShipSpec>)
+    let mut client_specs: Vec<(Entity, Team, Vec<crate::fleet::ShipSpec>)> = Vec::new();
     for (&client_entity, specs) in &lobby.submissions {
-        if let Some(team) = client_teams.map.get(&client_entity) {
-            team_specs.insert(team.0, specs.clone());
+        if let Some(&team) = client_teams.map.get(&client_entity) {
+            client_specs.push((client_entity, team, specs.clone()));
         }
     }
 
@@ -282,32 +282,53 @@ fn server_setup_game(
     let perp = Vec2::new(-1.0, 1.0).normalize();
     let ship_spacing = 30.0;
 
+    // Track which teams have submissions so we can spawn defaults for missing teams
+    let teams_with_specs: Vec<Team> = client_specs.iter().map(|(_, t, _)| *t).collect();
+
+    // Track ship number per team across all players
+    let mut team_ship_counts: [usize; 2] = [0; 2];
+
+    for (client_entity, team, specs) in &client_specs {
+        let corner = team_corners.iter()
+            .find(|(t, _)| t == team)
+            .map(|(_, c)| *c)
+            .unwrap_or(TEAM0_CORNER);
+
+        let start_idx = team_ship_counts[team.index()];
+        let total_team_ships: usize = client_specs.iter()
+            .filter(|(_, t, _)| t == team)
+            .map(|(_, _, s)| s.len())
+            .sum();
+
+        for (i, spec) in specs.iter().enumerate() {
+            let ship_idx = start_idx + i;
+            let offset = perp * (ship_idx as f32 - (total_team_ships as f32 - 1.0) / 2.0) * ship_spacing;
+            let pos = corner + offset;
+            let entity = spawn_server_ship(&mut commands, pos, *team, spec, (ship_idx + 1) as u8, *client_entity);
+            info!(
+                "Spawned {:?} for Team {} (player {:?}) at ({:.0}, {:.0}): {:?}",
+                spec.class, team.0, client_entity, pos.x, pos.y, entity
+            );
+        }
+        team_ship_counts[team.index()] += specs.len();
+    }
+
+    // Fallback: default fleet for any team without submissions
     for (team, corner) in &team_corners {
-        if let Some(specs) = team_specs.get(&team.0) {
-            // Spawn from lobby submissions
-            for (i, spec) in specs.iter().enumerate() {
-                let offset = perp * (i as f32 - (specs.len() as f32 - 1.0) / 2.0) * ship_spacing;
-                let pos = *corner + offset;
-                let entity = spawn_server_ship(&mut commands, pos, *team, spec, (i + 1) as u8);
-                info!(
-                    "Spawned {:?} for Team {} at ({:.0}, {:.0}): {:?}",
-                    spec.class, team.0, pos.x, pos.y, entity
-                );
-            }
-        } else {
-            // Fallback: default fleet (1 battleship, 1 destroyer, 1 scout)
-            let default_classes = [ShipClass::Battleship, ShipClass::Destroyer, ShipClass::Scout];
-            for (i, class) in default_classes.iter().enumerate() {
-                let offset =
-                    perp * (i as f32 - (default_classes.len() as f32 - 1.0) / 2.0) * ship_spacing;
-                let pos = *corner + offset;
-                let entity = spawn_server_ship_default(&mut commands, pos, *team, *class);
-                // Note: default ships get ShipNumber(0) via spawn_server_ship_default
-                info!(
-                    "Spawned default {:?} for Team {} at ({:.0}, {:.0}): {:?}",
-                    class, team.0, pos.x, pos.y, entity
-                );
-            }
+        if teams_with_specs.contains(team) {
+            continue;
+        }
+        let default_classes = [ShipClass::Battleship, ShipClass::Destroyer, ShipClass::Scout];
+        for (i, class) in default_classes.iter().enumerate() {
+            let offset =
+                perp * (i as f32 - (default_classes.len() as f32 - 1.0) / 2.0) * ship_spacing;
+            let pos = *corner + offset;
+            let entity = spawn_server_ship_default(&mut commands, pos, *team, *class, Entity::PLACEHOLDER);
+            // Note: default ships get ShipNumber(0) via spawn_server_ship_default
+            info!(
+                "Spawned default {:?} for Team {} at ({:.0}, {:.0}): {:?}",
+                class, team.0, pos.x, pos.y, entity
+            );
         }
     }
 
@@ -375,12 +396,12 @@ fn client_entity(client_id: ClientId) -> Option<Entity> {
     }
 }
 
-/// Validates that the given client owns a ship (same team). Returns the team if valid.
+/// Validates that the given client owns a ship (Player component match). Returns `Some(())` if valid.
 fn validate_ownership(
     client_id: ClientId,
     ship_entity: Entity,
     client_teams: &ClientTeams,
-    ship_query: &Query<&Team, With<Ship>>,
+    player_query: &Query<&Player, With<Ship>>,
     command_name: &str,
 ) -> Option<()> {
     let Some(entity) = client_entity(client_id) else {
@@ -388,20 +409,21 @@ fn validate_ownership(
         return None;
     };
 
-    let Some(client_team) = client_teams.map.get(&entity) else {
+    // Verify the client is known
+    if !client_teams.map.contains_key(&entity) {
         warn!("{command_name} from unknown client {entity:?}");
         return None;
-    };
+    }
 
-    let Ok(ship_team) = ship_query.get(ship_entity) else {
+    let Ok(player) = player_query.get(ship_entity) else {
         warn!("{command_name} for invalid ship {ship_entity:?}");
         return None;
     };
 
-    if ship_team != client_team {
+    if player.0 != entity {
         warn!(
-            "{command_name} rejected: client Team({}) tried to control Team({}) ship",
-            client_team.0, ship_team.0
+            "{command_name} rejected: client {entity:?} tried to control ship owned by {:?}",
+            player.0
         );
         return None;
     }
@@ -420,7 +442,7 @@ fn handle_move_command(
     trigger: On<FromClient<MoveCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
     transform_query: Query<&Transform, With<Ship>>,
     mut waypoint_query: Query<(&mut WaypointQueue, Option<&SquadMember>), With<Ship>>,
     follower_query: Query<(Entity, &SquadMember), With<Ship>>,
@@ -429,7 +451,7 @@ fn handle_move_command(
     let from = trigger.event();
     let cmd = &from.message;
 
-    if validate_ownership(from.client_id, cmd.ship, &client_teams, &team_query, "MoveCommand")
+    if validate_ownership(from.client_id, cmd.ship, &client_teams, &player_query, "MoveCommand")
         .is_none()
     {
         return;
@@ -553,7 +575,7 @@ fn handle_facing_lock_command(
     trigger: On<FromClient<FacingLockCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -562,7 +584,7 @@ fn handle_facing_lock_command(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "FacingLockCommand",
     )
     .is_none()
@@ -588,7 +610,7 @@ fn handle_facing_unlock_command(
     trigger: On<FromClient<FacingUnlockCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -597,7 +619,7 @@ fn handle_facing_unlock_command(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "FacingUnlockCommand",
     )
     .is_none()
@@ -615,6 +637,7 @@ fn handle_target_command(
     trigger: On<FromClient<TargetCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
+    player_query: Query<&Player, With<Ship>>,
     team_query: Query<&Team, With<Ship>>,
 ) {
     let from = trigger.event();
@@ -624,7 +647,7 @@ fn handle_target_command(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "TargetCommand",
     )
     .is_none()
@@ -669,7 +692,7 @@ fn handle_target_by_contact(
     trigger: On<FromClient<TargetByContactCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
     contact_query: Query<&ContactSourceShip, With<RadarContact>>,
 ) {
     let from = trigger.event();
@@ -679,7 +702,7 @@ fn handle_target_by_contact(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "TargetByContactCommand",
     )
     .is_none()
@@ -710,7 +733,7 @@ fn handle_clear_target_command(
     trigger: On<FromClient<ClearTargetCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
 ) {
     let from = trigger.event();
     let cmd = &from.message;
@@ -719,7 +742,7 @@ fn handle_clear_target_command(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "ClearTargetCommand",
     )
     .is_none()
@@ -736,7 +759,7 @@ fn handle_clear_target_command(
 fn handle_fire_missile(
     trigger: On<FromClient<FireMissileCommand>>,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
     mut ship_query: Query<(&mut MissileQueue, &Mounts), With<Ship>>,
 ) {
     let from = trigger.event();
@@ -746,7 +769,7 @@ fn handle_fire_missile(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "FireMissileCommand",
     )
     .is_none()
@@ -792,7 +815,7 @@ fn handle_fire_missile(
 fn handle_cancel_missiles(
     trigger: On<FromClient<CancelMissilesCommand>>,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
     mut queue_query: Query<&mut MissileQueue, With<Ship>>,
 ) {
     let from = trigger.event();
@@ -802,7 +825,7 @@ fn handle_cancel_missiles(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "CancelMissilesCommand",
     )
     .is_none()
@@ -827,6 +850,7 @@ fn handle_join_squad(
     trigger: On<FromClient<JoinSquadCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
+    player_query: Query<&Player, With<Ship>>,
     team_query: Query<&Team, With<Ship>>,
     transform_query: Query<&Transform, With<Ship>>,
     squad_query: Query<(Entity, &SquadMember), With<Ship>>,
@@ -839,7 +863,7 @@ fn handle_join_squad(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "JoinSquadCommand",
     )
     .is_none()
@@ -975,7 +999,7 @@ fn handle_radar_toggle(
     trigger: On<FromClient<RadarToggleCommand>>,
     mut commands: Commands,
     client_teams: Res<ClientTeams>,
-    team_query: Query<&Team, With<Ship>>,
+    player_query: Query<&Player, With<Ship>>,
     radar_query: Query<Option<&RadarActive>>,
     mounts_query: Query<&Mounts>,
 ) {
@@ -986,7 +1010,7 @@ fn handle_radar_toggle(
         from.client_id,
         cmd.ship,
         &client_teams,
-        &team_query,
+        &player_query,
         "RadarToggleCommand",
     ) else {
         return;

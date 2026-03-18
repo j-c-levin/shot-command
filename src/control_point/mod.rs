@@ -203,7 +203,7 @@ fn update_control_points(
         for (ship_tf, team) in &ships {
             let ship_pos = Vec2::new(ship_tf.translation.x, ship_tf.translation.z);
             if ship_pos.distance_squared(center) <= r_sq {
-                match team.0 {
+                match team.index() {
                     0 => team0_count += 1,
                     1 => team1_count += 1,
                     _ => {}
@@ -265,7 +265,7 @@ impl Plugin for ControlPointClientPlugin {
 }
 
 fn team_color(team: u8, local_team: &LocalTeam) -> Color {
-    if local_team.0.map(|lt| lt.0 == team).unwrap_or(false) {
+    if Team(team).is_friendly(local_team) {
         COLOR_FRIENDLY
     } else {
         COLOR_ENEMY
@@ -355,8 +355,8 @@ fn update_score_display(
         totals[1] += scores.scores[1];
     }
 
-    let local_id = local_team.0.map(|t| t.0 as usize).unwrap_or(0);
-    let enemy_id = 1 - local_id;
+    let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
+    let enemy_id = local_team.0.map(|t| t.opponent().index()).unwrap_or(1);
 
     *text = Text::new(format!(
         "{}  ───  {}",
