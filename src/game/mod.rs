@@ -2,6 +2,16 @@ use bevy::prelude::*;
 use bevy::time::Timer;
 use serde::{Deserialize, Serialize};
 
+/// Despawn an entity via direct World access. Safe if entity is already gone —
+/// `World::despawn` returns `false` instead of panicking. Use this instead of
+/// `commands.entity(e).despawn()` when multiple systems might race to despawn
+/// the same entity in a single frame (e.g. CWIS + missile collision).
+pub fn try_despawn(commands: &mut Commands, entity: Entity) {
+    commands.queue(move |world: &mut World| {
+        world.despawn(entity);
+    });
+}
+
 pub struct GamePlugin;
 
 impl Plugin for GamePlugin {

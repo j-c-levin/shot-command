@@ -92,7 +92,7 @@ fn despawn_cwis_rounds(
     for (entity, mut round) in &mut query {
         round.0 -= dt;
         if round.0 <= 0.0 {
-            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
+            crate::game::try_despawn(&mut commands, entity);
         }
     }
 }
@@ -106,7 +106,7 @@ fn check_projectile_bounds(
     for (entity, transform) in &query {
         let pos = transform.translation;
         if pos.x.abs() > bounds.half_extents.x || pos.z.abs() > bounds.half_extents.y {
-            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
+            crate::game::try_despawn(&mut commands, entity);
         }
     }
 }
@@ -169,7 +169,7 @@ fn check_projectile_hits(
                 if engines_went_offline {
                     commands.entity(ship_entity).insert(crate::game::EngineOffline);
                 }
-                if let Ok(mut e) = commands.get_entity(proj_entity) { e.despawn(); }
+                crate::game::try_despawn(&mut commands, proj_entity);
                 break;
             }
         }

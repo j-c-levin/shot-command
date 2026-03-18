@@ -104,7 +104,7 @@ fn fade_out_ghosts(
                 }
             }
         } else {
-            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
+            crate::game::try_despawn(&mut commands, entity);
         }
     }
 }

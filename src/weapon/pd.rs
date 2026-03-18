@@ -296,7 +296,7 @@ fn cwis_fire(
                         &mut commands,
                         target_pos,
                     );
-                    if let Ok(mut e) = commands.get_entity(target_entity) { e.despawn(); }
+                    crate::game::try_despawn(&mut commands, target_entity);
                 }
 
                 // Spawn 1 visual tracer round (cosmetic only, CwisRound = no ship collision)
@@ -358,7 +358,7 @@ fn process_laser_kills(
                     &mut commands,
                     missile_tf.translation,
                 );
-                if let Ok(mut e) = commands.get_entity(tracking.0) { e.despawn(); }
+                crate::game::try_despawn(&mut commands, tracking.0);
             }
             commands.entity(beam_entity).remove::<LaserBeamKill>();
         }
@@ -384,7 +384,7 @@ fn update_laser_beams(
             beam_target.0 = missile_tf.translation;
         } else {
             // Missile gone — despawn beam
-            if let Ok(mut e) = commands.get_entity(beam_entity) { e.despawn(); }
+            crate::game::try_despawn(&mut commands, beam_entity);
         }
     }
 }
@@ -399,7 +399,7 @@ fn tick_laser_beams(
     for (entity, mut timer) in &mut query {
         timer.0 -= dt;
         if timer.0 <= 0.0 {
-            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
+            crate::game::try_despawn(&mut commands, entity);
         }
     }
 }
