@@ -41,6 +41,8 @@ impl Plugin for FleetUiPlugin {
                     handle_weapon_picker_option,
                     handle_submit_button,
                     handle_popup_close,
+                    handle_save_fleet,
+                    handle_load_fleet,
                 )
                     .run_if(fleet_builder_active.clone()),
             )

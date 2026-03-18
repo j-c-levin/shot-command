@@ -133,6 +133,12 @@ pub struct WeaponPickerOption(pub Option<WeaponType>);
 #[derive(Component)]
 pub struct PopupCloseButton;
 
+#[derive(Component)]
+pub struct SaveFleetButton;
+
+#[derive(Component)]
+pub struct LoadFleetButton;
+
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
 pub fn spawn_fleet_ui(
@@ -269,6 +275,44 @@ pub fn spawn_fleet_builder_content(parent: &mut ChildSpawnerCommands<'_>) {
                     },
                     TextColor(TEXT_WHITE),
                 ));
+
+            // Save/Load buttons
+            bottom.spawn(Node {
+                flex_direction: FlexDirection::Row,
+                column_gap: Val::Px(8.0),
+                ..default()
+            }).with_children(|btns| {
+                btns.spawn((
+                    SaveFleetButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(BG_BUTTON),
+                )).with_child((
+                    Text::new("Save"),
+                    TextFont { font_size: 16.0, ..default() },
+                    TextColor(TEXT_WHITE),
+                ));
+                btns.spawn((
+                    LoadFleetButton,
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(16.0), Val::Px(10.0)),
+                        justify_content: JustifyContent::Center,
+                        align_items: AlignItems::Center,
+                        ..default()
+                    },
+                    BackgroundColor(BG_BUTTON),
+                )).with_child((
+                    Text::new("Load"),
+                    TextFont { font_size: 16.0, ..default() },
+                    TextColor(TEXT_WHITE),
+                ));
+            });
 
             // Status text
             bottom.spawn((
@@ -1037,6 +1081,82 @@ pub fn handle_submit_button(
             }
         }
     }
+}
+
+pub fn handle_save_fleet(
+    query: Query<&Interaction, (Changed<Interaction>, With<SaveFleetButton>)>,
+    state: Res<FleetBuilderState>,
+) {
+    for interaction in &query {
+        if *interaction == Interaction::Pressed && !state.ships.is_empty() {
+            let dir = std::path::Path::new("fleets");
+            if std::fs::create_dir_all(dir).is_err() {
+                warn!("Failed to create fleets directory");
+                return;
+            }
+            let filename = format!("fleets/fleet_{}.ron", chrono_timestamp());
+            match ron::ser::to_string_pretty(&state.ships, ron::ser::PrettyConfig::default()) {
+                Ok(data) => {
+                    if let Err(e) = std::fs::write(&filename, &data) {
+                        warn!("Failed to save fleet: {e}");
+                    } else {
+                        info!("Fleet saved to {filename}");
+                    }
+                }
+                Err(e) => warn!("Failed to serialize fleet: {e}"),
+            }
+        }
+    }
+}
+
+pub fn handle_load_fleet(
+    query: Query<&Interaction, (Changed<Interaction>, With<LoadFleetButton>)>,
+    mut state: ResMut<FleetBuilderState>,
+) {
+    for interaction in &query {
+        if *interaction == Interaction::Pressed {
+            // Load the most recent fleet file
+            let dir = std::path::Path::new("fleets");
+            if !dir.exists() {
+                warn!("No fleets directory found");
+                return;
+            }
+            let mut files: Vec<_> = std::fs::read_dir(dir)
+                .into_iter()
+                .flatten()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "ron"))
+                .collect();
+            files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+
+            if let Some(entry) = files.first() {
+                match std::fs::read_to_string(entry.path()) {
+                    Ok(data) => match ron::from_str::<Vec<ShipSpec>>(&data) {
+                        Ok(ships) => {
+                            info!("Fleet loaded from {:?} ({} ships)", entry.path(), ships.len());
+                            state.ships = ships;
+                            state.selected_ship = None;
+                            state.submitted = false;
+                        }
+                        Err(e) => warn!("Failed to parse fleet file: {e}"),
+                    },
+                    Err(e) => warn!("Failed to read fleet file: {e}"),
+                }
+            } else {
+                warn!("No fleet files found in fleets/");
+            }
+        }
+    }
+}
+
+/// Simple timestamp for fleet filenames.
+fn chrono_timestamp() -> String {
+    use std::time::{SystemTime, UNIX_EPOCH};
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    format!("{secs}")
 }
 
 // ── Update displays ─────────────────────────────────────────────────────
