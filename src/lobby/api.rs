@@ -120,10 +120,11 @@ pub fn launch_game(
     rx
 }
 
-/// Delete a game from the lobby.
-pub fn delete_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>> {
+/// Leave or delete a game from the lobby.
+/// Creator leaving deletes the game; non-creator just removes themselves.
+pub fn delete_game(api_base: &str, game_id: &str, player_name: &str) -> Receiver<Result<(), String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/deleteGame/{game_id}");
+    let url = format!("{api_base}/deleteGame/{game_id}?player={player_name}");
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client

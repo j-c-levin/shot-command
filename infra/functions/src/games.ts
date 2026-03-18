@@ -147,10 +147,24 @@ export const launchGame = onRequest(async (req, res) => {
 
 export const deleteGame = onRequest(async (req, res) => {
   if (req.method !== "DELETE") { res.status(405).send("Method not allowed"); return; }
-  const gameId = req.path.split("/").pop();
+  const gameId = req.path.split("/").filter(Boolean)[0];
+  const playerName = req.query.player as string;
   if (!gameId) { res.status(400).send("game ID required"); return; }
 
-  // For simplicity: just delete the doc. In production, check authorization.
-  await db.collection("games").doc(gameId).delete();
+  const gameRef = db.collection("games").doc(gameId);
+  const doc = await gameRef.get();
+  if (!doc.exists) { res.status(404).send("game not found"); return; }
+  const data = doc.data()!;
+
+  if (!playerName || playerName === data.creator) {
+    // Creator leaving — delete the whole game
+    await gameRef.delete();
+  } else {
+    // Non-creator leaving — just remove from players array
+    const updatedPlayers = (data.players || []).filter(
+      (p: { name: string }) => p.name !== playerName
+    );
+    await gameRef.update({ players: updatedPlayers });
+  }
   res.json({ ok: true });
 });
