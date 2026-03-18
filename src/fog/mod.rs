@@ -104,7 +104,7 @@ fn fade_out_ghosts(
                 }
             }
         } else {
-            commands.entity(entity).despawn();
+            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
         }
     }
 }

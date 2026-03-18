@@ -344,7 +344,7 @@ fn check_missile_asteroid_hits(
 
             if dist < asteroid_size.radius {
                 spawn_small_explosion(&mut commands, missile_tf.translation);
-                commands.entity(missile_entity).despawn();
+                if let Ok(mut e) = commands.get_entity(missile_entity) { e.despawn(); }
                 break;
             }
         }
@@ -398,7 +398,7 @@ pub fn check_missile_hits(
                     commands.entity(ship_entity).insert(crate::game::EngineOffline);
                 }
                 spawn_explosion(&mut commands, missile_pos);
-                commands.entity(missile_entity).despawn();
+                if let Ok(mut e) = commands.get_entity(missile_entity) { e.despawn(); }
                 break;
             }
         }
@@ -413,7 +413,7 @@ fn despawn_spent_missiles(
     for (entity, transform, fuel) in &query {
         if fuel.0 <= 0.0 {
             spawn_small_explosion(&mut commands, transform.translation);
-            commands.entity(entity).despawn();
+            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
         }
     }
 }
@@ -427,7 +427,7 @@ fn check_missile_bounds(
     for (entity, transform) in &query {
         let pos = transform.translation;
         if pos.x.abs() > bounds.half_extents.x || pos.z.abs() > bounds.half_extents.y {
-            commands.entity(entity).despawn();
+            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
         }
     }
 }
@@ -464,7 +464,7 @@ fn tick_explosions(
     for (entity, mut timer) in &mut query {
         timer.0 -= dt;
         if timer.0 <= 0.0 {
-            commands.entity(entity).despawn();
+            if let Ok(mut e) = commands.get_entity(entity) { e.despawn(); }
         }
     }
 }
