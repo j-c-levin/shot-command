@@ -290,19 +290,14 @@ bounds gizmos. See design doc at
 
 **Next up:**
 
-1. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
-   client auto-update, on-demand match servers. See plan at
+1. **Phase 7: Cloud Deployment & Game Lobby** — Firebase lobby backend (Cloud Functions +
+   Firestore), Edgegap game servers, Pulumi infrastructure, CI/CD with GitHub Actions,
+   client main menu + game lobby UI with fleet building in lobby. See design at
+   `docs/plans/2026-03-18-phase7-cloud-deployment-design.md` and earlier research at
    `docs/plans/2026-03-17-edgegap-deployment-plan.md`.
-
-2. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
-   Linux (.zip) via GitHub Releases CI/CD pipeline.
 
 **Dropped:** Beam weapons (from original Phase 5 brainstorm).
 
-**TODO:**
-- Ammo limits — cannons/railguns and missiles all need finite ammo. Currently disabled
-  for development, re-enable for production. VLS tube reload is a cooldown mechanic,
-  not an ammo limit.
 **Known bugs:**
 - (none currently)
 
