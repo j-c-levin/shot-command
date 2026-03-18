@@ -1,0 +1,6 @@
+name: nebulous-lobby
+runtime:
+  name: nodejs
+  options:
+    typescript: true
+description: Firebase infrastructure for Nebulous Shot Command game lobby

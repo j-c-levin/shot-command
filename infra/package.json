@@ -1,0 +1,12 @@
+{
+  "name": "nebulous-lobby-infra",
+  "devDependencies": {
+    "@types/node": "^20",
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@pulumi/pulumi": "^3",
+    "@pulumi/gcp": "^8",
+    "@pulumi/command": "^1"
+  }
+}
