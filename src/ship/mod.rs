@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 
 use crate::game::{GameState, Health, Player, Team};
+use crate::map::{Asteroid, AsteroidSize};
 use crate::net::LocalTeam;
 use crate::radar::rwr::RwrBearings;
 use crate::radar::RadarActiveSecret;
@@ -21,6 +22,7 @@ impl Plugin for ShipPhysicsPlugin {
                 turn_ships,
                 apply_thrust,
                 apply_velocity,
+                check_ship_asteroid_collisions,
                 check_waypoint_arrival,
                 clamp_ships_to_bounds,
             )
@@ -715,6 +717,48 @@ fn apply_velocity(
     }
 }
 
+/// Resolve collision between a ship and an asteroid in the XZ plane.
+/// Returns `Some((new_position, Vec2::ZERO))` if colliding, `None` otherwise.
+pub fn resolve_asteroid_collision(
+    ship_pos: Vec2,
+    ship_radius: f32,
+    asteroid_pos: Vec2,
+    asteroid_radius: f32,
+) -> Option<Vec2> {
+    let separation = ship_pos - asteroid_pos;
+    let dist = separation.length();
+    let min_dist = asteroid_radius + ship_radius;
+
+    if dist < min_dist && dist > 0.0 {
+        let push_dir = separation / dist;
+        Some(asteroid_pos + push_dir * min_dist)
+    } else {
+        None
+    }
+}
+
+fn check_ship_asteroid_collisions(
+    mut ship_query: Query<(&mut Transform, &mut Velocity, &ShipClass), With<Ship>>,
+    asteroid_query: Query<(&Transform, &AsteroidSize), (With<Asteroid>, Without<Ship>)>,
+) {
+    for (mut ship_tf, mut velocity, class) in &mut ship_query {
+        let ship_radius = class.profile().collision_radius;
+        let ship_xz = Vec2::new(ship_tf.translation.x, ship_tf.translation.z);
+
+        for (asteroid_tf, asteroid_size) in &asteroid_query {
+            let asteroid_xz = Vec2::new(asteroid_tf.translation.x, asteroid_tf.translation.z);
+
+            if let Some(new_pos) = resolve_asteroid_collision(
+                ship_xz, ship_radius, asteroid_xz, asteroid_size.radius,
+            ) {
+                ship_tf.translation.x = new_pos.x;
+                ship_tf.translation.z = new_pos.y;
+                velocity.linear = Vec2::ZERO;
+            }
+        }
+    }
+}
+
 const ARRIVAL_THRESHOLD_TIGHT: f32 = 10.0;
 const ARRIVAL_THRESHOLD_LOOSE: f32 = 30.0;
 
@@ -1345,5 +1389,71 @@ mod tests {
         eh.hp = 0;
         eh.offline_timer = 0.0;
         assert!(!eh.is_offline());
+    }
+
+    // ── Ship-asteroid collision tests ──────────────────────────────
+
+    #[test]
+    fn asteroid_collision_ship_inside_pushed_out() {
+        let ship_pos = Vec2::new(110.0, 100.0);
+        let asteroid_pos = Vec2::new(100.0, 100.0);
+        let asteroid_radius = 30.0;
+        let ship_radius = ShipClass::Destroyer.profile().collision_radius; // 8.0
+
+        let result = resolve_asteroid_collision(ship_pos, ship_radius, asteroid_pos, asteroid_radius);
+        let new_pos = result.expect("Should collide: distance 10 < 38");
+
+        let dist = (new_pos - asteroid_pos).length();
+        assert!((dist - (asteroid_radius + ship_radius)).abs() < 0.01,
+            "Ship should be at edge: dist={dist}, expected={}",
+            asteroid_radius + ship_radius);
+
+        // Should be pushed along the original separation direction (+X)
+        assert!(new_pos.x > asteroid_pos.x);
+    }
+
+    #[test]
+    fn asteroid_collision_ship_outside_returns_none() {
+        // Distance 50 > 20 + 12 = 32
+        let result = resolve_asteroid_collision(
+            Vec2::new(150.0, 100.0), 12.0,
+            Vec2::new(100.0, 100.0), 20.0,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn asteroid_collision_at_exact_boundary_returns_none() {
+        let asteroid_radius = 25.0;
+        let ship_radius = ShipClass::Scout.profile().collision_radius; // 5.0
+        let min_dist = asteroid_radius + ship_radius; // 30.0
+
+        // Ship exactly at boundary distance (strict < means no collision)
+        let result = resolve_asteroid_collision(
+            Vec2::new(min_dist, 0.0), ship_radius,
+            Vec2::ZERO, asteroid_radius,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn asteroid_collision_uses_class_specific_radius() {
+        let asteroid_pos = Vec2::ZERO;
+        let asteroid_radius = 20.0;
+        let ship_pos = Vec2::new(25.0, 0.0); // distance = 25
+
+        // Battleship (radius 12): 20 + 12 = 32 > 25 → collides
+        let bb_result = resolve_asteroid_collision(
+            ship_pos, ShipClass::Battleship.profile().collision_radius,
+            asteroid_pos, asteroid_radius,
+        );
+        assert!(bb_result.is_some(), "BB should collide at dist 25 (min_dist=32)");
+
+        // Scout (radius 5): 20 + 5 = 25 = 25 → does NOT collide (strict <)
+        let scout_result = resolve_asteroid_collision(
+            ship_pos, ShipClass::Scout.profile().collision_radius,
+            asteroid_pos, asteroid_radius,
+        );
+        assert!(scout_result.is_none(), "Scout should not collide at exact boundary");
     }
 }

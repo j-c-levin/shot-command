@@ -33,7 +33,7 @@ First build from clean is ~4-5 minutes (Bevy is large). Subsequent builds are fa
 ### Philosophy
 
 All tests are **pure-function or World-level only** — no full App, no render context, no asset
-server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 256 tests.
+server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 273 tests.
 
 - **Pure math** (physics, LOS, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
 - **Resource/component presence**: `World::new()` + `world.insert_resource()` / `world.spawn()`
@@ -45,7 +45,7 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file:
 
 | Module | # | What's tested |
 |---|---|---|
-| `src/ship/mod.rs` | 46 | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class, squad offset computation (positive/negative), squad move destination (with offset/zero), ship number assignment, ship number default, squad speed limit (caps/no effect), RCS ordering (BB>DD>Scout), RCS range (0..1), EngineHealth (new/floor/is_offline/offline-timer-expired), RepairCooldown, HP pool values (BB/DD/Scout hull+engine) |
+| `src/ship/mod.rs` | 50 | Thrust multiplier (facing/away/perpendicular), ship profiles ordering, velocity default, angle math (same/opposite/perpendicular), braking distance, shortest angle delta (positive/negative/wraparound), XZ extraction, facing direction, waypoint queue, steering controller (desired velocity braking/direction/at-target, perpendicular correction, overshoot braking), default mounts per class, squad offset computation (positive/negative), squad move destination (with offset/zero), ship number assignment, ship number default, squad speed limit (caps/no effect), RCS ordering (BB>DD>Scout), RCS range (0..1), EngineHealth (new/floor/is_offline/offline-timer-expired), RepairCooldown, HP pool values (BB/DD/Scout hull+engine), asteroid collision (inside/outside/boundary/class-specific radius) |
 | `src/radar/mod.rs` | 26 | Aspect factor (broadside/nose-on/tail-on/range/symmetry/quarter-angle), SNR (distance/RCS/aspect/zero-distance), detection scenarios (BB broadside tracked at 800m, Scout nose-on not tracked, DD broadside at 300m with nav radar, missile detection), ContactTracker ID allocation (sequential, per-team), range cap, destroyer scenarios (signature nose-on, tracked broadside), RWR range (in/out/boundary) |
 | `src/weapon/mod.rs` | 27 | Weapon profiles (heavy cannon, cannon, railgun, HeavyVLS, LightVLS, LaserPD, CWIS, SearchRadar, NavRadar values), mount size mapping, weapon categories (incl. Sensor), VLS tube reload, MountSize::fits (same/smaller/rejects larger), MountSize::hp (Large/Medium/Small), Mount::new (all fields/with weapon) |
 | `src/weapon/damage.rs` | 34 | Hit zone classification (front/rear/broadside with boundary angles), damage routing (70/30 split per zone), railgun precision routing (90/10 component/hull), damage conservation (all angles + railgun), apply_damage_to_ship end-to-end (front→hull, rear→engines, broadside→component, no cross-contamination), engine/component offline at 0 HP, offline cooldown by mount size (10/15/20s), damage spill (dead engines→hull, no components→hull), repair cooldown reset, repair healing toward floor |
@@ -106,7 +106,7 @@ Library crate (`src/lib.rs`) with two binaries:
 
 ### System ordering (Update schedule)
 
-**Server — Ship physics chain:** 1. Update facing targets → 2. Turn ships → 3. Apply thrust → 4. Apply velocity (with space drag) → 5. Check waypoint arrival → 6. Clamp to bounds
+**Server — Ship physics chain:** 1. Update facing targets → 2. Turn ships → 3. Apply thrust → 4. Apply velocity (with space drag) → 5. Ship-asteroid collision (push out + zero velocity) → 6. Check waypoint arrival → 7. Clamp to bounds
 
 **Server — Weapons:** tick_weapon_cooldowns → auto_fire (spawn projectiles)
 
@@ -151,6 +151,7 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Weapon system**: Mounts are sized slots (Large/Medium/Small) per ship class, each with HP (150/100/75 by size). Weapons auto-fire at designated targets when in range+arc. Offline mounts (hp==0) cannot fire. Projectiles are independent server entities with velocity — no hitscan. Cooldown ticks every frame regardless of targeting. Lead calculation predicts target position. Railguns require forward-facing (±10°), fire RailgunRound marker for precision component targeting. Damage values: HC 25×3=75/burst, CN 20/shot, RG 50, missiles 80. Missile launchers (HeavyVLS/LightVLS) fire from MissileQueue. VLS uses tubes_loaded + tube_reload_timer on WeaponState (3s per-tube reload, queue capped at loaded tubes). Point defense (LaserPD/CWIS) auto-engages incoming missiles — probability-based kills, no missile HP.
 - **Missile system**: M key toggles missile mode (gated by VLS presence). Right-click ground fires missiles at a point, click enemy fires at entity (with tracking). Simplified flat flight with seeker cone acquisition — no altitude/avoidance phases. Missiles destroyed by asteroid collision. MissileQueue lives on Ship entities and syncs to ShipSecrets.
 - **Point defense**: LaserPD range 300m with visible beam (LaserBeam/LaserBeamTarget/LaserBeamTimer entities track missile in real-time, delayed kill 0.15s after beam appears). CWIS 100m kill radius / 150m visual tracer range (both doubled to 200m/300m when engaging radar-tracked missiles). Probability-based kills. 0.2s retarget delay between engagements.
+- **Ship-asteroid collision**: Ships collide with asteroids using `asteroid_radius + ship_collision_radius`. On collision, ship is pushed to the asteroid's edge and velocity is zeroed (hard stop). Runs after velocity application in the physics chain.
 - **Ground plane**: Invisible (transparent), 3x map bounds for click targeting.
 - **Explosions**: Two sizes — ship impact (large) vs PD kill (small).
 - **Targeting**: K+number key targets enemy (ship or radar track). K again clears. Target auto-clears when enemy loses both visual LOS AND radar track (signature alone not enough). TargetDesignation synced via ShipSecrets (team-private). Radar-only targets use TargetByContactCommand (server resolves contact → source ship).
@@ -274,18 +275,15 @@ RWR asteroid LOS blocking fix. See design doc at
 
 **Next up:**
 
-1. **ECS Review** — Audit codebase for ECS antipatterns (magic numbers vs components,
-   duplicated systems, missing markers, god systems). Clean up before adding features.
-
-2. **Phase 6: Maps & Editor** — Designed maps with multiple control points and asteroid
+1. **Phase 6: Maps & Editor** — Designed maps with multiple control points and asteroid
    layouts. Map editor mode for placing/dragging asteroids and control points, saving to
    disk. Procedural generation rules for chokepoints and open spaces.
 
-3. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
+2. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
    client auto-update, on-demand match servers. See plan at
    `docs/plans/2026-03-17-edgegap-deployment-plan.md`.
 
-4. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
+3. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
    Linux (.zip) via GitHub Releases CI/CD pipeline.
 
 **Dropped:** Beam weapons (from original Phase 5 brainstorm).
@@ -295,9 +293,7 @@ RWR asteroid LOS blocking fix. See design doc at
   for development, re-enable for production. VLS tube reload is a cooldown mechanic,
   not an ammo limit.
 **Known bugs:**
-- Ships pass through asteroids (missiles correctly explode on contact, projectiles are
-  correctly removed). Need ship-asteroid collision: ships should stop on contact with
-  asteroids, not pass through
+- (none currently)
 
 ## Pre-approvals
 
