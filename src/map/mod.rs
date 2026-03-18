@@ -1,3 +1,5 @@
+pub mod data;
+
 use bevy::prelude::*;
 use rand::Rng;
 use serde::{Deserialize, Serialize};

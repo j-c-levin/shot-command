@@ -3817,6 +3817,7 @@ dependencies = [
  "bevy_replicon_renet",
  "clap",
  "rand",
+ "ron",
  "serde",
  "tracing",
  "winit",
