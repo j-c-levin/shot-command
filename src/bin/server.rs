@@ -53,6 +53,13 @@ struct EdgegapTermination {
     delete_token: String,
 }
 
+/// Resource for closing the game in the lobby API on match end.
+#[derive(Resource)]
+struct LobbyCleanup {
+    api_base_url: String,
+    game_id: String,
+}
+
 fn main() {
     let cli = Cli::parse();
     let bind_address = resolve_bind_address(&cli.bind);
@@ -107,6 +114,19 @@ fn main() {
         app.add_systems(OnEnter(GameState::GameOver), edgegap_self_terminate);
     }
 
+    // If GAME_ID and LOBBY_API_URL are set, close the game in Firebase on GameOver.
+    let lobby_api = env::var("LOBBY_API_URL")
+        .ok()
+        .or_else(|| Some("http://127.0.0.1:5001/demo-no-project/us-central1".to_string()));
+    if let (Some(api_url), Ok(game_id)) = (lobby_api, env::var("GAME_ID")) {
+        info!("Lobby cleanup configured for game {game_id}");
+        app.insert_resource(LobbyCleanup {
+            api_base_url: api_url,
+            game_id,
+        });
+        app.add_systems(OnEnter(GameState::GameOver), lobby_close_game);
+    }
+
     app.run();
 }
 
@@ -136,6 +156,23 @@ fn edgegap_self_terminate(termination: Res<EdgegapTermination>) {
         {
             Ok(resp) => info!("Edgegap termination response: {}", resp.status()),
             Err(e) => error!("Failed to request Edgegap termination: {e}"),
+        }
+    });
+}
+
+/// Close the game in the lobby API so it disappears from the game list.
+fn lobby_close_game(cleanup: Res<LobbyCleanup>) {
+    info!("Match over - closing game {} in lobby", cleanup.game_id);
+
+    let url = format!("{}/closeGame", cleanup.api_base_url);
+    let game_id = cleanup.game_id.clone();
+
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let body = serde_json::json!({ "game_id": game_id });
+        match client.post(&url).json(&body).send() {
+            Ok(resp) => info!("Lobby close game response: {}", resp.status()),
+            Err(e) => error!("Failed to close game in lobby: {e}"),
         }
     });
 }

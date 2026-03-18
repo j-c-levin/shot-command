@@ -313,7 +313,7 @@ pub fn poll_game_detail(
                     "waiting" if !all_ready => {
                         "Waiting for all players to ready up...".to_string()
                     }
-                    "waiting" => "All ready — launch when ready!".to_string(),
+                    "waiting" => "All ready - launch when ready!".to_string(),
                     "launching" => "Launching server...".to_string(),
                     other => format!("Status: {}", other),
                 };

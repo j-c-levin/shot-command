@@ -141,7 +141,10 @@ export const launchGame = onRequest(async (req, res) => {
   const deployPayload = {
     application: edgegapApp,
     version: edgegapVersion,
-    env_vars: data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : [],
+    env_vars: [
+      { key: "GAME_ID", value: gameId, is_hidden: false },
+      ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
+    ],
     webhook_on_ready: webhookUrl ? { url: webhookUrl } : undefined,
   };
 
@@ -189,5 +192,18 @@ export const deleteGame = onRequest(async (req, res) => {
     );
     await gameRef.update({ players: updatedPlayers });
   }
+  res.json({ ok: true });
+});
+
+export const closeGame = onRequest(async (req, res) => {
+  if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
+  const { game_id } = req.body;
+  if (!game_id) { res.status(400).send("game_id required"); return; }
+
+  const gameRef = db.collection("games").doc(game_id);
+  const doc = await gameRef.get();
+  if (!doc.exists) { res.status(404).send("game not found"); return; }
+
+  await gameRef.delete();
   res.json({ ok: true });
 });

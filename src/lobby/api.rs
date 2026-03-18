@@ -171,6 +171,30 @@ pub fn delete_game(api_base: &str, game_id: &str, player_name: &str) -> Receiver
     rx
 }
 
+/// Close a completed game (delete from Firestore). Fire-and-forget.
+pub fn close_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>> {
+    let (tx, rx) = channel();
+    let url = format!("{api_base}/closeGame");
+    let body = serde_json::json!({ "game_id": game_id });
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let result = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(format!("close_game failed: {}", r.status()))
+                }
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 /// Fetch the list of available map names from the lobby API.
 pub fn fetch_maps(api_base: &str) -> Receiver<Result<Vec<String>, String>> {
     let (tx, rx) = channel();

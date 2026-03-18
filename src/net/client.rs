@@ -293,9 +293,15 @@ fn show_game_over_ui(
 fn handle_return_to_menu(
     query: Query<&Interaction, (Changed<Interaction>, With<ReturnToMenuButton>)>,
     mut next_state: ResMut<NextState<GameState>>,
+    game_id: Option<Res<crate::lobby::CurrentGameId>>,
+    lobby_config: Option<Res<crate::lobby::LobbyConfig>>,
 ) {
     for interaction in &query {
         if *interaction == Interaction::Pressed {
+            // Close the game in the lobby API so it disappears from the list
+            if let (Some(gid), Some(config)) = (&game_id, &lobby_config) {
+                let _ = crate::lobby::api::close_game(&config.api_base_url, &gid.0);
+            }
             next_state.set(GameState::MainMenu);
         }
     }
