@@ -33,7 +33,7 @@ First build from clean is ~4-5 minutes (Bevy is large). Subsequent builds are fa
 ### Philosophy
 
 All tests are **pure-function or World-level only** — no full App, no render context, no asset
-server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 278 tests.
+server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 283 tests.
 
 - **Pure math** (physics, LOS, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
 - **Resource/component presence**: `World::new()` + `world.insert_resource()` / `world.spawn()`
@@ -294,6 +294,12 @@ RWR asteroid LOS blocking fix. See design doc at
   not an ammo limit.
 **Known bugs:**
 - (none currently)
+
+**Recently completed (this session):**
+- Ship-asteroid collision (hard stop + push out)
+- Camera controls overhaul (left-drag pan, right-drag orbit, 2x selection radius)
+- Shift+click fleet status cards for multi-select
+- Multi-ship formation spread on move commands
 
 ## Pre-approvals
 
