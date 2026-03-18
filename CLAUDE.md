@@ -20,6 +20,9 @@ cargo build --release --bin server    # optimized server for deployment
 cargo run --bin client -- --fleet 1   # auto-submit preset fleet 1 (BB with radar)
 cargo run --bin client -- --fleet 2   # auto-submit preset fleet 2 (Scout with nav radar)
 ./run_game.sh                         # quick dev: server + fleet 1 vs fleet 2
+cargo run --bin client -- --editor             # map editor (no networking)
+cargo run --bin client -- --editor --map x.ron  # edit existing map file
+cargo run --bin server -- --map chokepoint.ron  # server loads designed map
 ```
 
 Requires **nightly Rust** (`rust-toolchain.toml`). The `.cargo/config.toml` uses `-Z` flags
@@ -33,7 +36,7 @@ First build from clean is ~4-5 minutes (Bevy is large). Subsequent builds are fa
 ### Philosophy
 
 All tests are **pure-function or World-level only** — no full App, no render context, no asset
-server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 283 tests.
+server. This keeps `cargo test` fast and avoids GPU/window dependencies. Currently 286 tests.
 
 - **Pure math** (physics, LOS, fade): plain `#[test]`, no imports beyond `bevy::prelude::*`
 - **Resource/component presence**: `World::new()` + `world.insert_resource()` / `world.spawn()`
@@ -59,6 +62,7 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file:
 | `src/weapon/projectile.rs` | 6 | Projectile spawning, direction normalization, advancement, bounds despawn |
 | `src/control_point/mod.rs` | 30 | Capture speed (zero/one/four/nine/diminishing), state machine (neutral→capturing→captured→decapturing, all transitions, freezing, decay, multi-frame accumulation, team1 capture), world-level (ship inside/outside/boundary radius, score accumulation, threshold reached/not-reached) |
 | `src/map/mod.rs` | 6 | MapBounds contains/clamp/size |
+| `src/map/data.rs` | 3 | MapData RON roundtrip serialization, default values, file save/load |
 | `src/weapon/pd.rs` | 3 | PD cylinder detection (inside/outside), altitude-independent cylinder check |
 
 ## Architecture
@@ -81,6 +85,8 @@ Library crate (`src/lib.rs`) with two binaries:
   - `fleet_status.rs` — In-game fleet status sidebar (left edge, ~200px). Ship cards with hull/engine health bars, weapon mount status (online/offline dots, ammo counts), cooldown reload bars. Click card to select ship. Destroyed ships grayed out. Spawned on Playing, despawned on exit.
 - `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→FleetComposition→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (hull HP, u16), Destroyed marker, DestroyTimer
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
+  - `data.rs` — MapData/BoundsDef/SpawnPoint/AsteroidDef/ControlPointDef structs (Serialize/Deserialize), save_map_data/load_map_data RON functions
+  - `editor.rs` — MapEditorPlugin (gated on GameState::Editor): EditorState/EditorTool resources, EditorAsteroid/EditorControlPoint/EditorSpawn markers, click-to-place/drag-to-move/scroll-resize/delete interactions, left panel UI (entity palette + file ops), save/load popup, bounds gizmos, entity highlight gizmos, editor_camera_zoom_or_resize (zoom when no asteroid selected, resize when asteroid selected)
 - `src/ship/` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (incl. hp, engine_hp, rcs, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipNumber(u8) (1-9 per team), SquadMember { leader, offset } (squad formation), ShipSecrets/ShipSecretsOwner (per-component visibility, incl. RadarActiveSecret and RwrBearings), EngineHealth (hp/max_hp/offline_timer, replicated), RepairCooldown, ShipPhysicsPlugin (server, apply_thrust gates on EngineHealth) / ShipVisualsPlugin (client), spawn_server_ship (takes &ShipSpec + ship_number, inits EngineHealth + per-mount HP), spawn_server_ship_default (convenience with default loadout)
 - `src/radar/` — Radar & detection module:
   - `mod.rs` — Constants (SIGNATURE_THRESHOLD 0.1, TRACK_THRESHOLD 0.4, SIGNATURE_FUZZ_RADIUS 75m, MISSILE_RCS, PROJECTILE_RCS), compute_aspect_factor/compute_snr pure functions, RadarActive (server-only marker), RadarActiveSecret (on ShipSecrets), ContactLevel (Signature/Track), RadarContact/ContactSourceShip/ContactTeam/ContactId/ContactKind components, ContactTracker resource, RadarPlugin (server) / RadarClientPlugin (client)
@@ -171,11 +177,14 @@ Library crate (`src/lib.rs`) with two binaries:
 - **Visual indicators**: All in-game indicators use Bevy Gizmos (immediate mode). Green circles for selection, gray circles for squad highlights, red lines for targeting (incl. radar contacts), blue lines for waypoints, yellow lines for facing lock, cyan lines for squad connections, weapon range circles in K mode, blue circle for active radar range, orange pulsing circles for radar signatures, red diamonds for radar tracks, orange X for tracked missiles, yellow lines for RWR bearings. `]` key toggles debug visuals (PD ranges, visual LOS, radar-boosted CWIS ranges). No mesh-based indicators remain.
 - **Control points**: ControlPoint entity at map center with ControlPointState (Neutral→Capturing→Captured→Decapturing), ControlPointRadius(100m), TeamScores component. Presence-based capture: count alive ships in radius, majority makes progress, ties freeze, empty decays. Speed = sqrt(net_advantage) / 20s. Two-phase swing: must decapture to neutral before recapturing. Captured points score 1pt/s, first to 300 wins. Annihilation still instant-wins. Gizmo wireframe sphere (two perpendicular circles), color pulsing during capture/decapture, solid team color when captured. Score display at top center.
 - **Lobby protocol**: FleetSubmission/CancelSubmission (client→server), LobbyStatus/GameStarted (server→client). LobbyTracker resource tracks submissions + countdown. Server stays in WaitingForPlayers throughout. LobbyState includes OpponentSubmitted (opponent done) and OpponentComposing (opponent cancelled).
+- **Map editor**: Dev tool launched via `--editor` flag. GameState::Editor is a dead-end state (never transitions to Playing). Editor skips all networking plugins. MapData struct (RON format) stores bounds, spawns, asteroids, control points. Editor entities use EditorAsteroid/EditorControlPoint/EditorSpawn markers (distinct from game Asteroid/ControlPoint components). Entity-data sync uses position proximity matching. Camera zoom and left-drag pan are gated out of Editor state; editor provides its own scroll handler (editor_camera_zoom_or_resize) that resizes asteroids or zooms camera depending on selection.
+- **Map files**: RON files in `assets/maps/`. Server `--map name.ron` loads designed maps; without `--map`, falls back to random generation. spawn_map_entities() is shared between server and editor. EditorMapData resource holds the live MapData being edited; changes sync to data on drag-release, delete, and placement.
 
 ### Connection flow
 
 **Server:** Setup → WaitingForPlayers (bind, listen, lobby) → Playing (when both fleets submitted + 3s countdown)
 **Client:** Setup → Connecting (connect to server) → FleetComposition (on TeamAssignment) → Playing (on GameStarted)
+**Editor:** Setup → Editor (no networking, no state transitions)
 
 Server sends TeamAssignment immediately on connect. Clients enter FleetComposition independently (no waiting for opponent). Both submit fleets → 3s countdown → server spawns from specs → Playing. Either can cancel during countdown to re-edit. Server spawns fleets from LobbyTracker submissions (or default fleet as fallback) + 12 random asteroids with exclusion zones around spawn corners.
 
@@ -273,17 +282,19 @@ RWR asteroid LOS blocking fix. See design doc at
 `docs/plans/2026-03-17-phase5-damage-repair-design.md` and
 `docs/plans/2026-03-17-fleet-status-sidebar-design.md`.
 
+**Phase 6: Maps & Editor — COMPLETE.** Map editor dev tool (`--editor` flag),
+RON map files (`assets/maps/`), server `--map` loading, entity palette UI,
+click-to-place/drag-to-move/scroll-resize/delete interactions, save/load popup,
+bounds gizmos. See design doc at
+`docs/plans/2026-03-18-phase6-maps-editor-design.md`.
+
 **Next up:**
 
-1. **Phase 6: Maps & Editor** — Designed maps with multiple control points and asteroid
-   layouts. Map editor mode for placing/dragging asteroids and control points, saving to
-   disk. Procedural generation rules for chokepoints and open spaces.
-
-2. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
+1. **Phase 7: Cloud Deployment** — Edgegap server hosting, CI/CD with GitHub Actions,
    client auto-update, on-demand match servers. See plan at
    `docs/plans/2026-03-17-edgegap-deployment-plan.md`.
 
-3. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
+2. **Phase 8: App Distribution** — Client builds for macOS (.dmg), Windows (.zip),
    Linux (.zip) via GitHub Releases CI/CD pipeline.
 
 **Dropped:** Beam weapons (from original Phase 5 brainstorm).
