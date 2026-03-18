@@ -5,7 +5,7 @@ use super::{GameDetail, GameInfo};
 /// List all open games from the lobby API.
 pub fn list_games(api_base: &str) -> Receiver<Result<Vec<GameInfo>, String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games");
+    let url = format!("{api_base}/listGames");
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client
@@ -25,7 +25,7 @@ pub fn create_game(
     map: Option<&str>,
 ) -> Receiver<Result<String, String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games");
+    let url = format!("{api_base}/createGame");
     let body = serde_json::json!({
         "creator": creator,
         "map": map,
@@ -55,7 +55,7 @@ pub fn create_game(
 /// Get full details of a specific game.
 pub fn get_game(api_base: &str, game_id: &str) -> Receiver<Result<GameDetail, String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games/{game_id}");
+    let url = format!("{api_base}/getGame/{game_id}");
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client
@@ -71,7 +71,7 @@ pub fn get_game(api_base: &str, game_id: &str) -> Receiver<Result<GameDetail, St
 /// Join an existing game.
 pub fn join_game(api_base: &str, game_id: &str, name: &str) -> Receiver<Result<(), String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games/{game_id}/join");
+    let url = format!("{api_base}/joinGame/games/{game_id}/join");
     let body = serde_json::json!({ "name": name });
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
@@ -93,13 +93,19 @@ pub fn join_game(api_base: &str, game_id: &str, name: &str) -> Receiver<Result<(
 }
 
 /// Launch a game (creator only). Triggers server deployment.
-pub fn launch_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>> {
+pub fn launch_game(
+    api_base: &str,
+    game_id: &str,
+    creator: &str,
+) -> Receiver<Result<(), String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games/{game_id}/launch");
+    let url = format!("{api_base}/launchGame/games/{game_id}/launch");
+    let body = serde_json::json!({ "creator": creator });
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client
             .post(&url)
+            .json(&body)
             .send()
             .map_err(|e| e.to_string())
             .and_then(|r| {
@@ -117,7 +123,7 @@ pub fn launch_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>
 /// Delete a game from the lobby.
 pub fn delete_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>> {
     let (tx, rx) = channel();
-    let url = format!("{api_base}/games/{game_id}");
+    let url = format!("{api_base}/deleteGame/{game_id}");
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client

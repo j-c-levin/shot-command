@@ -42,8 +42,8 @@ struct Cli {
     #[arg(long, default_value = "Player")]
     name: String,
 
-    /// Lobby API base URL
-    #[arg(long, default_value = "http://localhost:5001")]
+    /// Lobby API base URL (for Firebase emulator: http://127.0.0.1:5001/PROJECT_ID/REGION)
+    #[arg(long, default_value = "http://127.0.0.1:5001/demo-no-project/us-central1")]
     lobby_api: String,
 }
 
