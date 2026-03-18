@@ -47,6 +47,7 @@ impl Plugin for FleetUiPlugin {
                     handle_load_fleet,
                     handle_load_fleet_option,
                     handle_delete_fleet,
+                    tick_notifications,
                 )
                     .run_if(fleet_builder_active.clone()),
             )

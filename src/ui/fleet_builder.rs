@@ -146,7 +146,7 @@ pub struct LoadFleetOption(pub std::path::PathBuf);
 pub struct FleetSaveLoadPopup;
 
 #[derive(Component)]
-pub struct FleetNotificationText;
+pub struct FleetNotificationText(pub Timer);
 
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
@@ -1504,9 +1504,22 @@ fn fleet_auto_name(ships: &[ShipSpec]) -> String {
     format!("{}_{cost}pts", parts.join("_"))
 }
 
+pub fn tick_notifications(
+    mut commands: Commands,
+    time: Res<Time>,
+    mut query: Query<(Entity, &mut FleetNotificationText)>,
+) {
+    for (entity, mut notif) in &mut query {
+        notif.0.tick(time.delta());
+        if notif.0.just_finished() {
+            commands.entity(entity).despawn();
+        }
+    }
+}
+
 fn spawn_notification(commands: &mut Commands, msg: &str) {
     commands.spawn((
-        FleetNotificationText,
+        FleetNotificationText(Timer::from_seconds(2.0, TimerMode::Once)),
         Text::new(msg.to_string()),
         TextFont { font_size: 16.0, ..default() },
         TextColor(TEXT_GREEN),
