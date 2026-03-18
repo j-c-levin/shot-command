@@ -21,6 +21,7 @@ use bevy_replicon_renet::{
 use crate::fog::is_in_los;
 use crate::game::{GameState, Player, Team};
 use crate::map::{Asteroid, AsteroidSize, MapBounds};
+use crate::map::data::{AsteroidDef, ControlPointDef, MapData, SpawnPoint, BoundsDef, load_map_data};
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
     FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand,
@@ -41,6 +42,10 @@ use crate::weapon::firing::{auto_fire, process_missile_queue, tick_weapon_cooldo
 /// Resource containing the bind address string, inserted before the plugin runs.
 #[derive(Resource, Debug, Clone)]
 pub struct ServerBindAddress(pub String);
+
+/// Optional path to a map file for server to load.
+#[derive(Resource, Debug, Clone)]
+pub struct ServerMapPath(pub Option<String>);
 
 /// Maps connected client entities to their assigned team.
 #[derive(Resource, Debug, Default)]
@@ -251,22 +256,130 @@ pub fn is_in_asteroid_exclusion_zone(candidate: Vec2) -> bool {
         || candidate.distance(TEAM1_CORNER) < ASTEROID_EXCLUSION_RADIUS
 }
 
+/// Build a default `MapData` with random asteroids and a center control point.
+///
+/// This encapsulates the original random asteroid generation logic so that it
+/// produces a `MapData` value identical in spirit to the old inline code.
+pub fn build_default_map_data() -> MapData {
+    let mut rng = rand::rng();
+    let asteroid_count = 12;
+    let min_distance_from_edge = 50.0;
+    let min_distance_from_center = 100.0;
+
+    let mut asteroids = Vec::with_capacity(asteroid_count);
+    for _ in 0..asteroid_count {
+        let radius = rng.random_range(15.0..40.0);
+        let pos = loop {
+            let candidate = Vec2::new(
+                rng.random_range(
+                    (-MAP_HALF_EXTENT + min_distance_from_edge)
+                        ..(MAP_HALF_EXTENT - min_distance_from_edge),
+                ),
+                rng.random_range(
+                    (-MAP_HALF_EXTENT + min_distance_from_edge)
+                        ..(MAP_HALF_EXTENT - min_distance_from_edge),
+                ),
+            );
+            if candidate.length() > min_distance_from_center
+                && !is_in_asteroid_exclusion_zone(candidate)
+            {
+                break candidate;
+            }
+        };
+        asteroids.push(AsteroidDef {
+            position: (pos.x, pos.y),
+            radius,
+        });
+    }
+
+    MapData {
+        bounds: BoundsDef {
+            half_x: MAP_HALF_EXTENT,
+            half_y: MAP_HALF_EXTENT,
+        },
+        spawns: vec![
+            SpawnPoint { team: 0, position: (TEAM0_CORNER.x, TEAM0_CORNER.y) },
+            SpawnPoint { team: 1, position: (TEAM1_CORNER.x, TEAM1_CORNER.y) },
+        ],
+        asteroids,
+        control_points: vec![ControlPointDef {
+            position: (0.0, 0.0),
+            radius: DEFAULT_ZONE_RADIUS,
+        }],
+    }
+}
+
+/// Spawn asteroid and control point entities from a `MapData` definition.
+pub fn spawn_map_entities(commands: &mut Commands, map_data: &MapData) {
+    // Insert MapBounds resource
+    commands.insert_resource(MapBounds {
+        half_extents: Vec2::new(map_data.bounds.half_x, map_data.bounds.half_y),
+    });
+
+    // Spawn asteroids
+    for asteroid in &map_data.asteroids {
+        commands.spawn((
+            Asteroid,
+            AsteroidSize { radius: asteroid.radius },
+            Transform::from_xyz(asteroid.position.0, 0.0, asteroid.position.1),
+            Replicated,
+        ));
+    }
+
+    // Spawn control points
+    for cp in &map_data.control_points {
+        commands.spawn((
+            ControlPoint,
+            ControlPointState::Neutral,
+            ControlPointRadius(cp.radius),
+            TeamScores::default(),
+            Transform::from_xyz(cp.position.0, 0.0, cp.position.1),
+            Replicated,
+        ));
+    }
+}
+
 /// Spawn fleets from lobby submissions when entering Playing state.
-/// Also inserts MapBounds and spawns asteroids with exclusion zones.
+/// Loads map from file (if `--map` provided) or generates random asteroids.
 fn server_setup_game(
     mut commands: Commands,
     lobby: Res<crate::fleet::lobby::LobbyTracker>,
     client_teams: Res<ClientTeams>,
+    map_path: Res<ServerMapPath>,
 ) {
-    // Insert MapBounds resource (server doesn't use MapPlugin which spawns visual elements)
-    commands.insert_resource(MapBounds {
-        half_extents: Vec2::splat(MAP_HALF_EXTENT),
-    });
+    // Load or generate map data
+    let map_data = if let Some(ref path_str) = map_path.0 {
+        let path = std::path::Path::new("assets/maps").join(path_str);
+        match load_map_data(&path) {
+            Ok(data) => {
+                info!("Server: loaded map from {:?}", path);
+                data
+            }
+            Err(e) => {
+                error!("Server: failed to load map {:?}: {}. Using default.", path, e);
+                build_default_map_data()
+            }
+        }
+    } else {
+        build_default_map_data()
+    };
 
-    // Spawn fleets from lobby submissions (or default fleets as fallback)
+    // Spawn map entities (bounds, asteroids, control points)
+    spawn_map_entities(&mut commands, &map_data);
+
+    // Extract spawn corners from map data, with fallback to hardcoded corners
+    let team0_corner = map_data.spawns.iter()
+        .find(|s| s.team == 0)
+        .map(|s| Vec2::new(s.position.0, s.position.1))
+        .unwrap_or(TEAM0_CORNER);
+    let team1_corner = map_data.spawns.iter()
+        .find(|s| s.team == 1)
+        .map(|s| Vec2::new(s.position.0, s.position.1))
+        .unwrap_or(TEAM1_CORNER);
+
     let team_corners: [(Team, Vec2); 2] = [
-        (Team(0), TEAM0_CORNER),
-        (Team(1), TEAM1_CORNER),
+        (Team(0), team0_corner),
+        (Team(1), team1_corner),
     ];
 
     // Build a mapping: client_entity -> (team, Vec<ShipSpec>)
@@ -332,59 +445,10 @@ fn server_setup_game(
         }
     }
 
-    // Spawn asteroids (data-only, no mesh — clients materialize visuals)
-    let bounds = MapBounds {
-        half_extents: Vec2::splat(MAP_HALF_EXTENT),
-    };
-    let mut rng = rand::rng();
-    let asteroid_count = 12;
-    let min_distance_from_edge = 50.0;
-    let min_distance_from_center = 100.0;
-
-    for _ in 0..asteroid_count {
-        let radius = rng.random_range(15.0..40.0);
-
-        let pos = loop {
-            let candidate = Vec2::new(
-                rng.random_range(
-                    (-bounds.half_extents.x + min_distance_from_edge)
-                        ..(bounds.half_extents.x - min_distance_from_edge),
-                ),
-                rng.random_range(
-                    (-bounds.half_extents.y + min_distance_from_edge)
-                        ..(bounds.half_extents.y - min_distance_from_edge),
-                ),
-            );
-            if candidate.length() > min_distance_from_center
-                && !is_in_asteroid_exclusion_zone(candidate)
-            {
-                break candidate;
-            }
-        };
-
-        commands.spawn((
-            Asteroid,
-            AsteroidSize { radius },
-            Transform::from_xyz(pos.x, 0.0, pos.y),
-            Replicated,
-        ));
-    }
-
-    // Spawn control point at map center
-    commands.spawn((
-        ControlPoint,
-        ControlPointState::Neutral,
-        ControlPointRadius(DEFAULT_ZONE_RADIUS),
-        TeamScores::default(),
-        Transform::from_xyz(0.0, 0.0, 0.0),
-        Replicated,
-    ));
-
-    info!("Server: spawned control point at map center");
-
     info!(
-        "Server: spawned fleets for 2 teams and {} asteroids",
-        asteroid_count
+        "Server: spawned fleets for 2 teams and {} asteroids, {} control points",
+        map_data.asteroids.len(),
+        map_data.control_points.len(),
     );
 }
 

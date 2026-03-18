@@ -7,7 +7,7 @@ use nebulous_shot_command::control_point::ControlPointPlugin;
 use nebulous_shot_command::fleet::FleetPlugin;
 use nebulous_shot_command::fleet::lobby::LobbyPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
-use nebulous_shot_command::net::server::{ServerBindAddress, ServerNetPlugin};
+use nebulous_shot_command::net::server::{ServerBindAddress, ServerMapPath, ServerNetPlugin};
 use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::ship::ShipPhysicsPlugin;
 use nebulous_shot_command::radar::RadarPlugin;
@@ -22,6 +22,10 @@ struct Cli {
     /// Address to bind the server to
     #[arg(long, default_value = "127.0.0.1:5000")]
     bind: String,
+
+    /// Path to a map file (RON) in assets/maps/. If omitted, uses random generation.
+    #[arg(long)]
+    map: Option<String>,
 }
 
 fn main() {
@@ -52,6 +56,7 @@ fn main() {
             ServerNetPlugin,
         ))
         .insert_resource(ServerBindAddress(cli.bind))
+        .insert_resource(ServerMapPath(cli.map))
         .add_systems(
             OnEnter(GameState::WaitingForPlayers),
             || info!("Waiting for players..."),
