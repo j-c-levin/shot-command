@@ -302,7 +302,6 @@ fn spawn_editor_control_point(
                 unlit: true,
                 ..default()
             })),
-            Pickable::IGNORE,
         ))
         .observe(handle_editor_entity_click)
         .id();
@@ -336,7 +335,6 @@ fn spawn_editor_spawn_point(
                 emissive: LinearRgba::new(color.to_linear().red, color.to_linear().green, color.to_linear().blue, 1.0),
                 ..default()
             })),
-            Pickable::IGNORE,
         ))
         .observe(handle_editor_entity_click)
         .id();
