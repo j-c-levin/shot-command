@@ -1,4 +1,5 @@
 pub mod api;
+pub mod game_lobby;
 pub mod main_menu;
 
 use bevy::prelude::*;
@@ -39,6 +40,28 @@ impl Plugin for LobbyPlugin {
                 )
                     .run_if(in_state(GameState::MainMenu)),
             );
+
+        // GameLobby systems
+        app.add_systems(
+            OnEnter(GameState::GameLobby),
+            game_lobby::spawn_game_lobby,
+        )
+        .add_systems(
+            OnExit(GameState::GameLobby),
+            game_lobby::despawn_game_lobby,
+        )
+        .add_systems(
+            Update,
+            (
+                game_lobby::poll_game_detail,
+                game_lobby::poll_pending_launch,
+                game_lobby::poll_pending_delete,
+                game_lobby::rebuild_player_list,
+                game_lobby::handle_launch_button,
+                game_lobby::handle_leave_button,
+            )
+                .run_if(in_state(GameState::GameLobby)),
+        );
     }
 }
 

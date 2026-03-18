@@ -16,6 +16,11 @@ impl Plugin for FleetPlugin {
     }
 }
 
+/// Resource: if set, auto-submit this fleet on entering FleetComposition.
+/// Used by both the --fleet CLI flag and the GameLobby flow.
+#[derive(Resource)]
+pub struct AutoFleet(pub Vec<ShipSpec>);
+
 /// Total point budget each player has to build their fleet.
 pub const FLEET_BUDGET: u16 = 1000;
 

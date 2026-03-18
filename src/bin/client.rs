@@ -5,7 +5,7 @@ use clap::Parser;
 
 use nebulous_shot_command::camera::CameraPlugin;
 use nebulous_shot_command::control_point::ControlPointClientPlugin;
-use nebulous_shot_command::fleet::{FleetPlugin, ShipSpec};
+use nebulous_shot_command::fleet::{AutoFleet, FleetPlugin, ShipSpec};
 use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::input::InputPlugin;
@@ -46,10 +46,6 @@ struct Cli {
     #[arg(long, default_value = "http://localhost:5001")]
     lobby_api: String,
 }
-
-/// Resource: if set, auto-submit this fleet on entering FleetComposition.
-#[derive(Resource)]
-pub struct AutoFleet(pub Vec<ShipSpec>);
 
 fn preset_fleet(id: u8) -> Vec<ShipSpec> {
     match id {
