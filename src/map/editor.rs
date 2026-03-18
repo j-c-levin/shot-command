@@ -127,6 +127,15 @@ pub struct LoadFileOption(pub String);
 #[derive(Component)]
 pub struct PopupCancelButton;
 
+#[derive(Component)]
+pub struct SavePopupOverlay;
+
+#[derive(Component)]
+pub struct SaveNameInput;
+
+#[derive(Component)]
+pub struct SaveConfirmButton;
+
 // ── Plugin ───────────────────────────────────────────────────────────────
 
 pub struct MapEditorPlugin;
@@ -150,10 +159,18 @@ impl Plugin for MapEditorPlugin {
                     handle_editor_drag,
                     editor_camera_zoom_or_resize,
                     handle_save,
+                    handle_save_input,
+                    handle_save_confirm,
                     handle_load_request,
                     handle_load_file_click,
                     close_popup_on_escape,
                     handle_popup_cancel,
+                )
+                    .run_if(in_state(GameState::Editor)),
+            )
+            .add_systems(
+                Update,
+                (
                     update_tool_buttons,
                     update_tool_indicator,
                     update_file_name_text,
@@ -454,7 +471,7 @@ fn handle_editor_ground_click(
 // ── Entity Click Observer ────────────────────────────────────────────────
 
 fn handle_editor_entity_click(
-    click: On<Pointer<Click>>,
+    click: On<Pointer<Press>>,
     mut commands: Commands,
     mut editor: ResMut<EditorState>,
     mut drag: ResMut<EditorDragState>,
@@ -790,11 +807,43 @@ fn editor_camera_zoom_or_resize(
 
 // ── Save ─────────────────────────────────────────────────────────────────
 
+/// Performs the actual save to disk.
+fn do_save(editor_data: &MapData, filename: &str, editor_file: &mut ResMut<EditorFileName>) {
+    let maps_dir = std::path::Path::new("assets/maps");
+    if let Err(e) = std::fs::create_dir_all(maps_dir) {
+        warn!("Failed to create assets/maps: {}", e);
+        return;
+    }
+
+    let filename = if filename.ends_with(".ron") {
+        filename.to_string()
+    } else {
+        format!("{filename}.ron")
+    };
+
+    let file_path = maps_dir.join(&filename);
+    match save_map_data(editor_data, &file_path) {
+        Ok(()) => {
+            info!("Editor: saved map to {}", file_path.display());
+            editor_file.0 = Some(filename);
+        }
+        Err(e) => {
+            warn!("Editor: failed to save map: {}", e);
+        }
+    }
+}
+
+/// Resource: holds the name being typed in the save popup.
+#[derive(Resource, Default)]
+struct SaveInputBuffer(String);
+
 fn handle_save(
+    mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
     editor_data: Res<EditorMapData>,
     mut editor_file: ResMut<EditorFileName>,
     save_buttons: Query<&Interaction, (With<SaveButton>, Changed<Interaction>)>,
+    existing_popups: Query<(), Or<(With<SavePopupOverlay>, With<LoadPopupOverlay>)>>,
 ) {
     let ctrl = keys.pressed(KeyCode::ControlLeft) || keys.pressed(KeyCode::ControlRight)
         || keys.pressed(KeyCode::SuperLeft) || keys.pressed(KeyCode::SuperRight);
@@ -808,29 +857,218 @@ fn handle_save(
         return;
     }
 
-    // Create assets/maps/ directory
-    let maps_dir = std::path::Path::new("assets/maps");
-    if let Err(e) = std::fs::create_dir_all(maps_dir) {
-        warn!("Failed to create assets/maps/: {}", e);
+    // If file already has a name, save directly
+    if let Some(name) = editor_file.0.clone() {
+        do_save(&editor_data.0, &name, &mut editor_file);
         return;
     }
 
-    let filename = editor_file
-        .0
-        .clone()
-        .unwrap_or_else(|| "untitled.ron".to_string());
+    // No name yet — show save popup
+    if !existing_popups.is_empty() {
+        return;
+    }
 
-    let file_path = maps_dir.join(&filename);
+    commands.insert_resource(SaveInputBuffer("my_map".to_string()));
 
-    match save_map_data(&editor_data.0, &file_path) {
-        Ok(()) => {
-            info!("Editor: saved map to {}", file_path.display());
-            editor_file.0 = Some(filename);
-        }
-        Err(e) => {
-            warn!("Editor: failed to save map: {}", e);
+    commands
+        .spawn((
+            SavePopupOverlay,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            GlobalZIndex(10),
+        ))
+        .with_children(|overlay| {
+            overlay
+                .spawn((
+                    Node {
+                        width: Val::Px(400.0),
+                        flex_direction: FlexDirection::Column,
+                        padding: UiRect::all(Val::Px(20.0)),
+                        row_gap: Val::Px(12.0),
+                        ..default()
+                    },
+                    BackgroundColor(BG_PANEL),
+                ))
+                .with_children(|panel| {
+                    panel.spawn((
+                        Text::new("SAVE MAP"),
+                        TextFont { font_size: 22.0, ..default() },
+                        TextColor(TEXT_WHITE),
+                    ));
+
+                    panel.spawn((
+                        Text::new("Type a name, then press Enter or click Save:"),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(TEXT_GRAY),
+                    ));
+
+                    // Display current input
+                    panel.spawn((
+                        SaveNameInput,
+                        Text::new("my_map.ron"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(Color::srgb(0.4, 1.0, 0.4)),
+                        Node {
+                            padding: UiRect::all(Val::Px(8.0)),
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.1, 0.1, 0.15)),
+                    ));
+
+                    // Button row
+                    panel
+                        .spawn(Node {
+                            width: Val::Percent(100.0),
+                            justify_content: JustifyContent::SpaceBetween,
+                            column_gap: Val::Px(10.0),
+                            ..default()
+                        })
+                        .with_children(|row| {
+                            row.spawn((
+                                SaveConfirmButton,
+                                Button,
+                                Node {
+                                    flex_grow: 1.0,
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(BG_SAVE),
+                            ))
+                            .with_child((
+                                Text::new("Save"),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(TEXT_WHITE),
+                            ));
+
+                            row.spawn((
+                                PopupCancelButton,
+                                Button,
+                                Node {
+                                    flex_grow: 1.0,
+                                    padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                                    justify_content: JustifyContent::Center,
+                                    ..default()
+                                },
+                                BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
+                            ))
+                            .with_child((
+                                Text::new("Cancel"),
+                                TextFont { font_size: 16.0, ..default() },
+                                TextColor(TEXT_WHITE),
+                            ));
+                        });
+                });
+        });
+}
+
+/// Handle keyboard input for save name using ButtonInput<KeyCode>.
+fn handle_save_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut buffer: Option<ResMut<SaveInputBuffer>>,
+    mut text_query: Query<&mut Text, With<SaveNameInput>>,
+) {
+    let Some(ref mut buffer) = buffer else {
+        return;
+    };
+
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+
+    if keys.just_pressed(KeyCode::Backspace) {
+        buffer.0.pop();
+    }
+
+    // Map key presses to characters (filename-safe only)
+    let key_map: &[(KeyCode, char)] = &[
+        (KeyCode::KeyA, 'a'), (KeyCode::KeyB, 'b'), (KeyCode::KeyC, 'c'),
+        (KeyCode::KeyD, 'd'), (KeyCode::KeyE, 'e'), (KeyCode::KeyF, 'f'),
+        (KeyCode::KeyG, 'g'), (KeyCode::KeyH, 'h'), (KeyCode::KeyI, 'i'),
+        (KeyCode::KeyJ, 'j'), (KeyCode::KeyK, 'k'), (KeyCode::KeyL, 'l'),
+        (KeyCode::KeyM, 'm'), (KeyCode::KeyN, 'n'), (KeyCode::KeyO, 'o'),
+        (KeyCode::KeyP, 'p'), (KeyCode::KeyQ, 'q'), (KeyCode::KeyR, 'r'),
+        (KeyCode::KeyS, 's'), (KeyCode::KeyT, 't'), (KeyCode::KeyU, 'u'),
+        (KeyCode::KeyV, 'v'), (KeyCode::KeyW, 'w'), (KeyCode::KeyX, 'x'),
+        (KeyCode::KeyY, 'y'), (KeyCode::KeyZ, 'z'),
+        (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
+        (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
+        (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
+        (KeyCode::Digit9, '9'),
+        (KeyCode::Minus, '-'), (KeyCode::Period, '.'),
+    ];
+
+    // Underscore: shift + minus
+    if shift && keys.just_pressed(KeyCode::Minus) {
+        buffer.0.push('_');
+    } else {
+        for &(code, ch) in key_map {
+            if keys.just_pressed(code) {
+                if shift && ch.is_alphabetic() {
+                    buffer.0.push(ch.to_ascii_uppercase());
+                } else {
+                    buffer.0.push(ch);
+                }
+            }
         }
     }
+
+    // Update display
+    for mut text in &mut text_query {
+        let display = if buffer.0.is_empty() {
+            "_.ron".to_string()
+        } else if buffer.0.ends_with(".ron") {
+            buffer.0.clone()
+        } else {
+            format!("{}.ron", buffer.0)
+        };
+        **text = display;
+    }
+}
+
+/// Handle save confirm (button click or Enter key).
+fn handle_save_confirm(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    editor_data: Res<EditorMapData>,
+    mut editor_file: ResMut<EditorFileName>,
+    confirm_buttons: Query<&Interaction, (With<SaveConfirmButton>, Changed<Interaction>)>,
+    buffer: Option<Res<SaveInputBuffer>>,
+    popup_query: Query<Entity, With<SavePopupOverlay>>,
+) {
+    if popup_query.is_empty() {
+        return;
+    }
+
+    let button_pressed = confirm_buttons.iter().any(|i| *i == Interaction::Pressed);
+    let enter_pressed = keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
+
+    if !button_pressed && !enter_pressed {
+        return;
+    }
+
+    let filename = buffer
+        .as_ref()
+        .map(|b| b.0.trim().to_string())
+        .unwrap_or_else(|| "untitled".to_string());
+
+    if filename.is_empty() {
+        warn!("Editor: filename cannot be empty");
+        return;
+    }
+
+    do_save(&editor_data.0, &filename, &mut editor_file);
+
+    // Close popup
+    for entity in &popup_query {
+        commands.entity(entity).despawn();
+    }
+    commands.remove_resource::<SaveInputBuffer>();
 }
 
 // ── Load Request (opens popup) ───────────────────────────────────────────
@@ -1082,28 +1320,32 @@ fn handle_load_file_click(
 fn close_popup_on_escape(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    popup_query: Query<Entity, With<LoadPopupOverlay>>,
+    load_popups: Query<Entity, With<LoadPopupOverlay>>,
+    save_popups: Query<Entity, With<SavePopupOverlay>>,
 ) {
     if !keys.just_pressed(KeyCode::Escape) {
         return;
     }
-    for entity in &popup_query {
+    for entity in load_popups.iter().chain(save_popups.iter()) {
         commands.entity(entity).despawn();
     }
+    commands.remove_resource::<SaveInputBuffer>();
 }
 
 fn handle_popup_cancel(
     mut commands: Commands,
     cancel_buttons: Query<&Interaction, (With<PopupCancelButton>, Changed<Interaction>)>,
-    popup_query: Query<Entity, With<LoadPopupOverlay>>,
+    load_popups: Query<Entity, With<LoadPopupOverlay>>,
+    save_popups: Query<Entity, With<SavePopupOverlay>>,
 ) {
     let any_pressed = cancel_buttons.iter().any(|i| *i == Interaction::Pressed);
     if !any_pressed {
         return;
     }
-    for entity in &popup_query {
+    for entity in load_popups.iter().chain(save_popups.iter()) {
         commands.entity(entity).despawn();
     }
+    commands.remove_resource::<SaveInputBuffer>();
 }
 
 // ── UI Spawn ─────────────────────────────────────────────────────────────
@@ -1345,6 +1587,7 @@ fn draw_editor_entity_gizmos(
     editor: Res<EditorState>,
     control_points: Query<&Transform, With<EditorControlPoint>>,
     spawns: Query<(&Transform, &EditorSpawn)>,
+    asteroids: Query<&Transform, With<EditorAsteroid>>,
     selected_transforms: Query<&Transform>,
     editor_data: Res<EditorMapData>,
 ) {
@@ -1384,15 +1627,42 @@ fn draw_editor_entity_gizmos(
         );
     }
 
-    // Selected entity highlight
+    // Selected entity highlight — size adapts to entity type
     if let Some(entity) = editor.selected {
         if let Ok(tf) = selected_transforms.get(entity) {
+            // Determine selection ring radius based on entity type
+            let sel_radius = if asteroids.get(entity).is_ok() {
+                // Find matching asteroid radius in data
+                let pos = Vec2::new(tf.translation.x, tf.translation.z);
+                let asteroid_radius = editor_data
+                    .0
+                    .asteroids
+                    .iter()
+                    .find(|a| Vec2::new(a.position.0, a.position.1).distance(pos) < 1.0)
+                    .map(|a| a.radius)
+                    .unwrap_or(25.0);
+                (asteroid_radius + 5.0).max(15.0)
+            } else if control_points.get(entity).is_ok() {
+                let pos = Vec2::new(tf.translation.x, tf.translation.z);
+                let cp_radius = editor_data
+                    .0
+                    .control_points
+                    .iter()
+                    .find(|c| Vec2::new(c.position.0, c.position.1).distance(pos) < 1.0)
+                    .map(|c| c.radius)
+                    .unwrap_or(100.0);
+                (cp_radius + 10.0).max(15.0)
+            } else {
+                // Spawn point or unknown — fixed size
+                15.0
+            };
+
             gizmos.circle(
                 Isometry3d::new(
                     Vec3::new(tf.translation.x, 1.0, tf.translation.z),
                     Quat::from_rotation_x(std::f32::consts::FRAC_PI_2),
                 ),
-                30.0,
+                sel_radius,
                 Color::srgb(0.0, 1.0, 0.0),
             );
         }
