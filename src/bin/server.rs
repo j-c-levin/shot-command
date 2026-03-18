@@ -41,6 +41,11 @@ fn resolve_bind_address(cli_bind: &str) -> String {
     }
 }
 
+/// Resolve map: GAME_MAP env var (from Edgegap) takes priority, then CLI arg.
+fn resolve_map(cli_map: Option<String>) -> Option<String> {
+    cli_map.or_else(|| env::var("GAME_MAP").ok())
+}
+
 /// Resource holding Edgegap self-termination info, if running in Edgegap.
 #[derive(Resource)]
 struct EdgegapTermination {
@@ -82,7 +87,7 @@ fn main() {
         ServerNetPlugin,
     ))
     .insert_resource(ServerBindAddress(bind_address))
-    .insert_resource(ServerMapPath(cli.map))
+    .insert_resource(ServerMapPath(resolve_map(cli.map)))
     .add_systems(
         OnEnter(GameState::WaitingForPlayers),
         || info!("Waiting for players..."),
