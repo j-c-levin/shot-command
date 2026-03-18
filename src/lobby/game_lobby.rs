@@ -315,9 +315,10 @@ pub fn poll_game_detail(
                 async_state.pending_detail = None;
             }
             Ok(Err(e)) => {
-                warn!("Failed to get game detail: {}", e);
-                state.status_message = format!("Error: {e}");
+                warn!("Failed to get game detail: {} — returning to menu", e);
                 async_state.pending_detail = None;
+                // Game likely deleted by creator — kick back to MainMenu
+                next_state.set(GameState::MainMenu);
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
