@@ -24,6 +24,10 @@ impl Plugin for GamePlugin {
 pub enum GameState {
     #[default]
     Setup,
+    /// Client: main menu — browse/create/join games
+    MainMenu,
+    /// Client: in a game lobby — see players, build fleet, wait for launch
+    GameLobby,
     /// Server: waiting for both clients to connect
     WaitingForPlayers,
     /// Client: connecting to server, waiting for team assignment
@@ -128,6 +132,8 @@ mod tests {
     fn game_states_are_distinct() {
         let states = [
             GameState::Setup,
+            GameState::MainMenu,
+            GameState::GameLobby,
             GameState::WaitingForPlayers,
             GameState::Connecting,
             GameState::FleetComposition,
