@@ -22,7 +22,7 @@ impl Plugin for CameraPlugin {
                 camera_zoom.run_if(not(in_state(GameState::Editor))),
                 camera_orbit,
                 camera_drag_pan.run_if(not(in_state(GameState::Editor))),
-                deferred_center_camera,
+                deferred_center_camera.run_if(not(in_state(GameState::Editor))),
             ));
     }
 }
