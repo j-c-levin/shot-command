@@ -72,6 +72,7 @@ fn best_sensor_range(mounts: &Mounts, has_radar: bool) -> f32 {
         return 0.0;
     }
     mounts.0.iter()
+        .filter(|m| m.hp > 0)
         .filter_map(|m| m.weapon.as_ref())
         .filter(|w| w.weapon_type.category() == WeaponCategory::Sensor)
         .map(|w| w.weapon_type.profile().firing_range)
@@ -452,5 +453,63 @@ mod tests {
         // Same XZ distance, different Y — both should be detected
         assert!(is_in_pd_cylinder(pd_pos, missile_low, 100.0));
         assert!(is_in_pd_cylinder(pd_pos, missile_high, 100.0));
+    }
+
+    use crate::weapon::{Mount, MountSize, WeaponState};
+
+    fn make_sensor_mount(weapon_type: WeaponType, hp: u16) -> Mount {
+        let profile = weapon_type.profile();
+        Mount {
+            size: MountSize::Medium,
+            offset: Vec2::ZERO,
+            weapon: Some(WeaponState {
+                weapon_type,
+                ammo: 0,
+                cooldown: 0.0,
+                pd_retarget_cooldown: 0.0,
+                tubes_loaded: profile.tubes,
+                tube_reload_timer: 0.0,
+                fire_delay: 0.0,
+            }),
+            hp,
+            max_hp: MountSize::Medium.hp(),
+            offline_timer: 0.0,
+        }
+    }
+
+    #[test]
+    fn best_sensor_range_skips_offline_mounts() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 0), // offline
+        ]);
+        assert_eq!(
+            best_sensor_range(&mounts, true),
+            0.0,
+            "Offline sensor mount should return 0 range"
+        );
+    }
+
+    #[test]
+    fn best_sensor_range_uses_online_mount() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 100), // online
+        ]);
+        assert!(
+            best_sensor_range(&mounts, true) > 0.0,
+            "Online sensor mount should return positive range"
+        );
+    }
+
+    #[test]
+    fn best_sensor_range_picks_best_online() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 0), // offline, 800m
+            make_sensor_mount(WeaponType::NavRadar, 50),   // online, 500m
+        ]);
+        let range = best_sensor_range(&mounts, true);
+        assert_eq!(
+            range, 500.0,
+            "Should use the online NavRadar range, not offline SearchRadar"
+        );
     }
 }

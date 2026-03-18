@@ -9,9 +9,9 @@ use crate::fog::ray_blocked_by_asteroid;
 use crate::game::Team;
 use crate::map::{Asteroid, AsteroidSize};
 use crate::radar::{
-    ContactKind, ContactLevel, ContactSourceShip, ContactTeam, ContactTracker,
-    RadarActive, RadarContact, SIGNATURE_FUZZ_RADIUS,
-    SIGNATURE_THRESHOLD, TRACK_THRESHOLD, compute_aspect_factor, compute_snr,
+    apply_visual_los_boost, compute_aspect_factor, compute_snr, ContactKind, ContactLevel,
+    ContactSourceShip, ContactTeam, ContactTracker, RadarActive, RadarContact,
+    SIGNATURE_FUZZ_RADIUS, SIGNATURE_THRESHOLD, TRACK_THRESHOLD,
 };
 use crate::ship::{Ship, ShipClass, ship_facing_direction, ship_xz_position};
 use crate::weapon::{Mounts, WeaponCategory};
@@ -32,9 +32,13 @@ fn fuzz_offset(entity: Entity, snr: f32) -> Vec2 {
 }
 
 /// Find the best radar range from a ship's mounts (sensors only).
+/// Skips offline mounts (hp == 0).
 fn best_radar_range(mounts: &Mounts) -> f32 {
     let mut best = 0.0_f32;
     for mount in &mounts.0 {
+        if mount.hp == 0 {
+            continue;
+        }
         if let Some(ref ws) = mount.weapon {
             if ws.weapon_type.category() == WeaponCategory::Sensor {
                 let range = ws.weapon_type.profile().firing_range;
@@ -52,7 +56,7 @@ fn best_radar_range(mounts: &Mounts) -> f32 {
 pub fn update_radar_contacts(
     mut commands: Commands,
     mut tracker: ResMut<ContactTracker>,
-    radar_ships: Query<(&Transform, &Team, &Mounts), (With<Ship>, With<RadarActive>)>,
+    radar_ships: Query<(&Transform, &Team, &Mounts, &ShipClass), (With<Ship>, With<RadarActive>)>,
     all_ships: Query<(Entity, &Transform, &ShipClass, &Team), With<Ship>>,
     missile_query: Query<(Entity, &Transform, &MissileOwner), With<Missile>>,
     projectile_query: Query<(Entity, &Transform, &ProjectileOwner), With<Projectile>>,
@@ -69,7 +73,7 @@ pub fn update_radar_contacts(
     let mut best_snr: HashMap<(u8, Entity), (f32, ContactKind)> = HashMap::new();
 
     // Process each active radar ship
-    for (radar_transform, radar_team, mounts) in radar_ships.iter() {
+    for (radar_transform, radar_team, mounts, radar_class) in radar_ships.iter() {
         let radar_range = best_radar_range(mounts);
         if radar_range <= 0.0 {
             continue;
@@ -97,6 +101,9 @@ pub fn update_radar_contacts(
             let aspect = compute_aspect_factor(radar_bearing, target_facing);
             let rcs = ship_class.profile().rcs;
             let snr = compute_snr(radar_range, distance, rcs, aspect);
+            // Visual LOS guarantees track-level detection — if you can see it, radar tracks it
+            let vision_range = radar_class.profile().vision_range;
+            let snr = apply_visual_los_boost(snr, distance, vision_range);
 
             if snr >= SIGNATURE_THRESHOLD {
                 let key = (team_id, target_entity);
@@ -285,5 +292,67 @@ pub fn cleanup_stale_contacts(
                 entity_commands.despawn();
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::weapon::{Mount, MountSize, Mounts, WeaponState, WeaponType};
+
+    fn make_sensor_mount(weapon_type: WeaponType, hp: u16) -> Mount {
+        let profile = weapon_type.profile();
+        Mount {
+            size: MountSize::Medium,
+            offset: Vec2::ZERO,
+            weapon: Some(WeaponState {
+                weapon_type,
+                ammo: 0,
+                cooldown: 0.0,
+                pd_retarget_cooldown: 0.0,
+                tubes_loaded: profile.tubes,
+                tube_reload_timer: 0.0,
+                fire_delay: 0.0,
+            }),
+            hp,
+            max_hp: MountSize::Medium.hp(),
+            offline_timer: 0.0,
+        }
+    }
+
+    #[test]
+    fn best_radar_range_skips_offline_mounts() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 0), // offline
+        ]);
+        assert_eq!(
+            best_radar_range(&mounts),
+            0.0,
+            "Offline radar should return 0 range"
+        );
+    }
+
+    #[test]
+    fn best_radar_range_uses_online_mount() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 100), // online
+        ]);
+        assert!(
+            best_radar_range(&mounts) > 0.0,
+            "Online radar should return positive range"
+        );
+    }
+
+    #[test]
+    fn best_radar_range_picks_best_online_mount() {
+        let mounts = Mounts(vec![
+            make_sensor_mount(WeaponType::SearchRadar, 0), // offline, 800m range
+            make_sensor_mount(WeaponType::NavRadar, 50),   // online, 500m range
+        ]);
+        let range = best_radar_range(&mounts);
+        assert_eq!(
+            range, 500.0,
+            "Should use the online NavRadar range, not offline SearchRadar"
+        );
     }
 }

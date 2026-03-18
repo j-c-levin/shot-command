@@ -46,6 +46,16 @@ pub fn compute_snr(radar_range: f32, distance: f32, target_rcs: f32, aspect_fact
     (radar_range * radar_range / (distance * distance)) * target_rcs * aspect_factor
 }
 
+/// Boost SNR to at least track threshold when target is within visual LOS range.
+/// If you can see it with your eyes, your radar should track it.
+pub fn apply_visual_los_boost(snr: f32, distance: f32, vision_range: f32) -> f32 {
+    if distance <= vision_range {
+        snr.max(TRACK_THRESHOLD)
+    } else {
+        snr
+    }
+}
+
 /// Marker for a ship with its radar currently active. SERVER-ONLY — not replicated.
 #[derive(Component, Clone, Debug)]
 pub struct RadarActive;
@@ -354,5 +364,54 @@ mod tests {
         let factor = compute_aspect_factor(Vec2::X, Vec2::new(1.0, 1.0).normalize());
         assert!(factor > 0.25);
         assert!(factor < 1.0);
+    }
+
+    // ── Visual LOS boost tests ──
+
+    #[test]
+    fn scout_nose_on_raw_snr_below_track_at_visual_range() {
+        // Confirms the bug: Scout (RCS=0.25) nose-on at 400m with SearchRadar (800m)
+        // has raw SNR below TRACK_THRESHOLD.
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::NEG_X); // nose-on = 0.25
+        let snr = compute_snr(800.0, 400.0, 0.25, aspect);
+        assert!(
+            snr < TRACK_THRESHOLD,
+            "Scout nose-on at 400m raw SNR should be below track threshold, got {snr}"
+        );
+    }
+
+    #[test]
+    fn visual_los_boost_guarantees_track_within_range() {
+        let snr = 0.05; // Below signature threshold
+        let boosted = apply_visual_los_boost(snr, 400.0, 400.0);
+        assert!(
+            boosted >= TRACK_THRESHOLD,
+            "Visual LOS should guarantee track, got {boosted}"
+        );
+    }
+
+    #[test]
+    fn visual_los_boost_no_effect_beyond_range() {
+        let snr = 0.05;
+        let boosted = apply_visual_los_boost(snr, 500.0, 400.0);
+        assert_eq!(boosted, snr, "Beyond visual range, no boost");
+    }
+
+    #[test]
+    fn visual_los_boost_preserves_higher_snr() {
+        let snr = 0.9; // Already above track
+        let boosted = apply_visual_los_boost(snr, 300.0, 400.0);
+        assert_eq!(boosted, snr, "Should not reduce already-high SNR");
+    }
+
+    #[test]
+    fn scout_nose_on_tracked_at_visual_range_with_boost() {
+        let aspect = compute_aspect_factor(Vec2::X, Vec2::NEG_X);
+        let snr = compute_snr(800.0, 400.0, 0.25, aspect);
+        let boosted = apply_visual_los_boost(snr, 400.0, 400.0);
+        assert!(
+            boosted >= TRACK_THRESHOLD,
+            "Scout nose-on at visual LOS should be tracked after boost, got {boosted}"
+        );
     }
 }

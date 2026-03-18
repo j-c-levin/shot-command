@@ -196,13 +196,21 @@ pub fn on_ship_clicked(
         return;
     }
 
-    // Deselect previous and reset all modes
-    for prev in &selected_query {
-        commands.entity(prev).remove::<Selected>();
+    if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+        // Shift+click: toggle selection (add/remove from selection group)
+        if selected_query.get(entity).is_ok() {
+            commands.entity(entity).remove::<Selected>();
+        } else {
+            commands.entity(entity).insert(Selected);
+        }
+    } else {
+        // Normal click: replace selection
+        for prev in &selected_query {
+            commands.entity(prev).remove::<Selected>();
+        }
+        *mode = InputMode::Normal;
+        commands.entity(entity).insert(Selected);
     }
-    *mode = InputMode::Normal;
-
-    commands.entity(entity).insert(Selected);
 }
 
 pub fn on_ground_clicked(
@@ -773,12 +781,21 @@ fn handle_number_keys(
         }
 
         // Normal mode: select this ship
-        for prev in &selected_query {
-            commands.entity(prev).remove::<Selected>();
+        if keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight) {
+            // Shift+number: toggle in selection group
+            if selected_query.get(target_ship).is_ok() {
+                commands.entity(target_ship).remove::<Selected>();
+            } else {
+                commands.entity(target_ship).insert(Selected);
+            }
+        } else {
+            // Normal number: replace selection
+            for prev in &selected_query {
+                commands.entity(prev).remove::<Selected>();
+            }
+            *mode = InputMode::Normal;
+            commands.entity(target_ship).insert(Selected);
         }
-        *mode = InputMode::Normal;
-
-        commands.entity(target_ship).insert(Selected);
         return;
     }
 }

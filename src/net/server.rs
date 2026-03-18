@@ -1020,9 +1020,10 @@ fn handle_radar_toggle(
         return;
     };
     let has_radar = mounts.0.iter().any(|m| {
-        m.weapon
-            .as_ref()
-            .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Sensor)
+        m.hp > 0
+            && m.weapon
+                .as_ref()
+                .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Sensor)
     });
     if !has_radar {
         info!(
