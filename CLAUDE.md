@@ -11,7 +11,8 @@ Client/server multiplayer architecture with `bevy_replicon` + `bevy_replicon_ren
 
 ```bash
 cargo run --bin server                # dev server (headless, 60Hz tick loop)
-cargo run --bin client                # dev client (rendering window)
+cargo run --bin client                # dev client (lobby mode, needs Firebase emulator)
+cargo run --bin client -- --name Me --lobby-api http://localhost:5001  # lobby with custom name/API
 cargo run --bin server -- --bind 0.0.0.0:5000  # server on custom address
 cargo run --bin client -- --connect 1.2.3.4:5000  # client to remote server
 cargo check                           # quick compilation check
@@ -23,6 +24,7 @@ cargo run --bin client -- --fleet 2   # auto-submit preset fleet 2 (Scout with n
 cargo run --bin client -- --editor             # map editor (no networking)
 cargo run --bin client -- --editor --map x.ron  # edit existing map file
 cargo run --bin server -- --map chokepoint.ron  # server loads designed map
+cd infra && firebase emulators:start --only functions,firestore  # local lobby backend
 ```
 
 Requires **nightly Rust** (`rust-toolchain.toml`). The `.cargo/config.toml` uses `-Z` flags
@@ -69,8 +71,8 @@ Tests live in `#[cfg(test)]` blocks at the bottom of each module file:
 
 Library crate (`src/lib.rs`) with two binaries:
 
-- **`src/bin/server.rs`** — headless authoritative server (`MinimalPlugins`, 60Hz tick loop, `--bind` CLI)
-- **`src/bin/client.rs`** — rendering client (`DefaultPlugins`, `--connect` CLI)
+- **`src/bin/server.rs`** — headless authoritative server (`MinimalPlugins`, 60Hz tick loop, `--bind` CLI, Edgegap env var support, self-termination on GameOver)
+- **`src/bin/client.rs`** — rendering client (`DefaultPlugins`, `--connect` for direct mode, `--lobby-api` + `--name` for lobby mode)
 
 ### Modules
 
@@ -80,10 +82,15 @@ Library crate (`src/lib.rs`) with two binaries:
   - `mod.rs` — ShipSpec (class + loadout), FLEET_BUDGET (1000), hull_cost/weapon_cost, ship_spec_cost/fleet_cost, FleetError, validate_fleet, FleetPlugin
   - `lobby.rs` — LobbyTracker resource (submissions + countdown), LobbyPlugin, handle_fleet_submission/handle_cancel_submission observers, tick_lobby_countdown system
 - `src/ui/` — Client UI module:
-  - `mod.rs` — FleetUiPlugin (spawn/despawn on FleetComposition state), FleetStatusPlugin
-  - `fleet_builder.rs` — FleetBuilderState resource, two-panel fleet builder UI (ship list + ship detail), popup system (ship picker, weapon picker), submit/cancel toggle, budget display, lobby status text
+  - `mod.rs` — FleetUiPlugin (spawn/despawn on FleetComposition state, systems run in both FleetComposition and GameLobby), FleetStatusPlugin
+  - `fleet_builder.rs` — FleetBuilderState resource, FleetBuilderMode (Online/Lobby), two-panel fleet builder UI (ship list + ship detail), popup system (ship picker, weapon picker), submit/cancel toggle, budget display, lobby status text. `spawn_fleet_builder_content()` reusable for embedding in GameLobby.
   - `fleet_status.rs` — In-game fleet status sidebar (left edge, ~200px). Ship cards with hull/engine health bars, weapon mount status (online/offline dots, ammo counts), cooldown reload bars. Click card to select ship. Destroyed ships grayed out. Spawned on Playing, despawned on exit.
-- `src/game/` — GameState enum (Setup→WaitingForPlayers→Playing→GameOver / Setup→Connecting→FleetComposition→Playing→GameOver), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (hull HP, u16), Destroyed marker, DestroyTimer
+- `src/lobby/` — Game lobby & matchmaking module:
+  - `mod.rs` — LobbyPlugin, LobbyConfig/PlayerName/CurrentGameId resources, GameInfo/GameDetail/PlayerInfo data types
+  - `api.rs` — HTTP client functions (background threads + mpsc channels): list_games, create_game, get_game, join_game, launch_game, delete_game, fetch_maps
+  - `main_menu.rs` — MainMenu UI: game list with 3s polling, create game dialog (map picker), join button, direct connect, refresh
+  - `game_lobby.rs` — GameLobby UI: player list sidebar, embedded fleet builder, launch button (creator only), 2s polling, auto-connect on server ready
+- `src/game/` — GameState enum (Setup→MainMenu→GameLobby→Connecting→Playing→GameOver / Setup→WaitingForPlayers→Playing→GameOver / Setup→Editor), Team component (`u8` id), Detected marker, EnemyVisibility (opacity), Health (hull HP, u16), Destroyed marker, DestroyTimer
 - `src/map/` — MapBounds resource, Asteroid/AsteroidSize components, GroundPlane marker
   - `data.rs` — MapData/BoundsDef/SpawnPoint/AsteroidDef/ControlPointDef structs (Serialize/Deserialize), save_map_data/load_map_data RON functions
   - `editor.rs` — MapEditorPlugin (gated on GameState::Editor): EditorState/EditorTool resources, EditorAsteroid/EditorControlPoint/EditorSpawn markers, click-to-place/drag-to-move/scroll-resize/delete interactions, left panel UI (entity palette + file ops), save/load popup, bounds gizmos, entity highlight gizmos, editor_camera_zoom_or_resize (zoom when no asteroid selected, resize when asteroid selected)
@@ -183,8 +190,13 @@ Library crate (`src/lib.rs`) with two binaries:
 ### Connection flow
 
 **Server:** Setup → WaitingForPlayers (bind, listen, lobby) → Playing (when both fleets submitted + 3s countdown)
-**Client:** Setup → Connecting (connect to server) → FleetComposition (on TeamAssignment) → Playing (on GameStarted)
+**Client (lobby mode):** Setup → MainMenu (browse/create/join games) → GameLobby (build fleet, wait for launch) → Connecting → FleetComposition (auto-submit) → Playing → GameOver → MainMenu
+**Client (direct mode):** Setup → Connecting (--connect flag) → FleetComposition (on TeamAssignment) → Playing → GameOver
 **Editor:** Setup → Editor (no networking, no state transitions)
+
+**Lobby flow:** Client creates or joins a game via Firebase Cloud Functions API. In GameLobby, players build fleets locally and creator launches when 2 players present. Launch calls Edgegap Deploy API (or returns localhost in dev mode). When server is ready, clients auto-connect with pre-built fleets via AutoFleet resource.
+
+**Direct flow:** `--connect` flag bypasses MainMenu, connects immediately to specified address. FleetComposition state remains for this path.
 
 Server sends TeamAssignment immediately on connect. Clients enter FleetComposition independently (no waiting for opponent). Both submit fleets → 3s countdown → server spawns from specs → Playing. Either can cancel during countdown to re-edit. Server spawns fleets from LobbyTracker submissions (or default fleet as fallback) + 12 random asteroids with exclusion zones around spawn corners.
 
@@ -288,13 +300,14 @@ click-to-place/drag-to-move/scroll-resize/delete interactions, save/load popup,
 bounds gizmos. See design doc at
 `docs/plans/2026-03-18-phase6-maps-editor-design.md`.
 
-**Next up:**
-
-1. **Phase 7: Cloud Deployment & Game Lobby** — Firebase lobby backend (Cloud Functions +
-   Firestore), Edgegap game servers, Pulumi infrastructure, CI/CD with GitHub Actions,
-   client main menu + game lobby UI with fleet building in lobby. See design at
-   `docs/plans/2026-03-18-phase7-cloud-deployment-design.md` and earlier research at
-   `docs/plans/2026-03-17-edgegap-deployment-plan.md`.
+**Phase 7: Cloud Deployment & Game Lobby — IN PROGRESS.** Firebase lobby backend
+(Cloud Functions + Firestore), Edgegap game servers, Pulumi infrastructure, CI/CD
+with GitHub Actions, client main menu + game lobby UI with fleet building in lobby.
+Server Edgegap support (env var port binding, self-termination, Dockerfile) complete.
+Firebase Cloud Functions, Pulumi infra, CI/CD pipeline, client lobby UI all implemented.
+Needs end-to-end testing with Firebase emulator + Edgegap account setup. See design at
+`docs/plans/2026-03-18-phase7-cloud-deployment-design.md` and implementation plan at
+`docs/plans/2026-03-18-phase7-implementation-plan.md`.
 
 **Dropped:** Beam weapons (from original Phase 5 brainstorm).
 
@@ -302,7 +315,7 @@ bounds gizmos. See design doc at
 - (none currently)
 
 **Recently completed (this session):**
-- Phase 6: Maps & Editor (map editor dev tool, RON map files, server --map loading)
+- Phase 7 implementation: server Edgegap support, Firebase Cloud Functions lobby API, Pulumi infrastructure, GitHub Actions CI/CD, client MainMenu + GameLobby UI with fleet building
 
 ## Pre-approvals
 
