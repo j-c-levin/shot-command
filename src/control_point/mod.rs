@@ -294,8 +294,8 @@ fn draw_control_point_gizmos(
         };
 
         let color = if let Some(progress) = pulse_progress {
-            // Pulse speed proportional to capture progress (faster near completion)
-            let freq = 2.0 + progress * 4.0;
+            // Gentle pulse — slow ramp from 1Hz to 2Hz as capture nears completion
+            let freq = 1.0 + progress * 1.0;
             let pulse = 0.5 + 0.5 * (time.elapsed_secs() * freq).sin();
             let Srgba {
                 red, green, blue, ..

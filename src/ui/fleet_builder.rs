@@ -2,7 +2,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 
 use crate::fleet::{
-    fleet_cost, hull_cost, ship_spec_cost, weapon_cost, ShipSpec, FLEET_BUDGET,
+    fleet_cost, hull_cost, ship_spec_cost, weapon_cost, AutoFleet, ShipSpec, FLEET_BUDGET,
     validate_fleet,
 };
 use crate::net::client::CurrentLobbyState;
@@ -135,7 +135,16 @@ pub struct PopupCloseButton;
 
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
-pub fn spawn_fleet_ui(mut commands: Commands) {
+pub fn spawn_fleet_ui(
+    mut commands: Commands,
+    auto_fleet: Option<Res<AutoFleet>>,
+    mut state: ResMut<FleetBuilderState>,
+) {
+    // If entering from lobby (AutoFleet exists), populate the fleet builder with those ships
+    if let Some(ref fleet) = auto_fleet {
+        state.ships = fleet.0.clone();
+        state.submitted = true;
+    }
     commands
         .spawn((
             FleetUiRoot,
