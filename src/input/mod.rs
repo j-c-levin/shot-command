@@ -434,38 +434,36 @@ fn draw_range_gizmos(
         return;
     };
 
-    let Some((ship_tf, mounts)) = selected_query.iter().next() else {
-        return;
-    };
-
-    let center = Vec3::new(ship_tf.translation.x, 1.0, ship_tf.translation.z);
-
-    // Collect distinct ranges for this weapon category
-    let mut ranges_seen = Vec::new();
-    for mount in &mounts.0 {
-        let Some(w) = mount.weapon.as_ref() else { continue };
-        if w.weapon_type.category() != category {
-            continue;
-        }
-        let profile = w.weapon_type.profile();
-        let range = if category == WeaponCategory::Missile {
-            profile.missile_fuel
-        } else {
-            profile.firing_range
-        };
-        if range >= 1.0 && !ranges_seen.iter().any(|&r: &f32| (r - range).abs() < 0.1) {
-            ranges_seen.push(range);
-        }
-    }
-
     let range_color = if category == WeaponCategory::Missile {
         Color::srgba(1.0, 0.5, 0.1, 0.3)
     } else {
         Color::srgba(1.0, 0.8, 0.2, 0.3)
     };
 
-    for range in &ranges_seen {
-        gizmos.circle(ground_circle_isometry(center, *range), *range, range_color);
+    for (ship_tf, mounts) in &selected_query {
+        let center = Vec3::new(ship_tf.translation.x, 1.0, ship_tf.translation.z);
+
+        // Collect distinct ranges for this weapon category on this ship
+        let mut ranges_seen = Vec::new();
+        for mount in &mounts.0 {
+            let Some(w) = mount.weapon.as_ref() else { continue };
+            if w.weapon_type.category() != category {
+                continue;
+            }
+            let profile = w.weapon_type.profile();
+            let range = if category == WeaponCategory::Missile {
+                profile.missile_fuel
+            } else {
+                profile.firing_range
+            };
+            if range >= 1.0 && !ranges_seen.iter().any(|&r: &f32| (r - range).abs() < 0.1) {
+                ranges_seen.push(range);
+            }
+        }
+
+        for range in &ranges_seen {
+            gizmos.circle(ground_circle_isometry(center, *range), *range, range_color);
+        }
     }
 }
 

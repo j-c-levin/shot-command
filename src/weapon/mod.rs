@@ -102,7 +102,7 @@ impl WeaponType {
                 fire_rate_secs: 3.0,
                 burst_count: 3,
                 damage: 25,
-                firing_range: 300.0,
+                firing_range: 800.0,
                 projectile_speed: 150.0,
                 spread_degrees: 2.0,
                 arc: FiringArc::Turret,
@@ -114,7 +114,7 @@ impl WeaponType {
                 fire_rate_secs: 1.0,
                 burst_count: 1,
                 damage: 20,
-                firing_range: 200.0,
+                firing_range: 800.0,
                 projectile_speed: 120.0,
                 spread_degrees: 2.0,
                 arc: FiringArc::Turret,
@@ -307,7 +307,7 @@ mod tests {
         assert_eq!(p.damage, 25);
         assert_eq!(p.burst_count, 3);
         assert_eq!(p.fire_rate_secs, 3.0);
-        assert_eq!(p.firing_range, 300.0);
+        assert_eq!(p.firing_range, 800.0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 
@@ -317,7 +317,7 @@ mod tests {
         assert_eq!(p.damage, 20);
         assert_eq!(p.burst_count, 1);
         assert_eq!(p.fire_rate_secs, 1.0);
-        assert_eq!(p.firing_range, 200.0);
+        assert_eq!(p.firing_range, 800.0);
         assert_eq!(p.arc, FiringArc::Turret);
     }
 
