@@ -1,4 +1,5 @@
 import * as admin from "firebase-admin";
+import { FieldValue } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 
 const db = admin.firestore();
@@ -14,7 +15,7 @@ export const createGame = onRequest(async (req, res) => {
     players: [{ name: creator, team: 0 }],
     server_address: null,
     edgegap_request_id: null,
-    created_at: admin.firestore.FieldValue.serverTimestamp(),
+    created_at: FieldValue.serverTimestamp(),
     map: map || null,
   });
   res.json({ gameId: doc.id });
