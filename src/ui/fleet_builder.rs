@@ -54,6 +54,8 @@ pub struct FleetBuilderState {
     pub selected_ship: Option<usize>,
     pub submitted: bool,
     pub popup: Option<PopupKind>,
+    /// Name of the last loaded/saved fleet (for save default).
+    pub last_fleet_name: Option<String>,
 }
 
 /// Controls how the fleet builder submit button behaves.
@@ -1093,8 +1095,22 @@ pub fn handle_submit_button(
 }
 
 /// Resource: holds the name being typed in the fleet save popup.
-#[derive(Resource, Default)]
-pub struct FleetSaveInputBuffer(pub String);
+#[derive(Resource)]
+pub struct FleetSaveInputBuffer {
+    pub text: String,
+    pub backspace_timer: Timer,
+    pub backspace_started: bool,
+}
+
+impl Default for FleetSaveInputBuffer {
+    fn default() -> Self {
+        Self {
+            text: String::new(),
+            backspace_timer: Timer::from_seconds(0.05, TimerMode::Repeating),
+            backspace_started: false,
+        }
+    }
+}
 
 #[derive(Component)]
 pub struct FleetSaveNameDisplay;
@@ -1122,8 +1138,9 @@ pub fn handle_save_fleet(
         for e in &existing_popups { commands.entity(e).despawn(); }
 
         // Default name from fleet composition
-        let default_name = fleet_auto_name(&state.ships);
-        commands.insert_resource(FleetSaveInputBuffer(default_name.clone()));
+        let default_name = state.last_fleet_name.clone()
+            .unwrap_or_else(|| fleet_auto_name(&state.ships));
+        commands.insert_resource(FleetSaveInputBuffer { text: default_name.clone(), ..default() });
 
         // Spawn save dialog
         commands.spawn((
@@ -1210,6 +1227,7 @@ pub fn handle_save_fleet(
 /// Handle keyboard input for fleet save name.
 pub fn handle_save_input(
     keys: Res<ButtonInput<KeyCode>>,
+    time: Res<Time>,
     mut buffer: Option<ResMut<FleetSaveInputBuffer>>,
     mut text_query: Query<&mut Text, With<FleetSaveNameDisplay>>,
 ) {
@@ -1218,7 +1236,19 @@ pub fn handle_save_input(
 
     let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
 
-    if keys.just_pressed(KeyCode::Backspace) { buffer.0.pop(); }
+    // Backspace with repeat support
+    if keys.just_pressed(KeyCode::Backspace) {
+        buffer.text.pop();
+        buffer.backspace_started = true;
+        buffer.backspace_timer.reset();
+    } else if keys.pressed(KeyCode::Backspace) && buffer.backspace_started {
+        buffer.backspace_timer.tick(time.delta());
+        if buffer.backspace_timer.just_finished() {
+            buffer.text.pop();
+        }
+    } else {
+        buffer.backspace_started = false;
+    }
 
     let key_map: &[(KeyCode, char)] = &[
         (KeyCode::KeyA, 'a'), (KeyCode::KeyB, 'b'), (KeyCode::KeyC, 'c'),
@@ -1234,20 +1264,21 @@ pub fn handle_save_input(
         (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
         (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
         (KeyCode::Digit9, '9'), (KeyCode::Minus, '-'), (KeyCode::Period, '.'),
+        (KeyCode::Space, '_'),
     ];
 
     if shift && keys.just_pressed(KeyCode::Minus) {
-        buffer.0.push('_');
+        buffer.text.push('_');
     } else {
         for &(code, ch) in key_map {
             if keys.just_pressed(code) {
-                buffer.0.push(if shift && ch.is_alphabetic() { ch.to_ascii_uppercase() } else { ch });
+                buffer.text.push(if shift && ch.is_alphabetic() { ch.to_ascii_uppercase() } else { ch });
             }
         }
     }
 
     for mut text in &mut text_query {
-        let display = if buffer.0.is_empty() { "_.ron".to_string() } else { format!("{}.ron", buffer.0) };
+        let display = if buffer.text.is_empty() { "_.ron".to_string() } else { format!("{}.ron", buffer.text) };
         **text = display;
     }
 }
@@ -1256,7 +1287,7 @@ pub fn handle_save_input(
 pub fn handle_save_confirm(
     mut commands: Commands,
     keys: Res<ButtonInput<KeyCode>>,
-    state: Res<FleetBuilderState>,
+    mut state: ResMut<FleetBuilderState>,
     confirm_buttons: Query<&Interaction, (With<FleetSaveConfirmButton>, Changed<Interaction>)>,
     cancel_buttons: Query<&Interaction, (With<FleetSaveCancelButton>, Changed<Interaction>)>,
     buffer: Option<Res<FleetSaveInputBuffer>>,
@@ -1280,7 +1311,7 @@ pub fn handle_save_confirm(
     if !confirm { return }
 
     let Some(buffer) = buffer else { return };
-    let name = if buffer.0.is_empty() { "unnamed" } else { &buffer.0 };
+    let name = if buffer.text.is_empty() { "unnamed" } else { &buffer.text };
 
     let dir = std::path::Path::new("fleets");
     let _ = std::fs::create_dir_all(dir);
@@ -1292,6 +1323,7 @@ pub fn handle_save_confirm(
                 warn!("Failed to save fleet: {e}");
             } else {
                 info!("Fleet saved to {filename}");
+                state.last_fleet_name = Some(name.to_string());
                 for e in &existing_notifs { commands.entity(e).despawn(); }
                 spawn_notification(&mut commands, &format!("Saved: {name}"));
             }
@@ -1453,14 +1485,15 @@ pub fn handle_load_fleet_option(
                 Ok(ships) => {
                     let count = ships.len();
                     info!("Fleet loaded from {:?} ({count} ships)", option.0);
-                    state.ships = ships;
-                    state.selected_ship = None;
-                    state.submitted = false;
-                    for e in &popups { commands.entity(e).despawn(); }
-                    for e in &existing_notifs { commands.entity(e).despawn(); }
                     let name = option.0.file_stem()
                         .map(|s| s.to_string_lossy().to_string())
                         .unwrap_or_default();
+                    state.ships = ships;
+                    state.selected_ship = None;
+                    state.submitted = false;
+                    state.last_fleet_name = Some(name.clone());
+                    for e in &popups { commands.entity(e).despawn(); }
+                    for e in &existing_notifs { commands.entity(e).despawn(); }
                     spawn_notification(&mut commands, &format!("Loaded: {name} ({count} ships)"));
                 }
                 Err(e) => warn!("Failed to parse fleet file: {e}"),
