@@ -1092,37 +1092,215 @@ pub fn handle_submit_button(
     }
 }
 
+/// Resource: holds the name being typed in the fleet save popup.
+#[derive(Resource, Default)]
+pub struct FleetSaveInputBuffer(pub String);
+
+#[derive(Component)]
+pub struct FleetSaveNameDisplay;
+
+#[derive(Component)]
+pub struct FleetSaveConfirmButton;
+
+#[derive(Component)]
+pub struct FleetSaveCancelButton;
+
+#[derive(Component)]
+pub struct DeleteFleetButton(pub std::path::PathBuf);
+
 pub fn handle_save_fleet(
     query: Query<&Interaction, (Changed<Interaction>, With<SaveFleetButton>)>,
     state: Res<FleetBuilderState>,
     mut commands: Commands,
-    existing_notifs: Query<Entity, With<FleetNotificationText>>,
+    existing_popups: Query<Entity, With<FleetSaveLoadPopup>>,
 ) {
     for interaction in &query {
         if *interaction != Interaction::Pressed || state.ships.is_empty() {
             continue;
         }
-        let dir = std::path::Path::new("fleets");
-        if std::fs::create_dir_all(dir).is_err() {
-            warn!("Failed to create fleets directory");
-            return;
-        }
-        let name = fleet_auto_name(&state.ships);
-        let filename = format!("fleets/{name}.ron");
-        match ron::ser::to_string_pretty(&state.ships, ron::ser::PrettyConfig::default()) {
-            Ok(data) => {
-                if let Err(e) = std::fs::write(&filename, &data) {
-                    warn!("Failed to save fleet: {e}");
-                } else {
-                    info!("Fleet saved to {filename}");
-                    // Show notification
-                    for e in &existing_notifs { commands.entity(e).despawn(); }
-                    spawn_notification(&mut commands, &format!("Saved: {name}"));
-                }
+        // Close any existing popup
+        for e in &existing_popups { commands.entity(e).despawn(); }
+
+        // Default name from fleet composition
+        let default_name = fleet_auto_name(&state.ships);
+        commands.insert_resource(FleetSaveInputBuffer(default_name.clone()));
+
+        // Spawn save dialog
+        commands.spawn((
+            FleetSaveLoadPopup,
+            Node {
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                position_type: PositionType::Absolute,
+                ..default()
+            },
+            BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+            GlobalZIndex(15),
+        )).with_children(|overlay| {
+            overlay.spawn((
+                Node {
+                    width: Val::Px(400.0),
+                    flex_direction: FlexDirection::Column,
+                    padding: UiRect::all(Val::Px(20.0)),
+                    row_gap: Val::Px(12.0),
+                    ..default()
+                },
+                BackgroundColor(BG_PANEL),
+            )).with_children(|panel| {
+                panel.spawn((
+                    Text::new("SAVE FLEET"),
+                    TextFont { font_size: 22.0, ..default() },
+                    TextColor(TEXT_WHITE),
+                ));
+                panel.spawn((
+                    Text::new("Type a name, then press Enter or click Save:"),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(TEXT_GRAY),
+                ));
+                panel.spawn((
+                    FleetSaveNameDisplay,
+                    Text::new(format!("{default_name}.ron")),
+                    TextFont { font_size: 18.0, ..default() },
+                    TextColor(TEXT_GREEN),
+                    Node { padding: UiRect::all(Val::Px(8.0)), ..default() },
+                    BackgroundColor(Color::srgb(0.1, 0.1, 0.15)),
+                ));
+                panel.spawn(Node {
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::SpaceBetween,
+                    column_gap: Val::Px(10.0),
+                    ..default()
+                }).with_children(|row| {
+                    row.spawn((
+                        FleetSaveConfirmButton, Button,
+                        Node {
+                            flex_grow: 1.0,
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(BG_SUBMIT),
+                    )).with_child((
+                        Text::new("Save"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(TEXT_WHITE),
+                    ));
+                    row.spawn((
+                        FleetSaveCancelButton, Button,
+                        Node {
+                            flex_grow: 1.0,
+                            padding: UiRect::axes(Val::Px(12.0), Val::Px(8.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
+                    )).with_child((
+                        Text::new("Cancel"),
+                        TextFont { font_size: 16.0, ..default() },
+                        TextColor(TEXT_WHITE),
+                    ));
+                });
+            });
+        });
+    }
+}
+
+/// Handle keyboard input for fleet save name.
+pub fn handle_save_input(
+    keys: Res<ButtonInput<KeyCode>>,
+    mut buffer: Option<ResMut<FleetSaveInputBuffer>>,
+    mut text_query: Query<&mut Text, With<FleetSaveNameDisplay>>,
+) {
+    let Some(ref mut buffer) = buffer else { return };
+    if text_query.is_empty() { return }
+
+    let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+
+    if keys.just_pressed(KeyCode::Backspace) { buffer.0.pop(); }
+
+    let key_map: &[(KeyCode, char)] = &[
+        (KeyCode::KeyA, 'a'), (KeyCode::KeyB, 'b'), (KeyCode::KeyC, 'c'),
+        (KeyCode::KeyD, 'd'), (KeyCode::KeyE, 'e'), (KeyCode::KeyF, 'f'),
+        (KeyCode::KeyG, 'g'), (KeyCode::KeyH, 'h'), (KeyCode::KeyI, 'i'),
+        (KeyCode::KeyJ, 'j'), (KeyCode::KeyK, 'k'), (KeyCode::KeyL, 'l'),
+        (KeyCode::KeyM, 'm'), (KeyCode::KeyN, 'n'), (KeyCode::KeyO, 'o'),
+        (KeyCode::KeyP, 'p'), (KeyCode::KeyQ, 'q'), (KeyCode::KeyR, 'r'),
+        (KeyCode::KeyS, 's'), (KeyCode::KeyT, 't'), (KeyCode::KeyU, 'u'),
+        (KeyCode::KeyV, 'v'), (KeyCode::KeyW, 'w'), (KeyCode::KeyX, 'x'),
+        (KeyCode::KeyY, 'y'), (KeyCode::KeyZ, 'z'),
+        (KeyCode::Digit0, '0'), (KeyCode::Digit1, '1'), (KeyCode::Digit2, '2'),
+        (KeyCode::Digit3, '3'), (KeyCode::Digit4, '4'), (KeyCode::Digit5, '5'),
+        (KeyCode::Digit6, '6'), (KeyCode::Digit7, '7'), (KeyCode::Digit8, '8'),
+        (KeyCode::Digit9, '9'), (KeyCode::Minus, '-'), (KeyCode::Period, '.'),
+    ];
+
+    if shift && keys.just_pressed(KeyCode::Minus) {
+        buffer.0.push('_');
+    } else {
+        for &(code, ch) in key_map {
+            if keys.just_pressed(code) {
+                buffer.0.push(if shift && ch.is_alphabetic() { ch.to_ascii_uppercase() } else { ch });
             }
-            Err(e) => warn!("Failed to serialize fleet: {e}"),
         }
     }
+
+    for mut text in &mut text_query {
+        let display = if buffer.0.is_empty() { "_.ron".to_string() } else { format!("{}.ron", buffer.0) };
+        **text = display;
+    }
+}
+
+/// Handle save confirm (button or Enter).
+pub fn handle_save_confirm(
+    mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
+    state: Res<FleetBuilderState>,
+    confirm_buttons: Query<&Interaction, (With<FleetSaveConfirmButton>, Changed<Interaction>)>,
+    cancel_buttons: Query<&Interaction, (With<FleetSaveCancelButton>, Changed<Interaction>)>,
+    buffer: Option<Res<FleetSaveInputBuffer>>,
+    popup_query: Query<Entity, With<FleetSaveLoadPopup>>,
+    existing_notifs: Query<Entity, With<FleetNotificationText>>,
+) {
+    if popup_query.is_empty() { return }
+
+    // Cancel
+    let cancel = cancel_buttons.iter().any(|i| *i == Interaction::Pressed)
+        || keys.just_pressed(KeyCode::Escape);
+    if cancel {
+        for e in &popup_query { commands.entity(e).despawn(); }
+        commands.remove_resource::<FleetSaveInputBuffer>();
+        return;
+    }
+
+    // Confirm
+    let confirm = confirm_buttons.iter().any(|i| *i == Interaction::Pressed)
+        || keys.just_pressed(KeyCode::Enter) || keys.just_pressed(KeyCode::NumpadEnter);
+    if !confirm { return }
+
+    let Some(buffer) = buffer else { return };
+    let name = if buffer.0.is_empty() { "unnamed" } else { &buffer.0 };
+
+    let dir = std::path::Path::new("fleets");
+    let _ = std::fs::create_dir_all(dir);
+    let filename = format!("fleets/{name}.ron");
+
+    match ron::ser::to_string_pretty(&state.ships, ron::ser::PrettyConfig::default()) {
+        Ok(data) => {
+            if let Err(e) = std::fs::write(&filename, &data) {
+                warn!("Failed to save fleet: {e}");
+            } else {
+                info!("Fleet saved to {filename}");
+                for e in &existing_notifs { commands.entity(e).despawn(); }
+                spawn_notification(&mut commands, &format!("Saved: {name}"));
+            }
+        }
+        Err(e) => warn!("Failed to serialize fleet: {e}"),
+    }
+
+    for e in &popup_query { commands.entity(e).despawn(); }
+    commands.remove_resource::<FleetSaveInputBuffer>();
 }
 
 pub fn handle_load_fleet(
@@ -1131,81 +1309,134 @@ pub fn handle_load_fleet(
     existing_popups: Query<Entity, With<FleetSaveLoadPopup>>,
 ) {
     for interaction in &query {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+        if *interaction != Interaction::Pressed { continue }
         // Toggle popup
         if !existing_popups.is_empty() {
             for e in &existing_popups { commands.entity(e).despawn(); }
             return;
         }
-        // Read fleet files
-        let dir = std::path::Path::new("fleets");
-        let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
-        if dir.exists() {
-            if let Ok(read_dir) = std::fs::read_dir(dir) {
-                let mut files: Vec<_> = read_dir
-                    .filter_map(|e| e.ok())
-                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "ron"))
-                    .collect();
-                files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
-                for f in files {
-                    let name = f.path().file_stem()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default();
-                    entries.push((name, f.path()));
-                }
+        spawn_load_popup(&mut commands);
+    }
+}
+
+fn spawn_load_popup(commands: &mut Commands) {
+    let dir = std::path::Path::new("fleets");
+    let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+    if dir.exists() {
+        if let Ok(read_dir) = std::fs::read_dir(dir) {
+            let mut files: Vec<_> = read_dir
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().is_some_and(|ext| ext == "ron"))
+                .collect();
+            files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+            for f in files {
+                let name = f.path().file_stem()
+                    .map(|s| s.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                entries.push((name, f.path()));
             }
         }
+    }
 
-        // Spawn popup
-        commands.spawn((
-            FleetSaveLoadPopup,
+    commands.spawn((
+        FleetSaveLoadPopup,
+        Node {
+            width: Val::Percent(100.0),
+            height: Val::Percent(100.0),
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            position_type: PositionType::Absolute,
+            ..default()
+        },
+        BackgroundColor(Color::srgba(0.0, 0.0, 0.0, 0.7)),
+        GlobalZIndex(15),
+    )).with_children(|overlay| {
+        overlay.spawn((
             Node {
-                position_type: PositionType::Absolute,
-                bottom: Val::Px(70.0),
-                left: Val::Px(200.0),
-                width: Val::Px(300.0),
-                max_height: Val::Px(300.0),
+                width: Val::Px(400.0),
+                max_height: Val::Px(500.0),
                 flex_direction: FlexDirection::Column,
-                padding: UiRect::all(Val::Px(10.0)),
-                row_gap: Val::Px(4.0),
+                padding: UiRect::all(Val::Px(20.0)),
+                row_gap: Val::Px(6.0),
                 overflow: Overflow::scroll_y(),
                 ..default()
             },
-            BackgroundColor(BG_POPUP_INNER),
-            GlobalZIndex(15),
-        )).with_children(|popup| {
-            popup.spawn((
-                Text::new("LOAD FLEET"),
-                TextFont { font_size: 18.0, ..default() },
-                TextColor(TEXT_YELLOW),
-            ));
+            BackgroundColor(BG_PANEL),
+        )).with_children(|panel| {
+            panel.spawn(Node {
+                width: Val::Percent(100.0),
+                justify_content: JustifyContent::SpaceBetween,
+                align_items: AlignItems::Center,
+                margin: UiRect::bottom(Val::Px(8.0)),
+                ..default()
+            }).with_children(|header| {
+                header.spawn((
+                    Text::new("LOAD FLEET"),
+                    TextFont { font_size: 22.0, ..default() },
+                    TextColor(TEXT_YELLOW),
+                ));
+                header.spawn((
+                    FleetSaveCancelButton, Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(12.0), Val::Px(6.0)),
+                        justify_content: JustifyContent::Center,
+                        ..default()
+                    },
+                    BackgroundColor(Color::srgb(0.5, 0.2, 0.2)),
+                )).with_child((
+                    Text::new("Close"),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(TEXT_WHITE),
+                ));
+            });
+
             if entries.is_empty() {
-                popup.spawn((
+                panel.spawn((
                     Text::new("No saved fleets"),
                     TextFont { font_size: 14.0, ..default() },
                     TextColor(TEXT_GRAY),
                 ));
             }
             for (name, path) in entries {
-                popup.spawn((
-                    LoadFleetOption(path),
-                    Button,
-                    Node {
-                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
-                        justify_content: JustifyContent::FlexStart,
-                        ..default()
-                    },
-                    BackgroundColor(BG_ENTRY),
-                )).with_child((
-                    Text::new(name),
-                    TextFont { font_size: 14.0, ..default() },
-                    TextColor(TEXT_WHITE),
-                ));
+                panel.spawn(Node {
+                    width: Val::Percent(100.0),
+                    justify_content: JustifyContent::SpaceBetween,
+                    align_items: AlignItems::Center,
+                    ..default()
+                }).with_children(|row| {
+                    row.spawn((
+                        LoadFleetOption(path.clone()),
+                        Button,
+                        Node {
+                            flex_grow: 1.0,
+                            padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                            ..default()
+                        },
+                        BackgroundColor(BG_ENTRY),
+                    )).with_child((
+                        Text::new(name),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(TEXT_WHITE),
+                    ));
+                    row.spawn((
+                        DeleteFleetButton(path),
+                        Button,
+                        Node {
+                            padding: UiRect::axes(Val::Px(8.0), Val::Px(6.0)),
+                            margin: UiRect::left(Val::Px(4.0)),
+                            justify_content: JustifyContent::Center,
+                            ..default()
+                        },
+                        BackgroundColor(Color::srgb(0.5, 0.15, 0.15)),
+                    )).with_child((
+                        Text::new("X"),
+                        TextFont { font_size: 14.0, ..default() },
+                        TextColor(TEXT_WHITE),
+                    ));
+                });
             }
         });
-    }
+    });
 }
 
 pub fn handle_load_fleet_option(
@@ -1216,9 +1447,7 @@ pub fn handle_load_fleet_option(
     existing_notifs: Query<Entity, With<FleetNotificationText>>,
 ) {
     for (interaction, option) in &query {
-        if *interaction != Interaction::Pressed {
-            continue;
-        }
+        if *interaction != Interaction::Pressed { continue }
         match std::fs::read_to_string(&option.0) {
             Ok(data) => match ron::from_str::<Vec<ShipSpec>>(&data) {
                 Ok(ships) => {
@@ -1227,7 +1456,6 @@ pub fn handle_load_fleet_option(
                     state.ships = ships;
                     state.selected_ship = None;
                     state.submitted = false;
-                    // Close popup + show notification
                     for e in &popups { commands.entity(e).despawn(); }
                     for e in &existing_notifs { commands.entity(e).despawn(); }
                     let name = option.0.file_stem()
@@ -1239,6 +1467,25 @@ pub fn handle_load_fleet_option(
             },
             Err(e) => warn!("Failed to read fleet file: {e}"),
         }
+    }
+}
+
+pub fn handle_delete_fleet(
+    query: Query<(&Interaction, &DeleteFleetButton), Changed<Interaction>>,
+    mut commands: Commands,
+    popups: Query<Entity, With<FleetSaveLoadPopup>>,
+) {
+    for (interaction, del) in &query {
+        if *interaction != Interaction::Pressed { continue }
+        let name = del.0.file_stem().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+        if let Err(e) = std::fs::remove_file(&del.0) {
+            warn!("Failed to delete fleet file: {e}");
+        } else {
+            info!("Deleted fleet: {name}");
+        }
+        // Refresh the popup
+        for e in &popups { commands.entity(e).despawn(); }
+        spawn_load_popup(&mut commands);
     }
 }
 
@@ -1257,7 +1504,6 @@ fn fleet_auto_name(ships: &[ShipSpec]) -> String {
     format!("{}_{cost}pts", parts.join("_"))
 }
 
-/// Spawn a temporary notification text (auto-despawns after 3 seconds).
 fn spawn_notification(commands: &mut Commands, msg: &str) {
     commands.spawn((
         FleetNotificationText,

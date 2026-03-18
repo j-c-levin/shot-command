@@ -42,8 +42,11 @@ impl Plugin for FleetUiPlugin {
                     handle_submit_button,
                     handle_popup_close,
                     handle_save_fleet,
+                    handle_save_input,
+                    handle_save_confirm,
                     handle_load_fleet,
                     handle_load_fleet_option,
+                    handle_delete_fleet,
                 )
                     .run_if(fleet_builder_active.clone()),
             )
