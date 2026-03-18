@@ -14,8 +14,8 @@ use crate::net::commands::{
 use crate::net::LocalTeam;
 use crate::radar::{ContactKind, ContactLevel, ContactSourceShip, ContactTeam, RadarContact};
 use crate::ship::{
-    FacingLocked, Selected, Ship, ShipNumber, ShipSecrets, ShipSecretsOwner,
-    SquadMember, TargetDesignation, rotate_offset, ship_heading,
+    FacingLocked, Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
+    SquadMember, TargetDesignation, rotate_offset, ship_heading, ship_xz_position,
 };
 use crate::weapon::{Mounts, WeaponCategory};
 
@@ -515,7 +515,7 @@ fn handle_move_gesture(
     mut gesture: ResMut<MoveGestureState>,
     windows: Query<&Window>,
     camera_query: Query<(&Camera, &GlobalTransform), With<GameCamera>>,
-    selected_query: Query<(Entity, &Team), (With<Selected>, With<Ship>)>,
+    selected_query: Query<(Entity, &Team, &Transform, &ShipClass), (With<Selected>, With<Ship>)>,
 ) {
     let Some(my_team) = local_team.0 else { return };
 
@@ -559,18 +559,69 @@ fn handle_move_gesture(
             None
         };
 
-        for (entity, team) in &selected_query {
-            if *team != my_team {
-                continue;
-            }
+        // Collect own-team selected ships
+        let ships: Vec<(Entity, Vec2, f32)> = selected_query
+            .iter()
+            .filter(|(_, team, _, _)| **team == my_team)
+            .map(|(e, _, tf, class)| (e, ship_xz_position(tf), class.profile().collision_radius))
+            .collect();
+
+        if ships.is_empty() {
+            return;
+        }
+
+        // Compute formation offsets for multi-ship moves
+        let offsets = compute_formation_offsets(&ships, gesture.destination, facing);
+
+        for (i, (entity, _, _)) in ships.iter().enumerate() {
+            let dest = gesture.destination + offsets[i];
             commands.client_trigger(MoveCommand {
-                ship: entity,
-                destination: gesture.destination,
+                ship: *entity,
+                destination: dest,
                 append: gesture.append,
                 facing,
             });
         }
     }
+}
+
+/// Spacing multiplier for formation offsets (collision radius * this value).
+const FORMATION_SPACING: f32 = 3.0;
+
+/// Compute lateral offsets so multiple ships don't stack on the same destination.
+/// Ships spread in a line perpendicular to the move direction.
+/// Returns one offset Vec2 per ship (first ship gets Vec2::ZERO if only one).
+pub fn compute_formation_offsets(
+    ships: &[(Entity, Vec2, f32)],
+    destination: Vec2,
+    facing: Option<Vec2>,
+) -> Vec<Vec2> {
+    let count = ships.len();
+    if count <= 1 {
+        return vec![Vec2::ZERO; count];
+    }
+
+    // Move direction: use facing if provided, otherwise average position → destination
+    let avg_pos = ships.iter().map(|(_, pos, _)| *pos).sum::<Vec2>() / count as f32;
+    let move_dir = facing
+        .unwrap_or_else(|| (destination - avg_pos).normalize_or_zero());
+
+    // Perpendicular (lateral) direction
+    let lateral = if move_dir.length_squared() > 0.001 {
+        Vec2::new(-move_dir.y, move_dir.x)
+    } else {
+        Vec2::X // fallback if ships are already at destination
+    };
+
+    // Average collision radius for spacing
+    let avg_radius: f32 = ships.iter().map(|(_, _, r)| *r).sum::<f32>() / count as f32;
+    let spacing = avg_radius * FORMATION_SPACING;
+
+    // Center the line: offsets are -N/2..N/2 * spacing
+    let half = (count as f32 - 1.0) / 2.0;
+    (0..count)
+        .map(|i| lateral * (i as f32 - half) * spacing)
+        .collect()
 }
 
 /// Draw a preview gizmo while the move gesture drag is active.
@@ -997,6 +1048,87 @@ fn update_squad_highlights(
     for (owner, squad) in &secrets_query {
         if squad.leader == selected {
             commands.entity(owner.0).insert(SquadHighlight);
+        }
+    }
+}
+
+// ── Tests ───────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn dummy_entity() -> Entity {
+        Entity::PLACEHOLDER
+    }
+
+    #[test]
+    fn formation_single_ship_zero_offset() {
+        let ships = vec![(dummy_entity(), Vec2::new(100.0, 100.0), 10.0)];
+        let offsets = compute_formation_offsets(&ships, Vec2::new(200.0, 100.0), None);
+        assert_eq!(offsets.len(), 1);
+        assert_eq!(offsets[0], Vec2::ZERO);
+    }
+
+    #[test]
+    fn formation_two_ships_symmetric() {
+        let ships = vec![
+            (dummy_entity(), Vec2::new(100.0, 100.0), 10.0),
+            (dummy_entity(), Vec2::new(100.0, 120.0), 10.0),
+        ];
+        let offsets = compute_formation_offsets(&ships, Vec2::new(200.0, 110.0), None);
+        assert_eq!(offsets.len(), 2);
+        // Offsets should be equal and opposite
+        assert!((offsets[0] + offsets[1]).length() < 0.01,
+            "offsets should be symmetric: {:?} + {:?}", offsets[0], offsets[1]);
+        // Should have non-zero spread
+        assert!(offsets[0].length() > 1.0, "should spread: {:?}", offsets[0]);
+    }
+
+    #[test]
+    fn formation_three_ships_centered() {
+        let ships = vec![
+            (dummy_entity(), Vec2::ZERO, 10.0),
+            (dummy_entity(), Vec2::ZERO, 10.0),
+            (dummy_entity(), Vec2::ZERO, 10.0),
+        ];
+        let offsets = compute_formation_offsets(&ships, Vec2::new(100.0, 0.0), None);
+        assert_eq!(offsets.len(), 3);
+        // Middle ship should be at center
+        assert!(offsets[1].length() < 0.01,
+            "middle ship should be centered: {:?}", offsets[1]);
+        // First and third should be symmetric
+        assert!((offsets[0] + offsets[2]).length() < 0.01,
+            "outer ships should be symmetric: {:?} + {:?}", offsets[0], offsets[2]);
+    }
+
+    #[test]
+    fn formation_offsets_perpendicular_to_move_direction() {
+        let ships = vec![
+            (dummy_entity(), Vec2::ZERO, 10.0),
+            (dummy_entity(), Vec2::ZERO, 10.0),
+        ];
+        // Moving in +X direction
+        let offsets = compute_formation_offsets(&ships, Vec2::new(100.0, 0.0), None);
+        // Offsets should be in Y direction (perpendicular to X)
+        for offset in &offsets {
+            assert!(offset.x.abs() < 0.01,
+                "offset should be perpendicular to move dir: {:?}", offset);
+        }
+    }
+
+    #[test]
+    fn formation_with_facing_uses_facing_direction() {
+        let ships = vec![
+            (dummy_entity(), Vec2::ZERO, 10.0),
+            (dummy_entity(), Vec2::ZERO, 10.0),
+        ];
+        let facing = Some(Vec2::new(0.0, 1.0)); // facing +Y
+        let offsets = compute_formation_offsets(&ships, Vec2::new(100.0, 0.0), facing);
+        // Offsets should be perpendicular to facing (+Y), so in X direction
+        for offset in &offsets {
+            assert!(offset.y.abs() < 0.01,
+                "offset should be perpendicular to facing: {:?}", offset);
         }
     }
 }

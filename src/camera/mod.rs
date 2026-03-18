@@ -36,7 +36,7 @@ pub struct LeftDragState {
     pub is_dragging: bool,
 }
 
-const DRAG_THRESHOLD_PX: f32 = 5.0;
+const DRAG_THRESHOLD_PX: f32 = 2.0;
 
 #[derive(Component)]
 pub struct GameCamera;

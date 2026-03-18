@@ -510,17 +510,27 @@ fn update_selection_highlight(
 
 fn handle_card_click(
     mut commands: Commands,
+    keys: Res<ButtonInput<KeyCode>>,
     cards: Query<(&ShipCard, &Interaction), Changed<Interaction>>,
     selected: Query<Entity, With<Selected>>,
 ) {
     for (card, interaction) in &cards {
         if *interaction == Interaction::Pressed {
-            // Deselect all ships
-            for entity in &selected {
-                commands.entity(entity).remove::<Selected>();
+            let shift = keys.pressed(KeyCode::ShiftLeft) || keys.pressed(KeyCode::ShiftRight);
+            if shift {
+                // Shift+click: toggle selection
+                if selected.get(card.0).is_ok() {
+                    commands.entity(card.0).remove::<Selected>();
+                } else {
+                    commands.entity(card.0).insert(Selected);
+                }
+            } else {
+                // Normal click: replace selection
+                for entity in &selected {
+                    commands.entity(entity).remove::<Selected>();
+                }
+                commands.entity(card.0).insert(Selected);
             }
-            // Select the clicked card's ship
-            commands.entity(card.0).insert(Selected);
         }
     }
 }
