@@ -90,8 +90,8 @@ pub fn spawn_game_lobby(
 
     commands.insert_resource(FleetBuilderMode::Lobby);
 
-    // Reset fleet builder state for a fresh start
-    commands.init_resource::<FleetBuilderState>();
+    // Reset fleet builder state for a fresh start (insert, not init, to trigger is_changed)
+    commands.insert_resource(FleetBuilderState::default());
 
     commands.queue(move |world: &mut World| {
         world.insert_non_send_resource(GameLobbyAsync {
@@ -304,11 +304,16 @@ pub fn poll_game_detail(
 
                 // Update status message
                 let player_count = detail.players.len();
+                let all_ready = player_count >= 2
+                    && detail.players.iter().all(|p| p.ready);
                 state.status_message = match detail.status.as_str() {
                     "waiting" if player_count < 2 => {
                         "Waiting for opponent...".to_string()
                     }
-                    "waiting" => "Ready to launch!".to_string(),
+                    "waiting" if !all_ready => {
+                        "Waiting for all players to ready up...".to_string()
+                    }
+                    "waiting" => "All ready — launch when ready!".to_string(),
                     "launching" => "Launching server...".to_string(),
                     other => format!("Status: {}", other),
                 };
