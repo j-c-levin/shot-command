@@ -501,7 +501,7 @@ fn cursor_to_ground(
 }
 
 /// Minimum screen-space drag distance (pixels) to activate facing.
-const DRAG_THRESHOLD_PX: f32 = 5.0;
+const DRAG_THRESHOLD_PX: f32 = 15.0;
 
 /// System that detects right-click press/release for move+facing gestures.
 /// On press: record destination and screen position.

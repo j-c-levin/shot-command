@@ -8,7 +8,7 @@ use crate::net::LocalTeam;
 use crate::ship::Ship;
 
 // ── Constants ────────────────────────────────────────────────────────────
-pub const BASE_CAPTURE_TIME: f32 = 20.0;
+pub const BASE_CAPTURE_TIME: f32 = 7.0;
 pub const DECAY_RATE: f32 = 0.025;
 pub const SCORE_VICTORY_THRESHOLD: f32 = 30.0;
 pub const SCORE_TICK_RATE: f32 = 1.0;
@@ -376,19 +376,22 @@ mod tests {
     #[test]
     fn capture_speed_one_ship() {
         let speed = capture_speed(1);
-        assert!((speed - 0.05).abs() < 1e-6);
+        let expected = 1.0 / BASE_CAPTURE_TIME;
+        assert!((speed - expected).abs() < 1e-6);
     }
 
     #[test]
     fn capture_speed_four_ships() {
         let speed = capture_speed(4);
-        assert!((speed - 0.1).abs() < 1e-6);
+        let expected = 2.0 / BASE_CAPTURE_TIME;
+        assert!((speed - expected).abs() < 1e-6);
     }
 
     #[test]
     fn capture_speed_nine_ships() {
         let speed = capture_speed(9);
-        assert!((speed - 0.15).abs() < 1e-6);
+        let expected = 3.0 / BASE_CAPTURE_TIME;
+        assert!((speed - expected).abs() < 1e-6);
     }
 
     #[test]
@@ -422,7 +425,9 @@ mod tests {
         match state {
             ControlPointState::Capturing { team, progress } => {
                 assert_eq!(team, 0);
-                assert!(progress > 0.07 && progress < 0.08);
+                // 2 ships vs 0 → net_advantage=2, speed = sqrt(2)/BASE_CAPTURE_TIME
+                let expected = (2.0_f32).sqrt() / BASE_CAPTURE_TIME;
+                assert!((progress - expected).abs() < 0.01, "progress={progress}, expected={expected}");
             }
             _ => panic!("Expected Capturing, got {:?}", state),
         }
@@ -506,7 +511,9 @@ mod tests {
         match state {
             ControlPointState::Decapturing { team, progress } => {
                 assert_eq!(team, 0);
-                assert!((progress - 0.95).abs() < 1e-6);
+                // 1 enemy ship → speed = 1/BASE_CAPTURE_TIME, progress = 1.0 - speed
+                let expected = 1.0 - (1.0 / BASE_CAPTURE_TIME);
+                assert!((progress - expected).abs() < 1e-6, "progress={progress}, expected={expected}");
             }
             _ => panic!("Expected Decapturing, got {:?}", state),
         }
@@ -585,7 +592,9 @@ mod tests {
         }
         match state {
             ControlPointState::Capturing { progress, .. } => {
-                assert!((progress - 0.05).abs() < 1e-5);
+                // 1 ship, 4 frames × 0.25s = 1.0s total → progress = 1.0/BASE_CAPTURE_TIME
+                let expected = 1.0 / BASE_CAPTURE_TIME;
+                assert!((progress - expected).abs() < 1e-5, "progress={progress}, expected={expected}");
             }
             _ => panic!("Expected Capturing, got {:?}", state),
         }
