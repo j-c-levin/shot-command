@@ -59,6 +59,7 @@ impl Plugin for LobbyPlugin {
                 game_lobby::rebuild_player_list,
                 game_lobby::handle_launch_button,
                 game_lobby::handle_leave_button,
+                game_lobby::sync_ready_state,
             )
                 .run_if(in_state(GameState::GameLobby)),
         );
@@ -109,4 +110,6 @@ pub struct GameDetail {
 pub struct PlayerInfo {
     pub name: String,
     pub team: u8,
+    #[serde(default)]
+    pub ready: bool,
 }

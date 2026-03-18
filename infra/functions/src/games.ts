@@ -12,7 +12,7 @@ export const createGame = onRequest(async (req, res) => {
   const doc = await db.collection("games").add({
     creator,
     status: "waiting",
-    players: [{ name: creator, team: 0 }],
+    players: [{ name: creator, team: 0, ready: false }],
     server_address: null,
     edgegap_request_id: null,
     created_at: FieldValue.serverTimestamp(),
@@ -73,8 +73,26 @@ export const joinGame = onRequest(async (req, res) => {
     if (data.status !== "waiting") throw new Error("game not accepting players");
     if (data.players.length >= 2) throw new Error("game full");
     tx.update(gameRef, {
-      players: [...data.players, { name, team: 1 }],
+      players: [...data.players, { name, team: 1, ready: false }],
     });
+  });
+  res.json({ ok: true });
+});
+
+export const readyUp = onRequest(async (req, res) => {
+  if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
+  const { game_id, name, ready } = req.body;
+  if (!game_id || !name) { res.status(400).send("game_id and name required"); return; }
+
+  const gameRef = db.collection("games").doc(game_id);
+  await db.runTransaction(async (tx) => {
+    const doc = await tx.get(gameRef);
+    if (!doc.exists) throw new Error("game not found");
+    const data = doc.data()!;
+    const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
+      p.name === name ? { ...p, ready: ready !== false } : p
+    );
+    tx.update(gameRef, { players });
   });
   res.json({ ok: true });
 });
@@ -96,6 +114,11 @@ export const launchGame = onRequest(async (req, res) => {
   }
   if (data.players.length < 2) {
     res.status(400).send("need 2 players to launch");
+    return;
+  }
+  const allReady = data.players.every((p: { ready?: boolean }) => p.ready === true);
+  if (!allReady) {
+    res.status(400).send("not all players are ready");
     return;
   }
 

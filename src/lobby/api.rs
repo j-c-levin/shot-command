@@ -92,6 +92,34 @@ pub fn join_game(api_base: &str, game_id: &str, name: &str) -> Receiver<Result<(
     rx
 }
 
+/// Mark this player as ready (or not ready) in the lobby.
+pub fn ready_up(api_base: &str, game_id: &str, name: &str, ready: bool) -> Receiver<Result<(), String>> {
+    let (tx, rx) = channel();
+    let url = format!("{api_base}/readyUp");
+    let body = serde_json::json!({
+        "game_id": game_id,
+        "name": name,
+        "ready": ready,
+    });
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let result = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Ok(())
+                } else {
+                    Err(format!("ready_up failed: {}", r.status()))
+                }
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 /// Launch a game (creator only). Triggers server deployment.
 pub fn launch_game(
     api_base: &str,

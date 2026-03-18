@@ -19,6 +19,7 @@ const BG_SUBMIT: Color = Color::srgb(0.15, 0.55, 0.2);
 const BG_DISABLED: Color = Color::srgb(0.3, 0.3, 0.3);
 const TEXT_WHITE: Color = Color::WHITE;
 const TEXT_GRAY: Color = Color::srgb(0.6, 0.6, 0.6);
+const TEXT_GREEN: Color = Color::srgb(0.3, 1.0, 0.3);
 const TEXT_YELLOW: Color = Color::srgb(1.0, 1.0, 0.4);
 
 const POLL_INTERVAL_SECS: f32 = 2.0;
@@ -34,6 +35,7 @@ pub struct GameLobbyState {
     pub fleet_ready: bool,
     pub status_message: String,
     pub detail_changed: bool,
+    pub last_submitted: bool,
 }
 
 /// Async HTTP receivers for game lobby (not Send+Sync, uses NonSend).
@@ -83,6 +85,7 @@ pub fn spawn_game_lobby(
         fleet_ready: false,
         status_message: "Loading game details...".to_string(),
         detail_changed: true,
+        last_submitted: false,
     });
 
     commands.insert_resource(FleetBuilderMode::Lobby);
@@ -418,13 +421,15 @@ pub fn rebuild_player_list(
     commands.entity(panel_entity).with_children(|panel| {
         if let Some(ref detail) = state.detail {
             for player in &detail.players {
+                let ready_icon = if player.ready { "READY" } else { "..." };
+                let color = if player.ready { TEXT_GREEN } else { TEXT_YELLOW };
                 panel.spawn((
-                    Text::new(format!("{}  (Team {})", player.name, player.team)),
+                    Text::new(format!("{}  (Team {})  {}", player.name, player.team, ready_icon)),
                     TextFont {
                         font_size: 16.0,
                         ..default()
                     },
-                    TextColor(TEXT_WHITE),
+                    TextColor(color),
                 ));
             }
 
@@ -475,12 +480,17 @@ pub fn rebuild_player_list(
         color.0 = TEXT_YELLOW;
     }
 
-    // Update launch button color
-    let can_launch = state.is_creator
+    // Update launch button color — require all players ready
+    let all_ready = state
+        .detail
+        .as_ref()
+        .map(|d| d.players.len() >= 2 && d.players.iter().all(|p| p.ready))
+        .unwrap_or(false);
+    let can_launch = state.is_creator && all_ready
         && state
             .detail
             .as_ref()
-            .map(|d| d.players.len() >= 2 && d.status == "waiting")
+            .map(|d| d.status == "waiting")
             .unwrap_or(false);
 
     for mut bg in &mut launch_bg_query {
@@ -500,12 +510,17 @@ pub fn handle_launch_button(
 ) {
     for interaction in &query {
         if *interaction == Interaction::Pressed {
-            // Only creator can launch, need 2 players
-            let can_launch = state.is_creator
+            // Only creator can launch, need 2 players, all ready
+            let all_ready = state
+                .detail
+                .as_ref()
+                .map(|d| d.players.len() >= 2 && d.players.iter().all(|p| p.ready))
+                .unwrap_or(false);
+            let can_launch = state.is_creator && all_ready
                 && state
                     .detail
                     .as_ref()
-                    .map(|d| d.players.len() >= 2 && d.status == "waiting")
+                    .map(|d| d.status == "waiting")
                     .unwrap_or(false);
 
             if can_launch && async_state.pending_launch.is_none() {
@@ -538,5 +553,28 @@ pub fn handle_leave_button(
                 ));
             }
         }
+    }
+}
+
+/// Sync FleetBuilderState.submitted → ready_up API call.
+/// When player submits fleet in lobby mode, notify the server they're ready.
+pub fn sync_ready_state(
+    fleet_state: Res<FleetBuilderState>,
+    lobby_config: Res<LobbyConfig>,
+    game_id: Res<CurrentGameId>,
+    player_name: Res<PlayerName>,
+    mut state: ResMut<GameLobbyState>,
+) {
+    if !fleet_state.is_changed() {
+        return;
+    }
+    if fleet_state.submitted != state.last_submitted {
+        state.last_submitted = fleet_state.submitted;
+        let _ = api::ready_up(
+            &lobby_config.api_base_url,
+            &game_id.0,
+            &player_name.0,
+            fleet_state.submitted,
+        );
     }
 }
