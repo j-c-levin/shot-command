@@ -28,6 +28,14 @@ struct Cli {
     /// Auto-submit a preset fleet (1 or 2) to skip the fleet builder
     #[arg(long)]
     fleet: Option<u8>,
+
+    /// Launch the map editor instead of connecting to a server
+    #[arg(long)]
+    editor: bool,
+
+    /// Map file to load (for editor: load for editing; requires --editor)
+    #[arg(long)]
+    map: Option<String>,
 }
 
 /// Resource: if set, auto-submit this fleet on entering FleetComposition.
@@ -82,30 +90,50 @@ fn preset_fleet(id: u8) -> Vec<ShipSpec> {
 
 fn main() {
     let cli = Cli::parse();
-
     let mut app = App::new();
+
+    // Always add: DefaultPlugins, MeshPickingPlugin, GamePlugin, CameraPlugin
     app.add_plugins((
-            DefaultPlugins
-                .set(WindowPlugin {
-                    primary_window: Some(Window {
-                        title: "Nebulous Shot Command".to_string(),
-                        fit_canvas_to_parent: true,
-                        ..default()
-                    }),
+        DefaultPlugins
+            .set(WindowPlugin {
+                primary_window: Some(Window {
+                    title: "Nebulous Shot Command".to_string(),
+                    fit_canvas_to_parent: true,
                     ..default()
-                })
-                .set(AssetPlugin {
-                    meta_check: AssetMetaCheck::Never,
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-            MeshPickingPlugin,
+                }),
+                ..default()
+            })
+            .set(AssetPlugin {
+                meta_check: AssetMetaCheck::Never,
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest()),
+        MeshPickingPlugin,
+        GamePlugin,
+        CameraPlugin,
+    ));
+
+    if cli.editor {
+        // Editor mode: skip networking, add editor plugin
+        app.add_plugins(nebulous_shot_command::map::editor::MapEditorPlugin);
+
+        // CameraPlugin depends on InputMode resource (used by camera_orbit).
+        // In normal mode, InputPlugin inits it. In editor mode, init manually:
+        app.init_resource::<nebulous_shot_command::input::InputMode>();
+
+        if let Some(ref map_name) = cli.map {
+            app.insert_resource(
+                nebulous_shot_command::map::editor::EditorMapPath(map_name.clone()),
+            );
+        }
+        app.add_systems(Startup, set_editor_state);
+    } else {
+        // Normal game mode: all networking + game plugins
+        app.add_plugins((
             RepliconPlugins,
             RepliconRenetPlugins,
             SharedReplicationPlugin,
-            GamePlugin,
             FleetPlugin,
-            CameraPlugin,
             ShipVisualsPlugin,
             FogClientPlugin,
             InputPlugin,
@@ -117,21 +145,28 @@ fn main() {
             ControlPointClientPlugin,
             ClientNetPlugin,
         ));
-    app.insert_resource(ClientConnectAddress(cli.connect));
+        app.insert_resource(ClientConnectAddress(cli.connect));
+        app.init_resource::<LocalTeam>();
 
-    if let Some(fleet_id) = cli.fleet {
-        app.insert_resource(AutoFleet(preset_fleet(fleet_id)));
-        app.add_systems(OnEnter(GameState::FleetComposition), auto_submit_fleet);
+        if let Some(fleet_id) = cli.fleet {
+            app.insert_resource(AutoFleet(preset_fleet(fleet_id)));
+            app.add_systems(OnEnter(GameState::FleetComposition), auto_submit_fleet);
+        }
+
+        app.add_systems(Startup, set_connecting);
     }
 
-    app.init_resource::<LocalTeam>()
-        .add_systems(Startup, set_connecting)
-        .run();
+    app.run();
 }
 
 /// Transition from the default Setup state to Connecting on startup.
 fn set_connecting(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Connecting);
+}
+
+/// Transition from the default Setup state to Editor on startup.
+fn set_editor_state(mut next_state: ResMut<NextState<GameState>>) {
+    next_state.set(GameState::Editor);
 }
 
 /// Auto-submit the preset fleet when entering FleetComposition.

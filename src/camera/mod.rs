@@ -17,7 +17,13 @@ impl Plugin for CameraPlugin {
             .insert_resource(LeftDragState::default())
             .add_systems(Startup, spawn_camera)
             .add_systems(OnEnter(GameState::Playing), flag_camera_center)
-            .add_systems(Update, (camera_pan, camera_zoom, camera_orbit, camera_drag_pan, deferred_center_camera));
+            .add_systems(Update, (
+                camera_pan,
+                camera_zoom.run_if(not(in_state(GameState::Editor))),
+                camera_orbit,
+                camera_drag_pan.run_if(not(in_state(GameState::Editor))),
+                deferred_center_camera,
+            ));
     }
 }
 

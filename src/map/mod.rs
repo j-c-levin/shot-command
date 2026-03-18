@@ -1,4 +1,5 @@
 pub mod data;
+pub mod editor;
 
 use bevy::prelude::*;
 use rand::Rng;
