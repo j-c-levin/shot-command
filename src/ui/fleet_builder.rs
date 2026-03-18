@@ -139,6 +139,15 @@ pub struct SaveFleetButton;
 #[derive(Component)]
 pub struct LoadFleetButton;
 
+#[derive(Component)]
+pub struct LoadFleetOption(pub std::path::PathBuf);
+
+#[derive(Component)]
+pub struct FleetSaveLoadPopup;
+
+#[derive(Component)]
+pub struct FleetNotificationText;
+
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
 pub fn spawn_fleet_ui(
@@ -1086,77 +1095,184 @@ pub fn handle_submit_button(
 pub fn handle_save_fleet(
     query: Query<&Interaction, (Changed<Interaction>, With<SaveFleetButton>)>,
     state: Res<FleetBuilderState>,
+    mut commands: Commands,
+    existing_notifs: Query<Entity, With<FleetNotificationText>>,
 ) {
     for interaction in &query {
-        if *interaction == Interaction::Pressed && !state.ships.is_empty() {
-            let dir = std::path::Path::new("fleets");
-            if std::fs::create_dir_all(dir).is_err() {
-                warn!("Failed to create fleets directory");
-                return;
-            }
-            let filename = format!("fleets/fleet_{}.ron", chrono_timestamp());
-            match ron::ser::to_string_pretty(&state.ships, ron::ser::PrettyConfig::default()) {
-                Ok(data) => {
-                    if let Err(e) = std::fs::write(&filename, &data) {
-                        warn!("Failed to save fleet: {e}");
-                    } else {
-                        info!("Fleet saved to {filename}");
-                    }
+        if *interaction != Interaction::Pressed || state.ships.is_empty() {
+            continue;
+        }
+        let dir = std::path::Path::new("fleets");
+        if std::fs::create_dir_all(dir).is_err() {
+            warn!("Failed to create fleets directory");
+            return;
+        }
+        let name = fleet_auto_name(&state.ships);
+        let filename = format!("fleets/{name}.ron");
+        match ron::ser::to_string_pretty(&state.ships, ron::ser::PrettyConfig::default()) {
+            Ok(data) => {
+                if let Err(e) = std::fs::write(&filename, &data) {
+                    warn!("Failed to save fleet: {e}");
+                } else {
+                    info!("Fleet saved to {filename}");
+                    // Show notification
+                    for e in &existing_notifs { commands.entity(e).despawn(); }
+                    spawn_notification(&mut commands, &format!("Saved: {name}"));
                 }
-                Err(e) => warn!("Failed to serialize fleet: {e}"),
             }
+            Err(e) => warn!("Failed to serialize fleet: {e}"),
         }
     }
 }
 
 pub fn handle_load_fleet(
     query: Query<&Interaction, (Changed<Interaction>, With<LoadFleetButton>)>,
-    mut state: ResMut<FleetBuilderState>,
+    mut commands: Commands,
+    existing_popups: Query<Entity, With<FleetSaveLoadPopup>>,
 ) {
     for interaction in &query {
-        if *interaction == Interaction::Pressed {
-            // Load the most recent fleet file
-            let dir = std::path::Path::new("fleets");
-            if !dir.exists() {
-                warn!("No fleets directory found");
-                return;
-            }
-            let mut files: Vec<_> = std::fs::read_dir(dir)
-                .into_iter()
-                .flatten()
-                .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().is_some_and(|ext| ext == "ron"))
-                .collect();
-            files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
-
-            if let Some(entry) = files.first() {
-                match std::fs::read_to_string(entry.path()) {
-                    Ok(data) => match ron::from_str::<Vec<ShipSpec>>(&data) {
-                        Ok(ships) => {
-                            info!("Fleet loaded from {:?} ({} ships)", entry.path(), ships.len());
-                            state.ships = ships;
-                            state.selected_ship = None;
-                            state.submitted = false;
-                        }
-                        Err(e) => warn!("Failed to parse fleet file: {e}"),
-                    },
-                    Err(e) => warn!("Failed to read fleet file: {e}"),
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        // Toggle popup
+        if !existing_popups.is_empty() {
+            for e in &existing_popups { commands.entity(e).despawn(); }
+            return;
+        }
+        // Read fleet files
+        let dir = std::path::Path::new("fleets");
+        let mut entries: Vec<(String, std::path::PathBuf)> = Vec::new();
+        if dir.exists() {
+            if let Ok(read_dir) = std::fs::read_dir(dir) {
+                let mut files: Vec<_> = read_dir
+                    .filter_map(|e| e.ok())
+                    .filter(|e| e.path().extension().is_some_and(|ext| ext == "ron"))
+                    .collect();
+                files.sort_by_key(|e| std::cmp::Reverse(e.metadata().ok().and_then(|m| m.modified().ok())));
+                for f in files {
+                    let name = f.path().file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    entries.push((name, f.path()));
                 }
-            } else {
-                warn!("No fleet files found in fleets/");
             }
+        }
+
+        // Spawn popup
+        commands.spawn((
+            FleetSaveLoadPopup,
+            Node {
+                position_type: PositionType::Absolute,
+                bottom: Val::Px(70.0),
+                left: Val::Px(200.0),
+                width: Val::Px(300.0),
+                max_height: Val::Px(300.0),
+                flex_direction: FlexDirection::Column,
+                padding: UiRect::all(Val::Px(10.0)),
+                row_gap: Val::Px(4.0),
+                overflow: Overflow::scroll_y(),
+                ..default()
+            },
+            BackgroundColor(BG_POPUP_INNER),
+            GlobalZIndex(15),
+        )).with_children(|popup| {
+            popup.spawn((
+                Text::new("LOAD FLEET"),
+                TextFont { font_size: 18.0, ..default() },
+                TextColor(TEXT_YELLOW),
+            ));
+            if entries.is_empty() {
+                popup.spawn((
+                    Text::new("No saved fleets"),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(TEXT_GRAY),
+                ));
+            }
+            for (name, path) in entries {
+                popup.spawn((
+                    LoadFleetOption(path),
+                    Button,
+                    Node {
+                        padding: UiRect::axes(Val::Px(10.0), Val::Px(6.0)),
+                        justify_content: JustifyContent::FlexStart,
+                        ..default()
+                    },
+                    BackgroundColor(BG_ENTRY),
+                )).with_child((
+                    Text::new(name),
+                    TextFont { font_size: 14.0, ..default() },
+                    TextColor(TEXT_WHITE),
+                ));
+            }
+        });
+    }
+}
+
+pub fn handle_load_fleet_option(
+    query: Query<(&Interaction, &LoadFleetOption), Changed<Interaction>>,
+    mut state: ResMut<FleetBuilderState>,
+    mut commands: Commands,
+    popups: Query<Entity, With<FleetSaveLoadPopup>>,
+    existing_notifs: Query<Entity, With<FleetNotificationText>>,
+) {
+    for (interaction, option) in &query {
+        if *interaction != Interaction::Pressed {
+            continue;
+        }
+        match std::fs::read_to_string(&option.0) {
+            Ok(data) => match ron::from_str::<Vec<ShipSpec>>(&data) {
+                Ok(ships) => {
+                    let count = ships.len();
+                    info!("Fleet loaded from {:?} ({count} ships)", option.0);
+                    state.ships = ships;
+                    state.selected_ship = None;
+                    state.submitted = false;
+                    // Close popup + show notification
+                    for e in &popups { commands.entity(e).despawn(); }
+                    for e in &existing_notifs { commands.entity(e).despawn(); }
+                    let name = option.0.file_stem()
+                        .map(|s| s.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    spawn_notification(&mut commands, &format!("Loaded: {name} ({count} ships)"));
+                }
+                Err(e) => warn!("Failed to parse fleet file: {e}"),
+            },
+            Err(e) => warn!("Failed to read fleet file: {e}"),
         }
     }
 }
 
-/// Simple timestamp for fleet filenames.
-fn chrono_timestamp() -> String {
-    use std::time::{SystemTime, UNIX_EPOCH};
-    let secs = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_secs();
-    format!("{secs}")
+/// Auto-generate a descriptive fleet name from its composition.
+fn fleet_auto_name(ships: &[ShipSpec]) -> String {
+    use crate::ship::ShipClass::*;
+    let bb = ships.iter().filter(|s| s.class == Battleship).count();
+    let dd = ships.iter().filter(|s| s.class == Destroyer).count();
+    let sc = ships.iter().filter(|s| s.class == Scout).count();
+    let cost = fleet_cost(ships);
+    let mut parts = Vec::new();
+    if bb > 0 { parts.push(format!("{bb}BB")); }
+    if dd > 0 { parts.push(format!("{dd}DD")); }
+    if sc > 0 { parts.push(format!("{sc}SC")); }
+    if parts.is_empty() { parts.push("empty".to_string()); }
+    format!("{}_{cost}pts", parts.join("_"))
+}
+
+/// Spawn a temporary notification text (auto-despawns after 3 seconds).
+fn spawn_notification(commands: &mut Commands, msg: &str) {
+    commands.spawn((
+        FleetNotificationText,
+        Text::new(msg.to_string()),
+        TextFont { font_size: 16.0, ..default() },
+        TextColor(TEXT_GREEN),
+        Node {
+            position_type: PositionType::Absolute,
+            bottom: Val::Px(75.0),
+            left: Val::Percent(50.0),
+            margin: UiRect { left: Val::Px(-150.0), ..default() },
+            ..default()
+        },
+        GlobalZIndex(20),
+    ));
 }
 
 // ── Update displays ─────────────────────────────────────────────────────

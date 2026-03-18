@@ -43,6 +43,7 @@ impl Plugin for FleetUiPlugin {
                     handle_popup_close,
                     handle_save_fleet,
                     handle_load_fleet,
+                    handle_load_fleet_option,
                 )
                     .run_if(fleet_builder_active.clone()),
             )
