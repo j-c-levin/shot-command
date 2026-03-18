@@ -190,6 +190,15 @@ fn setup_editor_scene(
         }
     }
 
+    info!(
+        "Editor: scene setup — bounds {}x{}, {} asteroids, {} control points, {} spawns",
+        editor_data.0.bounds.half_x * 2.0,
+        editor_data.0.bounds.half_y * 2.0,
+        editor_data.0.asteroids.len(),
+        editor_data.0.control_points.len(),
+        editor_data.0.spawns.len(),
+    );
+
     // Insert MapBounds from loaded data
     let bounds = MapBounds {
         half_extents: Vec2::new(editor_data.0.bounds.half_x, editor_data.0.bounds.half_y),
@@ -250,10 +259,11 @@ fn spawn_editor_asteroid(
     pos: Vec2,
     radius: f32,
 ) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             EditorAsteroid,
             Transform::from_xyz(pos.x, 0.0, pos.y),
+            Visibility::Visible,
             Pickable::default(),
         ))
         .with_child((
@@ -265,7 +275,9 @@ fn spawn_editor_asteroid(
             })),
         ))
         .observe(handle_editor_entity_click)
-        .id()
+        .id();
+    info!("Editor: placed asteroid at ({:.0}, {:.0}) radius={:.0}", pos.x, pos.y, radius);
+    entity
 }
 
 fn spawn_editor_control_point(
@@ -275,10 +287,11 @@ fn spawn_editor_control_point(
     pos: Vec2,
     radius: f32,
 ) -> Entity {
-    commands
+    let entity = commands
         .spawn((
             EditorControlPoint,
             Transform::from_xyz(pos.x, 0.0, pos.y),
+            Visibility::Visible,
             Pickable::default(),
         ))
         .with_child((
@@ -292,7 +305,9 @@ fn spawn_editor_control_point(
             Pickable::IGNORE,
         ))
         .observe(handle_editor_entity_click)
-        .id()
+        .id();
+    info!("Editor: placed control point at ({:.0}, {:.0}) radius={:.0}", pos.x, pos.y, radius);
+    entity
 }
 
 fn spawn_editor_spawn_point(
@@ -307,10 +322,11 @@ fn spawn_editor_spawn_point(
     } else {
         SPAWN_TEAM1_COLOR
     };
-    commands
+    let entity = commands
         .spawn((
             EditorSpawn(team),
             Transform::from_xyz(pos.x, 0.0, pos.y),
+            Visibility::Visible,
             Pickable::default(),
         ))
         .with_child((
@@ -323,7 +339,9 @@ fn spawn_editor_spawn_point(
             Pickable::IGNORE,
         ))
         .observe(handle_editor_entity_click)
-        .id()
+        .id();
+    info!("Editor: placed spawn point team {} at ({:.0}, {:.0})", team, pos.x, pos.y);
+    entity
 }
 
 // ── Ground Click Observer ────────────────────────────────────────────────
@@ -459,6 +477,7 @@ fn handle_editor_entity_click(
     // Select clicked entity
     commands.entity(entity).insert(EditorSelected);
     editor.selected = Some(entity);
+    info!("Editor: selected entity {:?}", entity);
 }
 
 // ── Hotkeys ──────────────────────────────────────────────────────────────
@@ -467,6 +486,7 @@ fn handle_editor_hotkeys(
     keys: Res<ButtonInput<KeyCode>>,
     mut editor: ResMut<EditorState>,
 ) {
+    let prev = editor.tool;
     if keys.just_pressed(KeyCode::Digit1) {
         editor.tool = EditorTool::Select;
     }
@@ -478,6 +498,9 @@ fn handle_editor_hotkeys(
     }
     if keys.just_pressed(KeyCode::Digit4) {
         editor.tool = EditorTool::PlaceSpawn;
+    }
+    if editor.tool != prev {
+        info!("Editor: tool → {}", editor.tool.indicator_label());
     }
 }
 
@@ -547,6 +570,7 @@ fn handle_editor_delete(
         }
     }
 
+    info!("Editor: deleted entity {:?} at ({:.0}, {:.0})", entity, pos.x, pos.y);
     commands.entity(entity).despawn();
 }
 
