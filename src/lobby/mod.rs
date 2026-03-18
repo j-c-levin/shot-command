@@ -1,15 +1,44 @@
 pub mod api;
+pub mod main_menu;
 
 use bevy::prelude::*;
 use serde::{Deserialize, Serialize};
+
+use crate::game::GameState;
 
 // ── Plugin ──────────────────────────────────────────────────────────────
 
 pub struct LobbyPlugin;
 
 impl Plugin for LobbyPlugin {
-    fn build(&self, _app: &mut App) {
-        // Systems will be registered as MainMenu and GameLobby UIs are added.
+    fn build(&self, app: &mut App) {
+        // MainMenu systems
+        app.add_systems(OnEnter(GameState::MainMenu), main_menu::spawn_main_menu)
+            .add_systems(OnExit(GameState::MainMenu), main_menu::despawn_main_menu)
+            .add_systems(
+                Update,
+                (
+                    main_menu::poll_game_list,
+                    main_menu::poll_maps,
+                    main_menu::poll_pending_create,
+                    main_menu::rebuild_game_list,
+                    main_menu::update_error_text,
+                    main_menu::handle_join_button,
+                    main_menu::handle_create_button,
+                    main_menu::handle_direct_connect,
+                )
+                    .run_if(in_state(GameState::MainMenu)),
+            )
+            .add_systems(
+                Update,
+                (
+                    main_menu::handle_refresh,
+                    main_menu::spawn_create_dialog,
+                    main_menu::handle_map_picker_option,
+                    main_menu::handle_create_confirm_close,
+                )
+                    .run_if(in_state(GameState::MainMenu)),
+            );
     }
 }
 

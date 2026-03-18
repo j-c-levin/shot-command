@@ -9,6 +9,7 @@ use nebulous_shot_command::fleet::{FleetPlugin, ShipSpec};
 use nebulous_shot_command::fog::FogClientPlugin;
 use nebulous_shot_command::game::{GamePlugin, GameState};
 use nebulous_shot_command::input::InputPlugin;
+use nebulous_shot_command::lobby::{LobbyConfig, LobbyPlugin, PlayerName};
 use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
 use nebulous_shot_command::net::commands::FleetSubmission;
 use nebulous_shot_command::net::SharedReplicationPlugin;
@@ -21,9 +22,9 @@ use nebulous_shot_command::weapon::WeaponType;
 #[derive(Parser, Debug)]
 #[command(name = "nebulous-client")]
 struct Cli {
-    /// Server address to connect to
-    #[arg(long, default_value = "127.0.0.1:5000")]
-    connect: String,
+    /// Server address to connect to (skips main menu)
+    #[arg(long)]
+    connect: Option<String>,
 
     /// Auto-submit a preset fleet (1 or 2) to skip the fleet builder
     #[arg(long)]
@@ -36,11 +37,19 @@ struct Cli {
     /// Map file to load (for editor: load for editing; requires --editor)
     #[arg(long)]
     map: Option<String>,
+
+    /// Player display name
+    #[arg(long, default_value = "Player")]
+    name: String,
+
+    /// Lobby API base URL
+    #[arg(long, default_value = "http://localhost:5001")]
+    lobby_api: String,
 }
 
 /// Resource: if set, auto-submit this fleet on entering FleetComposition.
 #[derive(Resource)]
-struct AutoFleet(Vec<ShipSpec>);
+pub struct AutoFleet(pub Vec<ShipSpec>);
 
 fn preset_fleet(id: u8) -> Vec<ShipSpec> {
     match id {
@@ -144,16 +153,34 @@ fn main() {
         .add_plugins((
             ControlPointClientPlugin,
             ClientNetPlugin,
+            LobbyPlugin,
         ));
-        app.insert_resource(ClientConnectAddress(cli.connect));
+
+        // Insert lobby resources
+        app.insert_resource(LobbyConfig {
+            api_base_url: cli.lobby_api.clone(),
+        });
+        app.insert_resource(PlayerName(cli.name.clone()));
         app.init_resource::<LocalTeam>();
+
+        // Always register auto_submit_fleet (fires only when AutoFleet resource exists)
+        app.add_systems(
+            OnEnter(GameState::FleetComposition),
+            auto_submit_fleet.run_if(resource_exists::<AutoFleet>),
+        );
 
         if let Some(fleet_id) = cli.fleet {
             app.insert_resource(AutoFleet(preset_fleet(fleet_id)));
-            app.add_systems(OnEnter(GameState::FleetComposition), auto_submit_fleet);
         }
 
-        app.add_systems(Startup, set_connecting);
+        if let Some(ref addr) = cli.connect {
+            // Direct connect mode: skip main menu
+            app.insert_resource(ClientConnectAddress(addr.clone()));
+            app.add_systems(Startup, set_connecting);
+        } else {
+            // Lobby mode: start at MainMenu
+            app.add_systems(Startup, set_main_menu);
+        }
     }
 
     app.run();
@@ -162,6 +189,11 @@ fn main() {
 /// Transition from the default Setup state to Connecting on startup.
 fn set_connecting(mut next_state: ResMut<NextState<GameState>>) {
     next_state.set(GameState::Connecting);
+}
+
+/// Transition from the default Setup state to MainMenu on startup.
+fn set_main_menu(mut next_state: ResMut<NextState<GameState>>) {
+    next_state.set(GameState::MainMenu);
 }
 
 /// Transition from the default Setup state to Editor on startup.

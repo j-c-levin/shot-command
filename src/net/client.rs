@@ -69,6 +69,11 @@ impl Plugin for ClientNetPlugin {
 
         // Game over UI
         app.add_systems(OnEnter(GameState::GameOver), show_game_over_ui);
+        app.add_systems(OnExit(GameState::GameOver), despawn_game_over_ui);
+        app.add_systems(
+            Update,
+            handle_return_to_menu.run_if(in_state(GameState::GameOver)),
+        );
     }
 }
 
@@ -204,6 +209,14 @@ fn on_game_result(
     next_state.set(GameState::GameOver);
 }
 
+/// Marker for the game over UI root (for despawn on state exit).
+#[derive(Component)]
+struct GameOverRoot;
+
+/// Marker for the "Return to Menu" button.
+#[derive(Component)]
+struct ReturnToMenuButton;
+
 /// Display Victory/Defeat UI text when entering GameOver state.
 fn show_game_over_ui(
     mut commands: Commands,
@@ -226,23 +239,72 @@ fn show_game_over_ui(
         ("Defeat", Color::srgb(1.0, 0.2, 0.2))
     };
 
-    commands.spawn((
-        Text::new(text),
-        TextFont {
-            font_size: 48.0,
-            ..default()
-        },
-        TextColor(color),
-        Node {
-            position_type: PositionType::Absolute,
-            width: Val::Percent(100.0),
-            height: Val::Percent(100.0),
-            justify_content: JustifyContent::Center,
-            align_items: AlignItems::Center,
-            ..default()
-        },
-    ));
+    commands
+        .spawn((
+            GameOverRoot,
+            Node {
+                position_type: PositionType::Absolute,
+                width: Val::Percent(100.0),
+                height: Val::Percent(100.0),
+                flex_direction: FlexDirection::Column,
+                justify_content: JustifyContent::Center,
+                align_items: AlignItems::Center,
+                row_gap: Val::Px(30.0),
+                ..default()
+            },
+            GlobalZIndex(5),
+        ))
+        .with_children(|root| {
+            root.spawn((
+                Text::new(text),
+                TextFont {
+                    font_size: 48.0,
+                    ..default()
+                },
+                TextColor(color),
+            ));
+
+            // "Return to Menu" button
+            root.spawn((
+                ReturnToMenuButton,
+                Button,
+                Node {
+                    padding: UiRect::axes(Val::Px(24.0), Val::Px(12.0)),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(Color::srgb(0.2, 0.2, 0.35)),
+            ))
+            .with_child((
+                Text::new("Return to Menu"),
+                TextFont {
+                    font_size: 22.0,
+                    ..default()
+                },
+                TextColor(Color::WHITE),
+            ));
+        });
 
     info!("Game over: {}", text);
+}
+
+/// Handle clicking "Return to Menu" in GameOver screen.
+fn handle_return_to_menu(
+    query: Query<&Interaction, (Changed<Interaction>, With<ReturnToMenuButton>)>,
+    mut next_state: ResMut<NextState<GameState>>,
+) {
+    for interaction in &query {
+        if *interaction == Interaction::Pressed {
+            next_state.set(GameState::MainMenu);
+        }
+    }
+}
+
+/// Despawn game over UI when leaving GameOver state.
+fn despawn_game_over_ui(mut commands: Commands, roots: Query<Entity, With<GameOverRoot>>) {
+    for entity in &roots {
+        commands.entity(entity).despawn();
+    }
 }
 

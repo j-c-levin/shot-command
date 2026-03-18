@@ -11,10 +11,10 @@ cargo run --bin server -- --map my_map.ron 2>&1 | sed 's/^/[SERVER] /' &
 sleep 2
 
 echo "=== Starting client 1 ==="
-cargo run --bin client 2>&1 | sed 's/^/[CLIENT1] /' &
+cargo run --bin client -- --connect 127.0.0.1:5000 2>&1 | sed 's/^/[CLIENT1] /' &
 sleep 3
 
 echo "=== Starting client 2 ==="
-cargo run --bin client 2>&1 | sed 's/^/[CLIENT2] /' &
+cargo run --bin client -- --connect 127.0.0.1:5000 2>&1 | sed 's/^/[CLIENT2] /' &
 
 wait
