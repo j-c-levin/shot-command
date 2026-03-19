@@ -111,8 +111,13 @@ jobs:
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-apple-darwin
-          components: rust-src
       - uses: Swatinem/rust-cache@v2
+      - name: Override cargo config for CI (no build-std, no clang/mold)
+        run: |
+          cat > .cargo/config.toml <<'EOF'
+          [target.aarch64-apple-darwin]
+          rustflags = ["-Zshare-generics=y", "-Zthreads=0"]
+          EOF
       - name: Build
         run: cargo build --release --no-default-features --features release --bin client --target aarch64-apple-darwin
       - name: Package
