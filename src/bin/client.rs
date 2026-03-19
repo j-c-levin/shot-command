@@ -156,7 +156,9 @@ fn main() {
         app.insert_resource(LobbyConfig {
             api_base_url: cli.lobby_api.clone(),
         });
-        app.insert_resource(PlayerName(cli.name.clone()));
+        // Append random suffix to ensure unique player names in lobbies
+        let unique_name = format!("{}_{:04x}", cli.name, rand::random::<u16>());
+        app.insert_resource(PlayerName(unique_name));
         app.init_resource::<LocalTeam>();
 
         // Always register auto_submit_fleet (fires only when AutoFleet resource exists)
