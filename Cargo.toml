@@ -47,6 +47,7 @@ path = "src/bin/client.rs"
 [features]
 default = ["dev_native"]
 native = ["enhanced"]
+release = []
 dev = [
     "bevy/bevy_dev_tools",
     "bevy/bevy_ui_debug",
