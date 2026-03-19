@@ -1,7 +1,7 @@
 [package]
 name = "nebulous_shot_command"
 edition = "2024"
-version = "0.1.11"
+version = "0.1.12"
 license = "MIT OR Apache-2.0"
 exclude = ["assets"]
 
