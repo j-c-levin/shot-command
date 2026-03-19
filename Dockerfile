@@ -4,6 +4,10 @@
 # --- Builder stage ---
 FROM rustlang/rust:nightly AS builder
 
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    pkg-config libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev \
+    && rm -rf /var/lib/apt/lists/*
+
 RUN rustup component add rust-src
 
 WORKDIR /app
