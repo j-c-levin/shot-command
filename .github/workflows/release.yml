@@ -83,7 +83,7 @@ jobs:
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          curl -s -X POST "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
+          curl -sf --show-error -X POST "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
             -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
