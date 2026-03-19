@@ -28,8 +28,8 @@ esac
 NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
 echo "Releasing: $LATEST -> $NEW_VERSION"
 
-# Update Cargo.toml version
-sed -i '' "s/^version = \".*\"/version = \"${MAJOR}.${MINOR}.${PATCH}\"/" Cargo.toml
+# Update only the [package] version in Cargo.toml (first occurrence)
+sed -i '' "0,/^version = \".*\"/{s/^version = \".*\"/version = \"${MAJOR}.${MINOR}.${PATCH}\"/;}" Cargo.toml
 
 # Commit, tag, push
 git add Cargo.toml
