@@ -39,7 +39,7 @@ RUN cargo build --release --bin server --target x86_64-unknown-linux-gnu
 FROM debian:bookworm-slim
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libwayland-client0 libxkbcommon0 libasound2t64 libudev1 \
+    ca-certificates libwayland-client0 libxkbcommon0 libasound2 libudev1 \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/server /usr/local/bin/nebulous-server
