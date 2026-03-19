@@ -46,6 +46,9 @@ COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/server /usr/loc
 COPY assets/maps/ /app/assets/maps/
 WORKDIR /app
 
+# Verify the binary can start (will print missing libs and exit)
+RUN ldd /usr/local/bin/nebulous-server || true
+
 # Edgegap injects ARBITRIUM_PORT_GAMEPORT_INTERNAL at runtime.
 # The server binary reads it from the environment automatically.
 ENTRYPOINT ["/usr/local/bin/nebulous-server", "--bind", "0.0.0.0:5000"]
