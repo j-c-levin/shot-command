@@ -218,3 +218,14 @@ export const closeGame = onRequest({ region: REGION }, async (req, res) => {
   await gameRef.delete();
   res.json({ ok: true });
 });
+
+export const maps = onRequest({ region: REGION }, async (req, res) => {
+  if (req.method !== "GET") { res.status(405).send("Method not allowed"); return; }
+
+  const doc = await db.collection("config").doc("maps").get();
+  if (!doc.exists) {
+    res.json([]);
+    return;
+  }
+  res.json(doc.data()?.maps || []);
+});
