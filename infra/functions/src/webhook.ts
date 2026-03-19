@@ -26,7 +26,8 @@ export const edgegapWebhook = onRequest({ region: REGION }, async (req, res) => 
   // Extract connection info from Edgegap response
   const gamePort = ports?.gameport;
   const externalPort = gamePort?.external;
-  const publicIp = fqdn || req.body.public_ip;
+  // Prefer IP over FQDN — renet needs a socket address, not a hostname
+  const publicIp = req.body.public_ip || fqdn;
 
   if (!publicIp || !externalPort) {
     res.status(400).send("missing connection info");

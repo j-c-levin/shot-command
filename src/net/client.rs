@@ -83,10 +83,19 @@ fn setup_renet_client(
     channels: Res<RepliconChannels>,
     connect_address: Res<ClientConnectAddress>,
 ) {
+    // Support both IP:port and hostname:port (Edgegap returns FQDN)
     let server_addr: SocketAddr = connect_address
         .0
         .parse()
-        .expect("Invalid server address format");
+        .unwrap_or_else(|_| {
+            use std::net::ToSocketAddrs;
+            connect_address
+                .0
+                .to_socket_addrs()
+                .expect("Failed to resolve server address")
+                .next()
+                .expect("No addresses found for server hostname")
+        });
 
     let server_channels_config = channels.server_configs();
     let client_channels_config = channels.client_configs();
