@@ -5,6 +5,15 @@ import { onRequest } from "firebase-functions/v2/https";
 const REGION = "europe-west2";
 const db = admin.firestore();
 
+// Edgegap config — set via firebase functions:config or env vars
+const EDGEGAP_CONFIG = {
+  apiToken: process.env.EDGEGAP_API_TOKEN || "",
+  appName: process.env.EDGEGAP_APP_NAME || "",
+  appVersion: process.env.EDGEGAP_APP_VERSION || "0.1.0",
+  webhookUrl: process.env.EDGEGAP_WEBHOOK_URL || `https://${REGION}-nebulous-shot-command.cloudfunctions.net/edgegapWebhook`,
+  lobbyApiUrl: process.env.LOBBY_API_URL || `https://${REGION}-nebulous-shot-command.cloudfunctions.net`,
+};
+
 export const createGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const { creator, map } = req.body;
@@ -123,12 +132,7 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
   }
 
   // Call Edgegap Deploy API
-  const edgegapToken = process.env.EDGEGAP_API_TOKEN;
-  const edgegapApp = process.env.EDGEGAP_APP_NAME;
-  const edgegapVersion = process.env.EDGEGAP_APP_VERSION || "latest";
-  const webhookUrl = process.env.EDGEGAP_WEBHOOK_URL;
-
-  if (!edgegapToken || !edgegapApp) {
+  if (!EDGEGAP_CONFIG.apiToken || !EDGEGAP_CONFIG.appName) {
     // Dev mode: no Edgegap, return localhost
     await gameRef.update({
       status: "ready",
@@ -139,21 +143,21 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
   }
 
   const deployPayload = {
-    application: edgegapApp,
-    version: edgegapVersion,
+    application: EDGEGAP_CONFIG.appName,
+    version: EDGEGAP_CONFIG.appVersion,
     env_vars: [
       { key: "GAME_ID", value: gameId, is_hidden: false },
-      { key: "LOBBY_API_URL", value: process.env.LOBBY_API_URL || "https://europe-west2-nebulous-shot-command.cloudfunctions.net", is_hidden: false },
+      { key: "LOBBY_API_URL", value: EDGEGAP_CONFIG.lobbyApiUrl, is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
-    webhook_on_ready: webhookUrl ? { url: webhookUrl } : undefined,
+    webhook_on_ready: { url: EDGEGAP_CONFIG.webhookUrl },
   };
 
   const deployRes = await fetch("https://api.edgegap.com/v2/deployments", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
-      "Authorization": `token ${edgegapToken}`,
+      "Authorization": `token ${EDGEGAP_CONFIG.apiToken}`,
     },
     body: JSON.stringify(deployPayload),
   });

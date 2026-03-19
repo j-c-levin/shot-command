@@ -58,6 +58,17 @@ const functionsBuild = new command.local.Command("functions-build", {
   triggers: [deployTimestamp],
 }, { dependsOn: [functionsInstall] });
 
+// Write .env file for Cloud Functions with Edgegap credentials
+const functionsEnv = new command.local.Command("functions-env", {
+  dir: functionsDir,
+  create: [
+    `echo "EDGEGAP_API_TOKEN=${process.env.EDGEGAP_API_TOKEN || ""}" > .env`,
+    `echo "EDGEGAP_APP_NAME=${process.env.EDGEGAP_APP_NAME || ""}" >> .env`,
+    `echo "EDGEGAP_APP_VERSION=${process.env.EDGEGAP_APP_VERSION || "0.1.0"}" >> .env`,
+  ].join(" && "),
+  triggers: [deployTimestamp],
+}, { dependsOn: [functionsBuild] });
+
 const functionsDeploy = new command.local.Command("functions-deploy", {
   dir: infraDir,
   create: `npx firebase deploy --only functions,firestore --project ${project} --force`,
@@ -65,7 +76,7 @@ const functionsDeploy = new command.local.Command("functions-deploy", {
     GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS || "",
   },
   triggers: [deployTimestamp],
-}, { dependsOn: [functionsBuild, cloudfunctionsApi, cloudbuildApi, artifactRegistryApi, firestore] });
+}, { dependsOn: [functionsEnv, cloudfunctionsApi, cloudbuildApi, artifactRegistryApi, firestore] });
 
 // Export the functions base URL
 export const functionsBaseUrl = pulumi.interpolate`https://${region}-${project}.cloudfunctions.net`;
