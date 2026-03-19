@@ -79,6 +79,27 @@ jobs:
           docker build -t "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}" .
           docker push "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}"
 
+      - name: Delete old Edgegap versions (free tier limit of 2)
+        env:
+          EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
+          EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
+        run: |
+          # Get all versions and delete them (we'll create the new one next)
+          curl -s -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
+            "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/versions" | \
+            python3 -c "
+          import json, sys
+          data = json.load(sys.stdin)
+          versions = data if isinstance(data, list) else data.get('data', data.get('versions', []))
+          for v in versions:
+            name = v.get('name', v) if isinstance(v, dict) else v
+            print(name)
+          " 2>/dev/null | while read V; do
+            echo "Deleting version: $V"
+            curl -s -X DELETE "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version/${V}" \
+              -H "Authorization: token ${EDGEGAP_API_TOKEN}" || true
+          done
+
       - name: Create or update Edgegap app version
         env:
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
