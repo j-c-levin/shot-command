@@ -142,18 +142,24 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
     return;
   }
 
+  // Get requester IP for location-based placement (from Cloud Function request)
+  const requesterIp = req.ip || req.headers["x-forwarded-for"] || "0.0.0.0";
+
   const deployPayload = {
-    app_name: EDGEGAP_CONFIG.appName,
-    version_name: EDGEGAP_CONFIG.appVersion,
-    env_vars: [
+    application: EDGEGAP_CONFIG.appName,
+    version: EDGEGAP_CONFIG.appVersion,
+    users: [
+      { user_type: "ip_address", user_data: { ip_address: String(requesterIp).split(",")[0].trim() } },
+    ],
+    environment_variables: [
       { key: "GAME_ID", value: gameId, is_hidden: false },
       { key: "LOBBY_API_URL", value: EDGEGAP_CONFIG.lobbyApiUrl, is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
-    webhook_url: EDGEGAP_CONFIG.webhookUrl,
+    webhook_on_ready: { url: EDGEGAP_CONFIG.webhookUrl },
   };
 
-  const deployRes = await fetch("https://api.edgegap.com/v1/deploy", {
+  const deployRes = await fetch("https://api.edgegap.com/v2/deployments", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
