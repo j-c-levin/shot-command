@@ -8,19 +8,24 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  infrastructure:
-    name: Infrastructure + Server
+  # Tiny job just to extract the version — everything else runs in parallel
+  version:
+    name: Extract version
     runs-on: ubuntu-latest
     outputs:
       version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
-
       - name: Extract version from tag
         id: version
         run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
 
-      # -- Pulumi --
+  infrastructure:
+    name: Infrastructure
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 20
@@ -31,7 +36,6 @@ jobs:
       - name: Install infra dependencies
         run: cd infra && npm ci && cd functions && npm ci
 
-      # Write service account key to file for GCP auth
       - name: Write GCP credentials
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}' > /tmp/gcp-key.json
 
@@ -41,7 +45,6 @@ jobs:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
-      # -- Sync maps --
       - name: Install sync script dependencies
         run: cd scripts && npm ci
 
@@ -51,28 +54,31 @@ jobs:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
 
-      # -- Server Docker --
-      # Build entirely inside Docker (Dockerfile handles nightly + build-std).
-      # No host Rust toolchain needed for server.
+  server:
+    name: Server Docker
+    needs: version
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
       - name: Build and push Docker image
         env:
           EDGEGAP_DOCKER_PASSWORD: ${{ secrets.EDGEGAP_DOCKER_PASSWORD }}
           EDGEGAP_DOCKER_USERNAME: ${{ secrets.EDGEGAP_DOCKER_USERNAME }}
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           echo "$EDGEGAP_DOCKER_PASSWORD" | \
             docker login registry.edgegap.com -u "$EDGEGAP_DOCKER_USERNAME" --password-stdin
           docker build -t "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}" .
           docker push "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}"
 
-      # -- Edgegap version --
       - name: Create Edgegap app version
         env:
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
           EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
-          VERSION: ${{ steps.version.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           curl -s -X POST "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
             -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
@@ -95,7 +101,7 @@ jobs:
 
   client-macos-arm:
     name: Client (macOS ARM)
-    needs: infrastructure
+    needs: version
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -108,7 +114,7 @@ jobs:
         run: cargo build --release --bin client --target aarch64-apple-darwin
       - name: Package
         env:
-          VERSION: ${{ needs.infrastructure.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
           cp target/aarch64-apple-darwin/release/client dist/nebulous-client
@@ -119,7 +125,7 @@ jobs:
 
   client-macos-intel:
     name: Client (macOS Intel)
-    needs: infrastructure
+    needs: version
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
@@ -132,7 +138,7 @@ jobs:
         run: cargo build --release --bin client --target x86_64-apple-darwin
       - name: Package
         env:
-          VERSION: ${{ needs.infrastructure.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
           cp target/x86_64-apple-darwin/release/client dist/nebulous-client
@@ -143,7 +149,7 @@ jobs:
 
   client-windows:
     name: Client (Windows)
-    needs: infrastructure
+    needs: version
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -157,7 +163,7 @@ jobs:
       - name: Package
         shell: bash
         env:
-          VERSION: ${{ needs.infrastructure.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
           cp target/x86_64-pc-windows-msvc/release/client.exe dist/nebulous-client.exe
@@ -168,7 +174,7 @@ jobs:
 
   client-linux:
     name: Client (Linux)
-    needs: infrastructure
+    needs: version
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -183,7 +189,7 @@ jobs:
         run: cargo build --release --bin client --target x86_64-unknown-linux-gnu
       - name: Package
         env:
-          VERSION: ${{ needs.infrastructure.outputs.version }}
+          VERSION: ${{ needs.version.outputs.version }}
         run: |
           mkdir -p dist
           cp target/x86_64-unknown-linux-gnu/release/client dist/nebulous-client
