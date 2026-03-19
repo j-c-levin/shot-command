@@ -508,7 +508,7 @@ pub fn rebuild_player_list(
 
 pub fn handle_launch_button(
     query: Query<&Interaction, (Changed<Interaction>, With<LaunchButton>)>,
-    state: Res<GameLobbyState>,
+    mut state: ResMut<GameLobbyState>,
     game_id: Res<CurrentGameId>,
     lobby_config: Res<LobbyConfig>,
     player_name: Res<PlayerName>,
@@ -531,6 +531,8 @@ pub fn handle_launch_button(
 
             if can_launch && async_state.pending_launch.is_none() {
                 info!("Launching game: {}", game_id.0);
+                state.status_message = "Launching server...".to_string();
+                state.detail_changed = true;
                 async_state.pending_launch = Some(api::launch_game(
                     &lobby_config.api_base_url,
                     &game_id.0,

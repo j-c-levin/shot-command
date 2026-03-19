@@ -301,12 +301,21 @@ fn show_game_over_ui(
 /// Handle clicking "Return to Menu" in GameOver screen.
 fn handle_return_to_menu(
     query: Query<&Interaction, (Changed<Interaction>, With<ReturnToMenuButton>)>,
+    mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
     game_id: Option<Res<crate::lobby::CurrentGameId>>,
     lobby_config: Option<Res<crate::lobby::LobbyConfig>>,
+    mut renet_client: Option<ResMut<RenetClient>>,
 ) {
     for interaction in &query {
         if *interaction == Interaction::Pressed {
+            // Disconnect from server gracefully
+            if let Some(ref mut client) = renet_client {
+                client.disconnect();
+            }
+            commands.remove_resource::<RenetClient>();
+            commands.remove_resource::<NetcodeClientTransport>();
+
             // Close the game in the lobby API so it disappears from the list
             if let (Some(gid), Some(config)) = (&game_id, &lobby_config) {
                 let _ = crate::lobby::api::close_game(&config.api_base_url, &gid.0);
