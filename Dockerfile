@@ -33,7 +33,7 @@ strip = true
 codegen-units = 1
 EOF
 
-RUN cargo build --release --bin server --target x86_64-unknown-linux-gnu
+RUN cargo build --release --no-default-features --features release --bin server --target x86_64-unknown-linux-gnu
 
 # --- Runtime stage (must match builder's Debian version: Trixie) ---
 FROM debian:trixie-slim
