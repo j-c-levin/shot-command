@@ -116,8 +116,8 @@ jobs:
             \"docker_tag\": \"${VERSION}\",
             \"private_username\": \"${EDGEGAP_DOCKER_USERNAME}\",
             \"private_token\": \"${EDGEGAP_DOCKER_PASSWORD}\",
-            \"req_cpu\": 256,
-            \"req_memory\": 256,
+            \"req_cpu\": 1024,
+            \"req_memory\": 1024,
             \"ports\": [
               {
                 \"port\": 5000,
