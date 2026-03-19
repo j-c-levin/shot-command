@@ -111,8 +111,8 @@ jobs:
         run: |
           PAYLOAD="{
             \"name\": \"${VERSION}\",
-            \"docker_repository\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
-            \"docker_image\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
+            \"docker_repository\": \"registry.edgegap.com\",
+            \"docker_image\": \"${EDGEGAP_IMAGE_NAME}\",
             \"docker_tag\": \"${VERSION}\",
             \"private_username\": \"${EDGEGAP_DOCKER_USERNAME}\",
             \"private_token\": \"${EDGEGAP_DOCKER_PASSWORD}\",
