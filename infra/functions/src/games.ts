@@ -26,7 +26,6 @@ export const listGames = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "GET") { res.status(405).send("Method not allowed"); return; }
   const snapshot = await db.collection("games")
     .where("status", "==", "waiting")
-    .orderBy("created_at", "desc")
     .limit(50)
     .get();
 
