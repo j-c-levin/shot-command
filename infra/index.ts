@@ -31,11 +31,15 @@ const artifactRegistryApi = new gcp.projects.Service("artifactregistry-api", {
   disableOnDestroy: false,
 });
 
-// Firestore database (Native mode)
+// Firestore database (Native mode) — already created manually, import it
 const firestore = new gcp.firestore.Database("default", {
   locationId: region,
   type: "FIRESTORE_NATIVE",
-}, { dependsOn: [firestoreApi], protect: true });
+}, {
+  dependsOn: [firestoreApi],
+  protect: true,
+  import: "(default)",
+});
 
 // Install, build, and deploy Cloud Functions via firebase CLI
 const functionsInstall = new command.local.Command("functions-install", {
