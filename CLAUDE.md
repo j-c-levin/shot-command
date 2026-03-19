@@ -300,14 +300,12 @@ click-to-place/drag-to-move/scroll-resize/delete interactions, save/load popup,
 bounds gizmos. See design doc at
 `docs/plans/2026-03-18-phase6-maps-editor-design.md`.
 
-**Phase 7: Cloud Deployment & Game Lobby — IN PROGRESS.** Firebase lobby backend
+**Phase 7: Cloud Deployment & Game Lobby — COMPLETE.** Firebase lobby backend
 (Cloud Functions + Firestore), Edgegap game servers, Pulumi infrastructure, CI/CD
 with GitHub Actions, client main menu + game lobby UI with fleet building in lobby.
-Server Edgegap support (env var port binding, self-termination, Dockerfile) complete.
-Firebase Cloud Functions, Pulumi infra, CI/CD pipeline, client lobby UI all implemented.
-Needs end-to-end testing with Firebase emulator + Edgegap account setup. See design at
-`docs/plans/2026-03-18-phase7-cloud-deployment-design.md` and implementation plan at
-`docs/plans/2026-03-18-phase7-implementation-plan.md`.
+Server deploys to Edgegap edge locations in ~7 seconds. Release script at
+`scripts/release.sh` auto-bumps version and triggers pipeline. See design at
+`docs/plans/2026-03-18-phase7-cloud-deployment-design.md`.
 
 **Dropped:** Beam weapons (from original Phase 5 brainstorm).
 
@@ -315,7 +313,7 @@ Needs end-to-end testing with Firebase emulator + Edgegap account setup. See des
 - (none currently)
 
 **Recently completed (this session):**
-- Phase 7 implementation: server Edgegap support, Firebase Cloud Functions lobby API, Pulumi infrastructure, GitHub Actions CI/CD, client MainMenu + GameLobby UI with fleet building
+- Phase 7: Cloud deployment & game lobby (Firebase lobby, Edgegap servers, CI/CD, client main menu + lobby UI, fleet save/load, ready indicators)
 
 ## Pre-approvals
 

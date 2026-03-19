@@ -1,9 +1,10 @@
 # Multi-stage build for the headless game server.
-# Produces a small image (~50-100MB) for Edgegap deployment.
+# Produces a small image for Edgegap deployment.
 
 # --- Builder stage ---
 FROM rustlang/rust:nightly AS builder
 
+# Dev libs needed at compile time (linked statically with --no-default-features)
 RUN apt-get update && apt-get install -y --no-install-recommends \
     pkg-config libwayland-dev libxkbcommon-dev libasound2-dev libudev-dev \
     && rm -rf /var/lib/apt/lists/*
@@ -13,8 +14,7 @@ RUN rustup component add rust-src
 WORKDIR /app
 COPY . .
 
-# Override .cargo/config.toml linker settings — Docker image doesn't have clang/mold.
-# Keep build-std and share-generics, just swap the linker to default gcc.
+# Override .cargo/config.toml — Docker image doesn't have clang/mold.
 RUN mkdir -p /app/.cargo && \
     cat > /app/.cargo/config.toml <<'EOF'
 [target.x86_64-unknown-linux-gnu]
@@ -35,20 +35,15 @@ EOF
 
 RUN cargo build --release --no-default-features --features release --bin server --target x86_64-unknown-linux-gnu
 
-# --- Runtime stage (must match builder's Debian version: Trixie) ---
-FROM debian:trixie-slim
+# --- Runtime stage ---
+# Slim image — binary only needs libc, libm, libgcc_s (no wayland/alsa/udev)
+FROM debian:bookworm-slim
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    ca-certificates libwayland-client0 libxkbcommon0 libasound2t64 libudev1 \
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /app/target/x86_64-unknown-linux-gnu/release/server /usr/local/bin/nebulous-server
 COPY assets/maps/ /app/assets/maps/
 WORKDIR /app
 
-# Verify the binary can start (will print missing libs and exit)
-RUN ldd /usr/local/bin/nebulous-server || true
-
-# Edgegap injects ARBITRIUM_PORT_GAMEPORT_INTERNAL at runtime.
-# The server binary reads it from the environment automatically.
 ENTRYPOINT ["/usr/local/bin/nebulous-server", "--bind", "0.0.0.0:5000"]
