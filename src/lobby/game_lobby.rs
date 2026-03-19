@@ -498,8 +498,9 @@ pub fn rebuild_player_list(
             .map(|d| d.status == "waiting")
             .unwrap_or(false);
 
+    let launching = state.status_message.contains("Launching");
     for mut bg in &mut launch_bg_query {
-        bg.0 = if can_launch { BG_SUBMIT } else { BG_DISABLED };
+        bg.0 = if launching { BG_DISABLED } else if can_launch { BG_SUBMIT } else { BG_DISABLED };
     }
 }
 

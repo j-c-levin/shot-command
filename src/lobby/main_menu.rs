@@ -20,6 +20,7 @@ const TEXT_WHITE: Color = Color::WHITE;
 const TEXT_GRAY: Color = Color::srgb(0.6, 0.6, 0.6);
 const TEXT_YELLOW: Color = Color::srgb(1.0, 1.0, 0.4);
 const TEXT_RED: Color = Color::srgb(1.0, 0.3, 0.3);
+const BG_DISABLED: Color = Color::srgb(0.3, 0.3, 0.3);
 
 const POLL_INTERVAL_SECS: f32 = 3.0;
 
@@ -388,6 +389,35 @@ pub fn poll_pending_create(
             }
             Err(e) => {
                 state.error = Some(e);
+            }
+        }
+    }
+}
+
+/// Gray out buttons and update text while async operations are in flight.
+pub fn update_button_states(
+    async_state: NonSend<MainMenuAsync>,
+    mut join_buttons: Query<(&mut BackgroundColor, &Children), With<JoinButton>>,
+    mut create_button: Query<(&mut BackgroundColor, &Children), (With<CreateGameButton>, Without<JoinButton>)>,
+    mut text_query: Query<&mut Text>,
+) {
+    let joining = async_state.pending_join.is_some();
+    let creating = async_state.pending_create.is_some();
+
+    for (mut bg, children) in &mut join_buttons {
+        bg.0 = if joining { BG_DISABLED } else { BG_SUBMIT };
+        for child in children.iter() {
+            if let Ok(mut text) = text_query.get_mut(child) {
+                **text = if joining { "Joining...".to_string() } else { "Join".to_string() };
+            }
+        }
+    }
+
+    for (mut bg, children) in &mut create_button {
+        bg.0 = if creating { BG_DISABLED } else { BG_SUBMIT };
+        for child in children.iter() {
+            if let Ok(mut text) = text_query.get_mut(child) {
+                **text = if creating { "Creating...".to_string() } else { "Create Game".to_string() };
             }
         }
     }

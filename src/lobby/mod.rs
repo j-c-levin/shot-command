@@ -37,6 +37,7 @@ impl Plugin for LobbyPlugin {
                     main_menu::spawn_create_dialog,
                     main_menu::handle_map_picker_option,
                     main_menu::handle_create_confirm_close,
+                    main_menu::update_button_states,
                 )
                     .run_if(in_state(GameState::MainMenu)),
             );
