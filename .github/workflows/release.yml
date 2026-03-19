@@ -46,7 +46,7 @@ jobs:
         run: cd scripts && npm ci
 
       - name: Sync maps to Firestore
-        run: npx ts-node scripts/sync-maps.ts
+        run: node scripts/sync-maps.js
         env:
           FIREBASE_PROJECT_ID: ${{ secrets.FIREBASE_PROJECT_ID }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
