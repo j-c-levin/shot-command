@@ -10,6 +10,9 @@ const region = gcp.config.region || "europe-west2";
 const infraDir = __dirname;
 const functionsDir = path.join(infraDir, "functions");
 
+// Force re-run of commands on every deploy
+const deployTimestamp = new Date().toISOString();
+
 // Enable required GCP APIs
 const firestoreApi = new gcp.projects.Service("firestore-api", {
   service: "firestore.googleapis.com",
@@ -47,14 +50,17 @@ const firestore = new gcp.firestore.Database("default", {
 });
 
 // Install, build, and deploy Cloud Functions via firebase CLI
+// triggers: force re-run on every pulumi up
 const functionsInstall = new command.local.Command("functions-install", {
   dir: functionsDir,
   create: "npm ci",
+  triggers: [deployTimestamp],
 });
 
 const functionsBuild = new command.local.Command("functions-build", {
   dir: functionsDir,
   create: "npm run build",
+  triggers: [deployTimestamp],
 }, { dependsOn: [functionsInstall] });
 
 const functionsDeploy = new command.local.Command("functions-deploy", {
@@ -63,6 +69,7 @@ const functionsDeploy = new command.local.Command("functions-deploy", {
   environment: {
     GOOGLE_APPLICATION_CREDENTIALS: process.env.GOOGLE_APPLICATION_CREDENTIALS || "",
   },
+  triggers: [deployTimestamp],
 }, { dependsOn: [functionsBuild, cloudfunctionsApi, cloudbuildApi, artifactRegistryApi, firestore] });
 
 // Export the functions base URL
