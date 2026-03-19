@@ -2,9 +2,10 @@ import * as admin from "firebase-admin";
 import { FieldValue } from "firebase-admin/firestore";
 import { onRequest } from "firebase-functions/v2/https";
 
+const REGION = "europe-west2";
 const db = admin.firestore();
 
-export const createGame = onRequest(async (req, res) => {
+export const createGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const { creator, map } = req.body;
   if (!creator) { res.status(400).send("creator required"); return; }
@@ -21,7 +22,7 @@ export const createGame = onRequest(async (req, res) => {
   res.json({ gameId: doc.id });
 });
 
-export const listGames = onRequest(async (req, res) => {
+export const listGames = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "GET") { res.status(405).send("Method not allowed"); return; }
   const snapshot = await db.collection("games")
     .where("status", "==", "waiting")
@@ -40,7 +41,7 @@ export const listGames = onRequest(async (req, res) => {
   res.json(games);
 });
 
-export const getGame = onRequest(async (req, res) => {
+export const getGame = onRequest({ region: REGION }, async (req, res) => {
   // Extract game ID from path: /games/GAME_ID
   const gameId = req.path.split("/").pop();
   if (!gameId) { res.status(400).send("game ID required"); return; }
@@ -59,7 +60,7 @@ export const getGame = onRequest(async (req, res) => {
   });
 });
 
-export const joinGame = onRequest(async (req, res) => {
+export const joinGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const gameId = req.path.split("/").filter(Boolean).find((_, i, arr) => arr[i - 1] === "games");
   const { name } = req.body;
@@ -79,7 +80,7 @@ export const joinGame = onRequest(async (req, res) => {
   res.json({ ok: true });
 });
 
-export const readyUp = onRequest(async (req, res) => {
+export const readyUp = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const { game_id, name, ready } = req.body;
   if (!game_id || !name) { res.status(400).send("game_id and name required"); return; }
@@ -97,7 +98,7 @@ export const readyUp = onRequest(async (req, res) => {
   res.json({ ok: true });
 });
 
-export const launchGame = onRequest(async (req, res) => {
+export const launchGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const gameId = req.path.split("/").filter(Boolean).find((_, i, arr) => arr[i - 1] === "games");
   if (!gameId) { res.status(400).send("game ID required"); return; }
@@ -172,7 +173,7 @@ export const launchGame = onRequest(async (req, res) => {
   res.json({ ok: true, request_id: deployData.request_id });
 });
 
-export const deleteGame = onRequest(async (req, res) => {
+export const deleteGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "DELETE") { res.status(405).send("Method not allowed"); return; }
   const gameId = req.path.split("/").filter(Boolean)[0];
   const playerName = req.query.player as string;
@@ -196,7 +197,7 @@ export const deleteGame = onRequest(async (req, res) => {
   res.json({ ok: true });
 });
 
-export const closeGame = onRequest(async (req, res) => {
+export const closeGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const { game_id } = req.body;
   if (!game_id) { res.status(400).send("game_id required"); return; }

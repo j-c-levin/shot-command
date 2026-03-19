@@ -1,9 +1,10 @@
 import * as admin from "firebase-admin";
 import { onRequest } from "firebase-functions/v2/https";
 
+const REGION = "europe-west2";
 const db = admin.firestore();
 
-export const edgegapWebhook = onRequest(async (req, res) => {
+export const edgegapWebhook = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
 
   const { request_id, fqdn, ports } = req.body;

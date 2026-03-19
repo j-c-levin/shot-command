@@ -35,15 +35,8 @@ jobs:
       - name: Write GCP credentials
         run: echo '${{ secrets.FIREBASE_SERVICE_ACCOUNT_KEY }}' > /tmp/gcp-key.json
 
-      - name: Pulumi refresh (clear pending ops)
-        run: cd infra && pulumi stack select dev --create && pulumi refresh --yes
-        env:
-          PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
-          GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
-        continue-on-error: true
-
       - name: Pulumi up
-        run: cd infra && pulumi up --yes
+        run: cd infra && pulumi stack select dev --create && pulumi up --yes --refresh
         env:
           PULUMI_ACCESS_TOKEN: ${{ secrets.PULUMI_ACCESS_TOKEN }}
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json

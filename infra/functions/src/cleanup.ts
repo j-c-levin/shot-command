@@ -3,7 +3,7 @@ import { onSchedule } from "firebase-functions/v2/scheduler";
 
 const db = admin.firestore();
 
-export const cleanupStaleGames = onSchedule("every 10 minutes", async () => {
+export const cleanupStaleGames = onSchedule({ schedule: "every 10 minutes", region: "europe-west2" }, async () => {
   const cutoff = new Date(Date.now() - 30 * 60 * 1000); // 30 min ago
   const snapshot = await db.collection("games")
     .where("created_at", "<", cutoff)
