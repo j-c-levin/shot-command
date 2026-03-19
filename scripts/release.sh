@@ -29,7 +29,12 @@ NEW_VERSION="v${MAJOR}.${MINOR}.${PATCH}"
 echo "Releasing: $LATEST -> $NEW_VERSION"
 
 # Update only the [package] version in Cargo.toml (first occurrence)
-sed -i '' "0,/^version = \".*\"/{s/^version = \".*\"/version = \"${MAJOR}.${MINOR}.${PATCH}\"/;}" Cargo.toml
+python3 -c "
+import re, sys
+with open('Cargo.toml', 'r') as f: content = f.read()
+content = re.sub(r'(^\[package\].*?^version = \")([^\"]+)(\")', r'\g<1>${MAJOR}.${MINOR}.${PATCH}\3', content, count=1, flags=re.MULTILINE|re.DOTALL)
+with open('Cargo.toml', 'w') as f: f.write(content)
+"
 
 # Commit, tag, push
 git add Cargo.toml
