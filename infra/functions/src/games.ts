@@ -143,6 +143,7 @@ export const launchGame = onRequest(async (req, res) => {
     version: edgegapVersion,
     env_vars: [
       { key: "GAME_ID", value: gameId, is_hidden: false },
+      { key: "LOBBY_API_URL", value: process.env.LOBBY_API_URL || "https://europe-west2-nebulous-shot-command.cloudfunctions.net", is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
     webhook_on_ready: webhookUrl ? { url: webhookUrl } : undefined,

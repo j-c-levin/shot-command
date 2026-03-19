@@ -117,7 +117,7 @@ fn main() {
     // If GAME_ID and LOBBY_API_URL are set, close the game in Firebase on GameOver.
     let lobby_api = env::var("LOBBY_API_URL")
         .ok()
-        .or_else(|| Some("http://127.0.0.1:5001/demo-no-project/us-central1".to_string()));
+        .or_else(|| std::env::var("LOBBY_API_URL").ok());
     if let (Some(api_url), Ok(game_id)) = (lobby_api, env::var("GAME_ID")) {
         info!("Lobby cleanup configured for game {game_id}");
         app.insert_resource(LobbyCleanup {

@@ -43,7 +43,7 @@ struct Cli {
     name: String,
 
     /// Lobby API base URL (for Firebase emulator: http://127.0.0.1:5001/PROJECT_ID/REGION)
-    #[arg(long, default_value = "http://127.0.0.1:5001/demo-no-project/europe-west2")]
+    #[arg(long, default_value = "https://europe-west2-nebulous-shot-command.cloudfunctions.net")]
     lobby_api: String,
 }
 
