@@ -346,11 +346,13 @@ pub fn poll_pending_create(
                 info!("Created game: {}", game_id);
                 commands.insert_resource(CurrentGameId(game_id));
                 async_state.pending_create = None;
+                state.create_dialog_open = false;
                 next_state.set(GameState::GameLobby);
             }
             Ok(Err(e)) => {
                 warn!("Failed to create game: {}", e);
                 state.error = Some(format!("Failed to create game: {e}"));
+                state.create_dialog_open = false;
                 async_state.pending_create = None;
             }
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
@@ -603,6 +605,7 @@ pub fn spawn_create_dialog(
     mut commands: Commands,
     state: Res<MainMenuState>,
     existing: Query<Entity, With<CreateDialogOverlay>>,
+    async_state: NonSend<MainMenuAsync>,
 ) {
     if !state.is_changed() {
         return;
@@ -655,6 +658,15 @@ pub fn spawn_create_dialog(
                         TextColor(TEXT_WHITE),
                     ));
 
+                    if async_state.pending_create.is_some() {
+                        inner.spawn((
+                            Text::new("Creating game..."),
+                            TextFont { font_size: 18.0, ..default() },
+                            TextColor(TEXT_YELLOW),
+                        ));
+                        return;
+                    }
+
                     inner.spawn((
                         Text::new("Select Map:"),
                         TextFont {
@@ -671,7 +683,9 @@ pub fn spawn_create_dialog(
                             Button,
                             Node {
                                 width: Val::Percent(100.0),
-                                padding: UiRect::all(Val::Px(10.0)),
+                                padding: UiRect::axes(Val::Px(16.0), Val::Px(12.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
                                 ..default()
                             },
                             BackgroundColor(BG_BUTTON),
@@ -743,11 +757,11 @@ pub fn handle_map_picker_option(
     mut async_state: NonSendMut<MainMenuAsync>,
 ) {
     for (interaction, option) in &query {
-        if *interaction == Interaction::Pressed {
+        if *interaction == Interaction::Pressed && async_state.pending_create.is_none() {
             state.selected_map = option.0.clone();
-            state.create_dialog_open = false;
 
-            // Create the game
+            // Create the game (keep dialog open to show feedback)
+            info!("Creating game with map: {:?}", state.selected_map);
             let rx = api::create_game(
                 &lobby_config.api_base_url,
                 &player_name.0,
