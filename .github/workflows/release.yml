@@ -79,31 +79,48 @@ jobs:
           docker build -t "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}" .
           docker push "registry.edgegap.com/${EDGEGAP_IMAGE_NAME}:${VERSION}"
 
-      - name: Create Edgegap app version
+      - name: Create or update Edgegap app version
         env:
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
           EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          curl -sf --show-error -X POST "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
+          PAYLOAD="{
+            \"name\": \"${VERSION}\",
+            \"docker_repository\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
+            \"docker_image\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
+            \"docker_tag\": \"${VERSION}\",
+            \"req_cpu\": 256,
+            \"req_memory\": 256,
+            \"ports\": [
+              {
+                \"port\": 5000,
+                \"protocol\": \"UDP\",
+                \"name\": \"gameport\"
+              }
+            ]
+          }"
+          # Try create, if 409 (exists) then patch/update
+          HTTP_CODE=$(curl -s -o /tmp/edgegap_response.json -w "%{http_code}" -X POST \
+            "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
             -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
             -H "Content-Type: application/json" \
-            -d "{
-              \"name\": \"${VERSION}\",
-              \"docker_repository\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
-              \"docker_image\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
-              \"docker_tag\": \"${VERSION}\",
-              \"req_cpu\": 256,
-              \"req_memory\": 256,
-              \"ports\": [
-                {
-                  \"port\": 5000,
-                  \"protocol\": \"UDP\",
-                  \"name\": \"gameport\"
-                }
-              ]
-            }"
+            -d "$PAYLOAD")
+          if [ "$HTTP_CODE" = "409" ]; then
+            echo "Version ${VERSION} exists, updating..."
+            curl -sf --show-error -X PATCH \
+              "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version/${VERSION}" \
+              -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
+              -H "Content-Type: application/json" \
+              -d "$PAYLOAD"
+          elif [ "$HTTP_CODE" -ge 400 ]; then
+            cat /tmp/edgegap_response.json
+            exit 1
+          else
+            echo "Version ${VERSION} created successfully"
+            cat /tmp/edgegap_response.json
+          fi
 
   client-macos-arm:
     name: Client (macOS ARM)
