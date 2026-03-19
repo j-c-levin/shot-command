@@ -105,6 +105,8 @@ jobs:
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
           EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
+          EDGEGAP_DOCKER_USERNAME: ${{ secrets.EDGEGAP_DOCKER_USERNAME }}
+          EDGEGAP_DOCKER_PASSWORD: ${{ secrets.EDGEGAP_DOCKER_PASSWORD }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
           PAYLOAD="{
@@ -112,6 +114,8 @@ jobs:
             \"docker_repository\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
             \"docker_image\": \"registry.edgegap.com/${EDGEGAP_IMAGE_NAME}\",
             \"docker_tag\": \"${VERSION}\",
+            \"private_username\": \"${EDGEGAP_DOCKER_USERNAME}\",
+            \"private_token\": \"${EDGEGAP_DOCKER_PASSWORD}\",
             \"req_cpu\": 256,
             \"req_memory\": 256,
             \"ports\": [
