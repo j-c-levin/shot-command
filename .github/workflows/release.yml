@@ -4,6 +4,9 @@ on:
   push:
     tags: ["v*"]
 
+permissions:
+  contents: write
+
 env:
   CARGO_TERM_COLOR: always
 
@@ -123,30 +126,6 @@ jobs:
         with:
           files: dist/*.zip
 
-  client-macos-intel:
-    name: Client (macOS Intel)
-    needs: version
-    runs-on: macos-13
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@nightly
-        with:
-          targets: x86_64-apple-darwin
-          components: rust-src
-      - uses: Swatinem/rust-cache@v2
-      - name: Build
-        run: cargo build --release --bin client --target x86_64-apple-darwin
-      - name: Package
-        env:
-          VERSION: ${{ needs.version.outputs.version }}
-        run: |
-          mkdir -p dist
-          cp target/x86_64-apple-darwin/release/client dist/nebulous-client
-          cd dist && zip "nebulous-client-v${VERSION}-macos-x86_64.zip" nebulous-client
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: dist/*.zip
-
   client-windows:
     name: Client (Windows)
     needs: version
@@ -179,7 +158,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - name: Install Linux deps
-        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev
+        run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: x86_64-unknown-linux-gnu
