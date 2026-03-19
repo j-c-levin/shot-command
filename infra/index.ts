@@ -34,11 +34,6 @@ const artifactRegistryApi = new gcp.projects.Service("artifactregistry-api", {
   disableOnDestroy: false,
 });
 
-const computeApi = new gcp.projects.Service("compute-api", {
-  service: "compute.googleapis.com",
-  disableOnDestroy: false,
-});
-
 // Firestore database (Native mode) — already created manually, import it
 const firestore = new gcp.firestore.Database("default", {
   locationId: region,
