@@ -143,17 +143,17 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
   }
 
   const deployPayload = {
-    application: EDGEGAP_CONFIG.appName,
-    version: EDGEGAP_CONFIG.appVersion,
+    app_name: EDGEGAP_CONFIG.appName,
+    version_name: EDGEGAP_CONFIG.appVersion,
     env_vars: [
       { key: "GAME_ID", value: gameId, is_hidden: false },
       { key: "LOBBY_API_URL", value: EDGEGAP_CONFIG.lobbyApiUrl, is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
-    webhook_on_ready: { url: EDGEGAP_CONFIG.webhookUrl },
+    webhook_url: EDGEGAP_CONFIG.webhookUrl,
   };
 
-  const deployRes = await fetch("https://api.edgegap.com/v2/deployments", {
+  const deployRes = await fetch("https://api.edgegap.com/v1/deploy", {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
