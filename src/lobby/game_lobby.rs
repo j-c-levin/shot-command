@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use super::api;
 use super::{CurrentGameId, GameDetail, LobbyConfig, PlayerName};
 use crate::fleet::AutoFleet;
-use crate::game::GameState;
+use crate::game::{GameState, Team};
 use crate::net::client::ClientConnectAddress;
 use crate::ui::fleet_builder::{
     spawn_fleet_builder_content, FleetBuilderMode, FleetBuilderState, FleetUiRoot,
@@ -43,6 +43,7 @@ pub struct GameLobbyAsync {
     pub pending_detail: Option<Receiver<Result<GameDetail, String>>>,
     pub pending_launch: Option<Receiver<Result<(), String>>>,
     pub pending_delete: Option<Receiver<Result<(), String>>>,
+    pub pending_switch: Option<Receiver<Result<(), String>>>,
 }
 
 // ── Marker Components ───────────────────────────────────────────────────
@@ -64,6 +65,10 @@ pub struct LeaveButton;
 
 #[derive(Component)]
 pub struct LobbyStatusText;
+
+/// Button to switch the local player to a specific team.
+#[derive(Component)]
+pub struct TeamSwitchButton(pub u8);
 
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
@@ -98,6 +103,7 @@ pub fn spawn_game_lobby(
             pending_detail: Some(pending_detail),
             pending_launch: None,
             pending_delete: None,
+            pending_switch: None,
         });
     });
 
@@ -304,14 +310,19 @@ pub fn poll_game_detail(
 
                 // Update status message
                 let player_count = detail.players.len();
-                let all_ready = player_count >= 2
-                    && detail.players.iter().all(|p| p.ready);
+                let tc = detail.team_count.unwrap_or(2) as usize;
+                let all_teams_have_ready = (0..tc).all(|t| {
+                    detail
+                        .players
+                        .iter()
+                        .any(|p| p.team == t as u8 && p.ready)
+                });
                 state.status_message = match detail.status.as_str() {
                     "waiting" if player_count < 2 => {
-                        "Waiting for opponent...".to_string()
+                        "Waiting for more players...".to_string()
                     }
-                    "waiting" if !all_ready => {
-                        "Waiting for all players to ready up...".to_string()
+                    "waiting" if !all_teams_have_ready => {
+                        "Waiting for all teams to ready up...".to_string()
                     }
                     "waiting" => "All ready - launch when ready!".to_string(),
                     "launching" => "Launching server...".to_string(),
@@ -407,6 +418,7 @@ fn clear_children(commands: &mut Commands, parent: Entity, children_query: &Quer
 pub fn rebuild_player_list(
     mut commands: Commands,
     mut state: ResMut<GameLobbyState>,
+    player_name: Res<PlayerName>,
     panel_query: Query<Entity, With<PlayerListPanel>>,
     children_query: Query<&Children>,
     mut status_query: Query<(&mut Text, &mut TextColor), With<LobbyStatusText>>,
@@ -423,44 +435,104 @@ pub fn rebuild_player_list(
 
     clear_children(&mut commands, panel_entity, &children_query);
 
+    // Compute team layout info for launch readiness check
+    let mut teams_ready = true;
+    let mut missing_teams: Vec<u8> = Vec::new();
+
     commands.entity(panel_entity).with_children(|panel| {
         if let Some(ref detail) = state.detail {
-            for player in &detail.players {
-                let ready_icon = if player.ready { "READY" } else { "..." };
-                let color = if player.ready { TEXT_GREEN } else { TEXT_YELLOW };
-                panel.spawn((
-                    Text::new(format!("{}  (Team {})  {}", player.name, player.team, ready_icon)),
-                    TextFont {
-                        font_size: 16.0,
-                        ..default()
-                    },
-                    TextColor(color),
-                ));
-            }
+            let team_count = detail.team_count.unwrap_or(2);
+            let ppt = detail.players_per_team.unwrap_or(1);
 
-            // Empty slot
-            if detail.players.len() < 2 {
+            // Group players by team
+            for team_idx in 0..team_count {
+                let team_color = Team(team_idx).color();
+                let team_players: Vec<_> = detail
+                    .players
+                    .iter()
+                    .filter(|p| p.team == team_idx)
+                    .collect();
+
+                // Team header
                 panel.spawn((
-                    Text::new("???  (waiting)"),
-                    TextFont {
-                        font_size: 16.0,
+                    Text::new(format!("Team {}", team_idx + 1)),
+                    TextFont { font_size: 17.0, ..default() },
+                    TextColor(team_color),
+                    Node {
+                        margin: UiRect::top(if team_idx > 0 {
+                            Val::Px(8.0)
+                        } else {
+                            Val::Px(0.0)
+                        }),
                         ..default()
                     },
-                    TextColor(TEXT_GRAY),
                 ));
+
+                // Player entries
+                for p in &team_players {
+                    let ready_icon = if p.ready { "READY" } else { "..." };
+                    let text_color = if p.ready { TEXT_GREEN } else { TEXT_YELLOW };
+                    panel.spawn((
+                        Text::new(format!("  {}  {}", p.name, ready_icon)),
+                        TextFont { font_size: 15.0, ..default() },
+                        TextColor(text_color),
+                    ));
+                }
+
+                // Empty slots
+                let empty_slots = ppt as usize - team_players.len().min(ppt as usize);
+                for _ in 0..empty_slots {
+                    panel.spawn((
+                        Text::new("  ???  (waiting)"),
+                        TextFont { font_size: 15.0, ..default() },
+                        TextColor(TEXT_GRAY),
+                    ));
+                }
+
+                // Track whether this team has at least one ready player
+                let has_ready = team_players.iter().any(|p| p.ready);
+                if !has_ready {
+                    teams_ready = false;
+                    missing_teams.push(team_idx);
+                }
+
+                // Switch button: show if this team has open slots and
+                // the local player is not already on this team
+                let my_team = detail
+                    .players
+                    .iter()
+                    .find(|p| p.name == player_name.0)
+                    .map(|p| p.team);
+                let is_my_team = my_team == Some(team_idx);
+                let has_space = team_players.len() < ppt as usize;
+
+                if has_space && !is_my_team {
+                    panel
+                        .spawn((
+                            TeamSwitchButton(team_idx),
+                            Button,
+                            Node {
+                                padding: UiRect::axes(Val::Px(12.0), Val::Px(4.0)),
+                                margin: UiRect::left(Val::Px(16.0)),
+                                justify_content: JustifyContent::Center,
+                                align_items: AlignItems::Center,
+                                ..default()
+                            },
+                            BackgroundColor(BG_PANEL),
+                        ))
+                        .with_child((
+                            Text::new(format!("Switch to Team {}", team_idx + 1)),
+                            TextFont { font_size: 13.0, ..default() },
+                            TextColor(team_color),
+                        ));
+                }
             }
 
             // Map info
-            let map_text = detail
-                .map
-                .as_deref()
-                .unwrap_or("random");
+            let map_text = detail.map.as_deref().unwrap_or("random");
             panel.spawn((
                 Text::new(format!("Map: {}", map_text)),
-                TextFont {
-                    font_size: 16.0,
-                    ..default()
-                },
+                TextFont { font_size: 16.0, ..default() },
                 TextColor(TEXT_GRAY),
                 Node {
                     margin: UiRect::top(Val::Px(10.0)),
@@ -470,10 +542,7 @@ pub fn rebuild_player_list(
         } else {
             panel.spawn((
                 Text::new("Loading..."),
-                TextFont {
-                    font_size: 16.0,
-                    ..default()
-                },
+                TextFont { font_size: 16.0, ..default() },
                 TextColor(TEXT_GRAY),
             ));
         }
@@ -481,17 +550,25 @@ pub fn rebuild_player_list(
 
     // Update status text
     for (mut text, mut color) in &mut status_query {
+        if !missing_teams.is_empty() {
+            let missing_str: Vec<String> =
+                missing_teams.iter().map(|t| format!("{}", t + 1)).collect();
+            state.status_message =
+                format!("Waiting: team(s) {} need players", missing_str.join(", "));
+        }
         *text = Text::new(&state.status_message);
         color.0 = TEXT_YELLOW;
     }
 
-    // Update launch button color — require all players ready
-    let all_ready = state
+    // Update launch button color — require every team to have at least one ready player
+    let total_players = state
         .detail
         .as_ref()
-        .map(|d| d.players.len() >= 2 && d.players.iter().all(|p| p.ready))
-        .unwrap_or(false);
-    let can_launch = state.is_creator && all_ready
+        .map(|d| d.players.len())
+        .unwrap_or(0);
+    let can_launch = state.is_creator
+        && teams_ready
+        && total_players >= 2
         && state
             .detail
             .as_ref()
@@ -500,7 +577,13 @@ pub fn rebuild_player_list(
 
     let launching = state.status_message.contains("Launching");
     for mut bg in &mut launch_bg_query {
-        bg.0 = if launching { BG_DISABLED } else if can_launch { BG_SUBMIT } else { BG_DISABLED };
+        bg.0 = if launching {
+            BG_DISABLED
+        } else if can_launch {
+            BG_SUBMIT
+        } else {
+            BG_DISABLED
+        };
     }
 }
 
@@ -516,17 +599,21 @@ pub fn handle_launch_button(
 ) {
     for interaction in &query {
         if *interaction == Interaction::Pressed {
-            // Only creator can launch, need 2 players, all ready
-            let all_ready = state
-                .detail
-                .as_ref()
-                .map(|d| d.players.len() >= 2 && d.players.iter().all(|p| p.ready))
-                .unwrap_or(false);
-            let can_launch = state.is_creator && all_ready
+            // Only creator can launch; every team needs at least 1 ready player
+            let can_launch = state.is_creator
                 && state
                     .detail
                     .as_ref()
-                    .map(|d| d.status == "waiting")
+                    .map(|d| {
+                        let tc = d.team_count.unwrap_or(2) as usize;
+                        d.status == "waiting"
+                            && d.players.len() >= 2
+                            && (0..tc).all(|t| {
+                                d.players
+                                    .iter()
+                                    .any(|p| p.team == t as u8 && p.ready)
+                            })
+                    })
                     .unwrap_or(false);
 
             if can_launch && async_state.pending_launch.is_none() {
@@ -559,6 +646,51 @@ pub fn handle_leave_button(
                     &game_id.0,
                     &player_name.0,
                 ));
+            }
+        }
+    }
+}
+
+pub fn handle_team_switch_button(
+    query: Query<(&Interaction, &TeamSwitchButton), (Changed<Interaction>, With<Button>)>,
+    lobby_config: Res<LobbyConfig>,
+    game_id: Res<CurrentGameId>,
+    player_name: Res<PlayerName>,
+    mut async_state: NonSendMut<GameLobbyAsync>,
+) {
+    for (interaction, btn) in &query {
+        if *interaction == Interaction::Pressed && async_state.pending_switch.is_none() {
+            info!("Switching to team {}", btn.0);
+            async_state.pending_switch = Some(api::switch_team(
+                &lobby_config.api_base_url,
+                &game_id.0,
+                &player_name.0,
+                btn.0,
+            ));
+        }
+    }
+}
+
+pub fn poll_pending_switch(
+    mut state: ResMut<GameLobbyState>,
+    mut async_state: NonSendMut<GameLobbyAsync>,
+) {
+    if let Some(ref rx) = async_state.pending_switch {
+        match rx.try_recv() {
+            Ok(Ok(())) => {
+                info!("Team switch successful");
+                state.detail_changed = true;
+                async_state.pending_switch = None;
+            }
+            Ok(Err(e)) => {
+                warn!("Failed to switch team: {}", e);
+                state.status_message = format!("Switch failed: {e}");
+                state.detail_changed = true;
+                async_state.pending_switch = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                async_state.pending_switch = None;
             }
         }
     }

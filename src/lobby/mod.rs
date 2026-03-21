@@ -34,6 +34,7 @@ impl Plugin for LobbyPlugin {
                 Update,
                 (
                     main_menu::handle_refresh,
+                    main_menu::handle_team_config_buttons,
                     main_menu::spawn_create_dialog,
                     main_menu::handle_map_picker_option,
                     main_menu::handle_create_confirm_close,
@@ -57,9 +58,11 @@ impl Plugin for LobbyPlugin {
                 game_lobby::poll_game_detail,
                 game_lobby::poll_pending_launch,
                 game_lobby::poll_pending_delete,
+                game_lobby::poll_pending_switch,
                 game_lobby::rebuild_player_list,
                 game_lobby::handle_launch_button,
                 game_lobby::handle_leave_button,
+                game_lobby::handle_team_switch_button,
                 game_lobby::sync_ready_state,
             )
                 .run_if(in_state(GameState::GameLobby)),
