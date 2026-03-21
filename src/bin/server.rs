@@ -8,7 +8,7 @@ use clap::Parser;
 use nebulous_shot_command::control_point::ControlPointPlugin;
 use nebulous_shot_command::fleet::FleetPlugin;
 use nebulous_shot_command::fleet::lobby::LobbyPlugin;
-use nebulous_shot_command::game::{GamePlugin, GameState};
+use nebulous_shot_command::game::{GameConfig, GamePlugin, GameState};
 use nebulous_shot_command::net::server::{ServerBindAddress, ServerMapPath, ServerNetPlugin};
 use nebulous_shot_command::net::SharedReplicationPlugin;
 use nebulous_shot_command::ship::ShipPhysicsPlugin;
@@ -28,6 +28,14 @@ struct Cli {
     /// Path to a map file (RON) in assets/maps/. If omitted, uses random generation.
     #[arg(long)]
     map: Option<String>,
+
+    /// Number of teams (1-4)
+    #[arg(long, default_value = "2")]
+    team_count: u8,
+
+    /// Players per team (1-3)
+    #[arg(long, default_value = "1")]
+    players_per_team: u8,
 }
 
 /// Resolve the bind address: Edgegap env var takes priority, then CLI arg.
@@ -44,6 +52,22 @@ fn resolve_bind_address(cli_bind: &str) -> String {
 /// Resolve map: GAME_MAP env var (from Edgegap) takes priority, then CLI arg.
 fn resolve_map(cli_map: Option<String>) -> Option<String> {
     cli_map.or_else(|| env::var("GAME_MAP").ok())
+}
+
+/// Resolve game config: Edgegap env vars take priority, then CLI args.
+fn resolve_game_config(cli_team_count: u8, cli_players_per_team: u8) -> GameConfig {
+    let team_count = env::var("GAME_TEAM_COUNT")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(cli_team_count);
+    let players_per_team = env::var("GAME_PLAYERS_PER_TEAM")
+        .ok()
+        .and_then(|v| v.parse().ok())
+        .unwrap_or(cli_players_per_team);
+    GameConfig {
+        team_count,
+        players_per_team,
+    }
 }
 
 /// Resource holding Edgegap self-termination info, if running in Edgegap.
@@ -63,6 +87,9 @@ struct LobbyCleanup {
 fn main() {
     let cli = Cli::parse();
     let bind_address = resolve_bind_address(&cli.bind);
+    let game_config = resolve_game_config(cli.team_count, cli.players_per_team);
+    info!("Game config: {} teams x {} players/team = {} max players",
+        game_config.team_count, game_config.players_per_team, game_config.max_players());
 
     if let Ok(request_id) = env::var("ARBITRIUM_REQUEST_ID") {
         info!("Running on Edgegap deployment: {request_id}");
@@ -95,6 +122,7 @@ fn main() {
     ))
     .insert_resource(ServerBindAddress(bind_address))
     .insert_resource(ServerMapPath(resolve_map(cli.map)))
+    .insert_resource(game_config)
     .add_systems(
         OnEnter(GameState::WaitingForPlayers),
         || info!("Waiting for players..."),

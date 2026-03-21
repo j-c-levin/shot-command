@@ -1610,11 +1610,8 @@ pub fn update_status_text(
         Some(LobbyState::WaitingForOpponent) => {
             ("Fleet submitted. Waiting for opponent...".to_string(), TEXT_YELLOW)
         }
-        Some(LobbyState::OpponentSubmitted) => {
-            ("Opponent has submitted. Compose your fleet!".to_string(), TEXT_YELLOW)
-        }
-        Some(LobbyState::OpponentComposing) => {
-            ("Opponent is still composing their fleet.".to_string(), TEXT_YELLOW)
+        Some(LobbyState::SubmissionCount(n)) => {
+            (format!("{} player(s) submitted", n), TEXT_YELLOW)
         }
         Some(LobbyState::Countdown(secs)) => {
             (format!("Starting in {:.0}s...", secs), TEXT_GREEN)

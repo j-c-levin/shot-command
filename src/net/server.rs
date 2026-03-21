@@ -47,10 +47,17 @@ pub struct ServerBindAddress(pub String);
 #[derive(Resource, Debug, Clone)]
 pub struct ServerMapPath(pub Option<String>);
 
-/// Maps connected client entities to their assigned team.
+/// Identifies a player's team and slot within that team.
+#[derive(Clone, Debug)]
+pub struct PlayerSlot {
+    pub team: Team,
+    pub slot: u8,
+}
+
+/// Maps connected client entities to their assigned team and slot.
 #[derive(Resource, Debug, Default)]
 pub struct ClientTeams {
-    pub map: HashMap<Entity, Team>,
+    pub map: HashMap<Entity, PlayerSlot>,
 }
 
 /// A [`FilterBit`] for entity-level LOS visibility.
@@ -158,6 +165,7 @@ fn setup_renet_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
     bind_address: Res<ServerBindAddress>,
+    config: Res<crate::game::GameConfig>,
 ) {
     let addr: SocketAddr = bind_address
         .0
@@ -179,7 +187,7 @@ fn setup_renet_server(
 
     let server_config = NetcodeServerConfig {
         current_time,
-        max_clients: 2,
+        max_clients: config.max_players(),
         protocol_id: PROTOCOL_ID,
         public_addresses: vec![addr],
         authentication: ServerAuthentication::Unsecure,
@@ -203,41 +211,56 @@ fn on_client_connected(
     mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
     lobby: Res<crate::fleet::lobby::LobbyTracker>,
+    config: Res<crate::game::GameConfig>,
 ) {
     let client_entity = trigger.entity;
-    let team_id = client_teams.map.len() as u8;
+    let max = config.max_players();
+    let current = client_teams.map.len();
+
+    if current >= max {
+        warn!(
+            "Server full ({}/{}), rejecting client {:?}",
+            current, max, client_entity
+        );
+        return;
+    }
+
+    let team_id = (current / config.players_per_team as usize) as u8;
+    let slot = (current % config.players_per_team as usize) as u8;
     let team = Team(team_id);
 
-    client_teams.map.insert(client_entity, team);
+    client_teams
+        .map
+        .insert(client_entity, PlayerSlot { team, slot });
 
     info!(
-        "Client {:?} connected, assigned Team({}). Total clients: {}",
+        "Client {:?} assigned Team({}) slot {}. {}/{} players",
         client_entity,
         team_id,
-        client_teams.map.len()
+        slot,
+        current + 1,
+        max
     );
 
     // Send TeamAssignment immediately so client can transition to FleetComposition
     commands.server_trigger(ToClients {
         mode: SendMode::Direct(ClientId::Client(client_entity)),
-        message: TeamAssignment { team },
+        message: TeamAssignment { team, slot },
     });
 
-    // If the other team has already submitted, inform this client
-    let other_has_submitted = client_teams.map.iter().any(|(&other_entity, _)| {
-        other_entity != client_entity && lobby.submissions.contains_key(&other_entity)
-    });
-    if other_has_submitted {
+    // Inform new client about current submission count
+    let submission_count = lobby.submissions.len() as u32;
+    if submission_count > 0 {
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(ClientId::Client(client_entity)),
             message: crate::net::commands::LobbyStatus {
-                state: crate::net::commands::LobbyState::OpponentSubmitted,
+                state: crate::net::commands::LobbyState::SubmissionCount(submission_count),
             },
         });
     }
 
     // Server stays in WaitingForPlayers — lobby systems handle the
-    // FleetComposition phase and transition to Playing when both fleets are submitted.
+    // FleetComposition phase and transition to Playing when all fleets are submitted.
 }
 
 /// Half-extent of the map bounds (used for MapBounds and asteroid placement).
@@ -385,8 +408,8 @@ fn server_setup_game(
     // Build a mapping: client_entity -> (team, Vec<ShipSpec>)
     let mut client_specs: Vec<(Entity, Team, Vec<crate::fleet::ShipSpec>)> = Vec::new();
     for (&client_entity, specs) in &lobby.submissions {
-        if let Some(&team) = client_teams.map.get(&client_entity) {
-            client_specs.push((client_entity, team, specs.clone()));
+        if let Some(slot) = client_teams.map.get(&client_entity) {
+            client_specs.push((client_entity, slot.team, specs.clone()));
         }
     }
 
@@ -1250,10 +1273,10 @@ fn on_client_disconnected(
     mut client_teams: ResMut<ClientTeams>,
 ) {
     let client_entity = trigger.entity;
-    if let Some(team) = client_teams.map.remove(&client_entity) {
+    if let Some(slot) = client_teams.map.remove(&client_entity) {
         info!(
-            "Client {:?} (Team {}) disconnected. Ships will drift and brake.",
-            client_entity, team.0
+            "Client {:?} (Team {} slot {}) disconnected. Ships will drift and brake.",
+            client_entity, slot.team.0, slot.slot
         );
     } else {
         info!("Unknown client {:?} disconnected", client_entity);
@@ -1381,9 +1404,10 @@ fn server_update_visibility(
         .collect();
 
     for (client_entity, mut client_visibility) in &mut clients {
-        let Some(client_team) = client_teams.map.get(&client_entity) else {
+        let Some(client_slot) = client_teams.map.get(&client_entity) else {
             continue;
         };
+        let client_team = &client_slot.team;
 
         // Ship entity visibility (LOS-based for enemies, always for own team)
         for &(ship_entity, ship_pos, _vision_range, ship_team) in &all_ships {

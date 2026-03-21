@@ -11,11 +11,10 @@ use bevy_replicon::prelude::*;
 use bevy_replicon::shared::message::client_message::FromClient;
 
 use crate::fleet::{validate_fleet, ShipSpec};
-use crate::game::GameState;
+use crate::game::{GameConfig, GameState};
 use crate::net::commands::{
     CancelSubmission, FleetSubmission, GameStarted, LobbyState, LobbyStatus,
 };
-use crate::net::server::ClientTeams;
 
 /// Tracks fleet submissions and lobby countdown on the server.
 #[derive(Resource, Debug, Default)]
@@ -47,7 +46,7 @@ fn handle_fleet_submission(
     trigger: On<FromClient<FleetSubmission>>,
     mut commands: Commands,
     mut lobby: ResMut<LobbyTracker>,
-    client_teams: Res<ClientTeams>,
+    config: Res<GameConfig>,
 ) {
     let from = trigger.event();
     let submission = &from.message;
@@ -74,14 +73,14 @@ fn handle_fleet_submission(
 
     // Store the valid submission
     lobby.submissions.insert(client_entity, submission.ships.clone());
+    let count = lobby.submissions.len();
     info!(
-        "Fleet submission accepted from {:?}. Total submissions: {}",
-        client_entity,
-        lobby.submissions.len()
+        "Fleet submission accepted from {:?}. Total submissions: {}/{}",
+        client_entity, count, config.max_players()
     );
 
-    if lobby.submissions.len() >= 2 {
-        // Both players have submitted — start countdown
+    if count >= config.max_players() {
+        // All players have submitted — start countdown
         lobby.countdown = Some(3.0);
         commands.server_trigger(ToClients {
             mode: SendMode::Broadcast,
@@ -90,7 +89,7 @@ fn handle_fleet_submission(
             },
         });
     } else {
-        // Only this player submitted
+        // Tell the submitter they're waiting
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(ClientId::Client(client_entity)),
             message: LobbyStatus {
@@ -98,17 +97,13 @@ fn handle_fleet_submission(
             },
         });
 
-        // Notify the other player (if connected) that their opponent has submitted
-        for &other_entity in client_teams.map.keys() {
-            if other_entity != client_entity {
-                commands.server_trigger(ToClients {
-                    mode: SendMode::Direct(ClientId::Client(other_entity)),
-                    message: LobbyStatus {
-                        state: LobbyState::OpponentSubmitted,
-                    },
-                });
-            }
-        }
+        // Broadcast current submission count to all clients
+        commands.server_trigger(ToClients {
+            mode: SendMode::Broadcast,
+            message: LobbyStatus {
+                state: LobbyState::SubmissionCount(count as u32),
+            },
+        });
     }
 }
 
@@ -139,17 +134,14 @@ fn handle_cancel_submission(
         },
     });
 
-    // Notify any other player who has submitted that their opponent is still composing
-    for (&other_entity, _) in &lobby.submissions {
-        if other_entity != client_entity {
-            commands.server_trigger(ToClients {
-                mode: SendMode::Direct(ClientId::Client(other_entity)),
-                message: LobbyStatus {
-                    state: LobbyState::OpponentComposing,
-                },
-            });
-        }
-    }
+    // Broadcast updated submission count to all clients
+    let count = lobby.submissions.len() as u32;
+    commands.server_trigger(ToClients {
+        mode: SendMode::Broadcast,
+        message: LobbyStatus {
+            state: LobbyState::SubmissionCount(count),
+        },
+    });
 }
 
 /// Tick the lobby countdown. When it reaches zero, broadcast `GameStarted`

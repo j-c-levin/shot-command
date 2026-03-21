@@ -98,10 +98,11 @@ pub struct RadarToggleCommand {
     pub ship: Entity,
 }
 
-/// Server → client: tells the client which team it controls.
+/// Server → client: tells the client which team it controls and their slot index.
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct TeamAssignment {
     pub team: Team,
+    pub slot: u8,
 }
 
 /// Server → client: announces the game result (which team won).
@@ -133,15 +134,13 @@ impl MapEntities for CancelSubmission {
 pub enum LobbyState {
     /// Player is still composing their fleet.
     Composing,
-    /// Player has submitted; waiting for opponent to submit.
+    /// Player has submitted; waiting for others.
     WaitingForOpponent,
-    /// Opponent has submitted their fleet; this player is still composing.
-    OpponentSubmitted,
-    /// Opponent cancelled their submission; back to composing.
-    OpponentComposing,
-    /// Both submitted; countdown to game start (seconds remaining).
+    /// N players have submitted their fleets.
+    SubmissionCount(u32),
+    /// All required submissions in; countdown to game start.
     Countdown(f32),
-    /// Server rejected the fleet submission (with reason).
+    /// Server rejected the fleet submission.
     Rejected(String),
 }
 
