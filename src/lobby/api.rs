@@ -23,13 +23,21 @@ pub fn create_game(
     api_base: &str,
     creator: &str,
     map: Option<&str>,
+    team_count: Option<u8>,
+    players_per_team: Option<u8>,
 ) -> Receiver<Result<String, String>> {
     let (tx, rx) = channel();
     let url = format!("{api_base}/createGame");
-    let body = serde_json::json!({
+    let mut body = serde_json::json!({
         "creator": creator,
         "map": map,
     });
+    if let Some(tc) = team_count {
+        body["team_count"] = serde_json::json!(tc);
+    }
+    if let Some(ppt) = players_per_team {
+        body["players_per_team"] = serde_json::json!(ppt);
+    }
     std::thread::spawn(move || {
         let client = reqwest::blocking::Client::new();
         let result = client
@@ -188,6 +196,40 @@ pub fn close_game(api_base: &str, game_id: &str) -> Receiver<Result<(), String>>
                     Ok(())
                 } else {
                     Err(format!("close_game failed: {}", r.status()))
+                }
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
+/// Switch a player to a different team in the lobby.
+pub fn switch_team(
+    api_base: &str,
+    game_id: &str,
+    name: &str,
+    target_team: u8,
+) -> Receiver<Result<(), String>> {
+    let (tx, rx) = channel();
+    let url = format!("{api_base}/switchTeam");
+    let body = serde_json::json!({
+        "game_id": game_id,
+        "name": name,
+        "target_team": target_team,
+    });
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let result = client
+            .post(&url)
+            .json(&body)
+            .send()
+            .map_err(|e| e.to_string())
+            .and_then(|r| {
+                if r.status().is_success() {
+                    Ok(())
+                } else {
+                    let msg = r.text().unwrap_or_default();
+                    Err(msg)
                 }
             });
         let _ = tx.send(result);

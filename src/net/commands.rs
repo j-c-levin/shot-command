@@ -98,16 +98,20 @@ pub struct RadarToggleCommand {
     pub ship: Entity,
 }
 
-/// Server → client: tells the client which team it controls.
+/// Server → client: tells the client which team it controls, their slot index,
+/// and the game configuration (team count + players per team).
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct TeamAssignment {
     pub team: Team,
+    pub slot: u8,
+    pub team_count: u8,
+    pub players_per_team: u8,
 }
 
-/// Server → client: announces the game result (which team won).
+/// Server → client: announces the game result (which team won, or `None` for draw).
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct GameResult {
-    pub winning_team: Team,
+    pub winning_team: Option<Team>,
 }
 
 /// Client → server: submit a fleet composition for validation.
@@ -133,15 +137,13 @@ impl MapEntities for CancelSubmission {
 pub enum LobbyState {
     /// Player is still composing their fleet.
     Composing,
-    /// Player has submitted; waiting for opponent to submit.
+    /// Player has submitted; waiting for others.
     WaitingForOpponent,
-    /// Opponent has submitted their fleet; this player is still composing.
-    OpponentSubmitted,
-    /// Opponent cancelled their submission; back to composing.
-    OpponentComposing,
-    /// Both submitted; countdown to game start (seconds remaining).
+    /// N players have submitted their fleets.
+    SubmissionCount(u32),
+    /// All required submissions in; countdown to game start.
     Countdown(f32),
-    /// Server rejected the fleet submission (with reason).
+    /// Server rejected the fleet submission.
     Rejected(String),
 }
 
@@ -149,6 +151,14 @@ pub enum LobbyState {
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct LobbyStatus {
     pub state: LobbyState,
+}
+
+/// Client → server: creator requests game start.
+#[derive(Event, Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchCommand;
+
+impl MapEntities for LaunchCommand {
+    fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, _mapper: &mut M) {}
 }
 
 /// Server → client: game is starting (countdown complete).

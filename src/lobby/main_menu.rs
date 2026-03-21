@@ -22,9 +22,30 @@ const TEXT_YELLOW: Color = Color::srgb(1.0, 1.0, 0.4);
 const TEXT_RED: Color = Color::srgb(1.0, 0.3, 0.3);
 const BG_DISABLED: Color = Color::srgb(0.3, 0.3, 0.3);
 
+const MIN_TEAM_COUNT: u8 = 1;
+const MAX_TEAM_COUNT: u8 = 4;
+const MIN_PLAYERS_PER_TEAM: u8 = 1;
+const MAX_PLAYERS_PER_TEAM: u8 = 3;
+
 const POLL_INTERVAL_SECS: f32 = 3.0;
 
 // ── Resources ───────────────────────────────────────────────────────────
+
+/// Configuration for the create-game dialog (team count + players per team).
+#[derive(Resource)]
+pub struct CreateGameConfig {
+    pub team_count: u8,
+    pub players_per_team: u8,
+}
+
+impl Default for CreateGameConfig {
+    fn default() -> Self {
+        Self {
+            team_count: 2,
+            players_per_team: 1,
+        }
+    }
+}
 
 /// Main menu display state (Send + Sync, can be a normal Resource).
 #[derive(Resource)]
@@ -82,6 +103,28 @@ pub struct CreateConfirmButton;
 #[derive(Component)]
 pub struct ErrorText;
 
+/// +/- buttons for team count in the create game dialog.
+#[derive(Component)]
+pub struct TeamCountMinus;
+
+#[derive(Component)]
+pub struct TeamCountPlus;
+
+/// +/- buttons for players-per-team in the create game dialog.
+#[derive(Component)]
+pub struct PlayersPerTeamMinus;
+
+#[derive(Component)]
+pub struct PlayersPerTeamPlus;
+
+/// Text label showing the current team count value.
+#[derive(Component)]
+pub struct TeamCountLabel;
+
+/// Text label showing the current players-per-team value.
+#[derive(Component)]
+pub struct PlayersPerTeamLabel;
+
 // ── Spawn / Despawn ─────────────────────────────────────────────────────
 
 pub fn spawn_main_menu(mut commands: Commands, lobby_config: Res<LobbyConfig>) {
@@ -98,6 +141,8 @@ pub fn spawn_main_menu(mut commands: Commands, lobby_config: Res<LobbyConfig>) {
         selected_map: None,
         games_changed: true,
     });
+
+    commands.insert_resource(CreateGameConfig::default());
 
     commands.queue(move |world: &mut World| {
         world.insert_non_send_resource(MainMenuAsync {
@@ -270,6 +315,7 @@ pub fn despawn_main_menu(mut commands: Commands, roots: Query<Entity, With<MainM
         commands.entity(entity).despawn();
     }
     commands.remove_resource::<MainMenuState>();
+    commands.remove_resource::<CreateGameConfig>();
     commands.queue(|world: &mut World| {
         world.remove_non_send_resource::<MainMenuAsync>();
     });
@@ -484,10 +530,20 @@ pub fn rebuild_game_list(
                 .with_children(|row| {
                     // Game info text
                     let map_text = game.map.as_deref().unwrap_or("random");
+                    let tc = game.team_count.unwrap_or(2);
+                    let ppt = game.players_per_team.unwrap_or(1);
+                    let total_slots = tc as usize * ppt as usize;
+                    let config_text = if ppt == 1 {
+                        // e.g. "1v1", "1v1v1", "1v1v1v1"
+                        (0..tc).map(|_| "1").collect::<Vec<_>>().join("v")
+                    } else {
+                        // e.g. "2 teams x 2", "3 teams x 3"
+                        format!("{tc} teams x {ppt}")
+                    };
                     row.spawn((
                         Text::new(format!(
-                            "{}  {}/2  {}",
-                            game.creator, game.player_count, map_text
+                            "{}  {}/{}  [{}]  {}",
+                            game.creator, game.player_count, total_slots, config_text, map_text
                         )),
                         TextFont {
                             font_size: 16.0,
@@ -604,10 +660,11 @@ pub fn handle_refresh(
 pub fn spawn_create_dialog(
     mut commands: Commands,
     state: Res<MainMenuState>,
+    config: Res<CreateGameConfig>,
     existing: Query<Entity, With<CreateDialogOverlay>>,
     async_state: NonSend<MainMenuAsync>,
 ) {
-    if !state.is_changed() {
+    if !state.is_changed() && !config.is_changed() {
         return;
     }
 
@@ -666,6 +723,38 @@ pub fn spawn_create_dialog(
                         ));
                         return;
                     }
+
+                    // ── Team Count selector ──
+                    inner.spawn((
+                        Text::new("Teams:"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(TEXT_YELLOW),
+                    ));
+                    spawn_spinner_row(
+                        inner,
+                        config.team_count,
+                        TeamCountMinus,
+                        TeamCountPlus,
+                        TeamCountLabel,
+                        config.team_count <= MIN_TEAM_COUNT,
+                        config.team_count >= MAX_TEAM_COUNT,
+                    );
+
+                    // ── Players Per Team selector ──
+                    inner.spawn((
+                        Text::new("Players per team:"),
+                        TextFont { font_size: 18.0, ..default() },
+                        TextColor(TEXT_YELLOW),
+                    ));
+                    spawn_spinner_row(
+                        inner,
+                        config.players_per_team,
+                        PlayersPerTeamMinus,
+                        PlayersPerTeamPlus,
+                        PlayersPerTeamLabel,
+                        config.players_per_team <= MIN_PLAYERS_PER_TEAM,
+                        config.players_per_team >= MAX_PLAYERS_PER_TEAM,
+                    );
 
                     inner.spawn((
                         Text::new("Select Map:"),
@@ -749,11 +838,115 @@ pub fn spawn_create_dialog(
         });
 }
 
+/// Spawn a row with [-] [value] [+] for a numeric spinner.
+fn spawn_spinner_row(
+    parent: &mut ChildSpawnerCommands,
+    value: u8,
+    minus_marker: impl Component,
+    plus_marker: impl Component,
+    label_marker: impl Component,
+    at_min: bool,
+    at_max: bool,
+) {
+    parent
+        .spawn(Node {
+            width: Val::Percent(100.0),
+            flex_direction: FlexDirection::Row,
+            justify_content: JustifyContent::Center,
+            align_items: AlignItems::Center,
+            column_gap: Val::Px(12.0),
+            margin: UiRect::bottom(Val::Px(4.0)),
+            ..default()
+        })
+        .with_children(|row| {
+            // Minus button
+            row.spawn((
+                minus_marker,
+                Button,
+                Node {
+                    width: Val::Px(36.0),
+                    height: Val::Px(36.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(if at_min { BG_DISABLED } else { BG_BUTTON }),
+            ))
+            .with_child((
+                Text::new("-"),
+                TextFont { font_size: 22.0, ..default() },
+                TextColor(TEXT_WHITE),
+            ));
+
+            // Value label
+            row.spawn((
+                label_marker,
+                Text::new(format!("{value}")),
+                TextFont { font_size: 22.0, ..default() },
+                TextColor(TEXT_WHITE),
+                Node {
+                    width: Val::Px(40.0),
+                    justify_content: JustifyContent::Center,
+                    ..default()
+                },
+            ));
+
+            // Plus button
+            row.spawn((
+                plus_marker,
+                Button,
+                Node {
+                    width: Val::Px(36.0),
+                    height: Val::Px(36.0),
+                    justify_content: JustifyContent::Center,
+                    align_items: AlignItems::Center,
+                    ..default()
+                },
+                BackgroundColor(if at_max { BG_DISABLED } else { BG_BUTTON }),
+            ))
+            .with_child((
+                Text::new("+"),
+                TextFont { font_size: 22.0, ..default() },
+                TextColor(TEXT_WHITE),
+            ));
+        });
+}
+
+pub fn handle_team_config_buttons(
+    minus_tc: Query<&Interaction, (Changed<Interaction>, With<TeamCountMinus>)>,
+    plus_tc: Query<&Interaction, (Changed<Interaction>, With<TeamCountPlus>)>,
+    minus_ppt: Query<&Interaction, (Changed<Interaction>, With<PlayersPerTeamMinus>)>,
+    plus_ppt: Query<&Interaction, (Changed<Interaction>, With<PlayersPerTeamPlus>)>,
+    mut config: ResMut<CreateGameConfig>,
+) {
+    for interaction in &minus_tc {
+        if *interaction == Interaction::Pressed && config.team_count > MIN_TEAM_COUNT {
+            config.team_count -= 1;
+        }
+    }
+    for interaction in &plus_tc {
+        if *interaction == Interaction::Pressed && config.team_count < MAX_TEAM_COUNT {
+            config.team_count += 1;
+        }
+    }
+    for interaction in &minus_ppt {
+        if *interaction == Interaction::Pressed && config.players_per_team > MIN_PLAYERS_PER_TEAM {
+            config.players_per_team -= 1;
+        }
+    }
+    for interaction in &plus_ppt {
+        if *interaction == Interaction::Pressed && config.players_per_team < MAX_PLAYERS_PER_TEAM {
+            config.players_per_team += 1;
+        }
+    }
+}
+
 pub fn handle_map_picker_option(
     query: Query<(&Interaction, &MapPickerOption), (Changed<Interaction>, With<Button>)>,
     mut state: ResMut<MainMenuState>,
     lobby_config: Res<LobbyConfig>,
     player_name: Res<PlayerName>,
+    config: Res<CreateGameConfig>,
     mut async_state: NonSendMut<MainMenuAsync>,
 ) {
     for (interaction, option) in &query {
@@ -761,11 +954,16 @@ pub fn handle_map_picker_option(
             state.selected_map = option.0.clone();
 
             // Create the game (keep dialog open to show feedback)
-            info!("Creating game with map: {:?}", state.selected_map);
+            info!(
+                "Creating game with map: {:?}, teams: {}, players_per_team: {}",
+                state.selected_map, config.team_count, config.players_per_team
+            );
             let rx = api::create_game(
                 &lobby_config.api_base_url,
                 &player_name.0,
                 state.selected_map.as_deref(),
+                Some(config.team_count),
+                Some(config.players_per_team),
             );
             async_state.pending_create = Some(rx);
         }

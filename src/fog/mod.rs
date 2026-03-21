@@ -167,17 +167,23 @@ pub fn ray_blocked_by_asteroid(
 
 fn detect_enemies(
     mut commands: Commands,
+    local_team: Res<LocalTeam>,
     player_ships: Query<(&Transform, &ShipClass, &Team), With<Ship>>,
     enemy_query: Query<(Entity, &Transform, &Team, Option<&Detected>), With<Ship>>,
     asteroid_query: Query<(&Transform, &AsteroidSize), With<Asteroid>>,
 ) {
+    let my_team = match local_team.0 {
+        Some(t) => t,
+        None => return,
+    };
+
     let asteroids: Vec<(Vec2, f32)> = asteroid_query
         .iter()
         .map(|(t, s)| (Vec2::new(t.translation.x, t.translation.z), s.radius))
         .collect();
 
     for (enemy_entity, enemy_transform, enemy_team, maybe_detected) in &enemy_query {
-        if *enemy_team == Team::PLAYER {
+        if *enemy_team == my_team {
             continue;
         }
 
@@ -185,7 +191,7 @@ fn detect_enemies(
         let mut seen = false;
 
         for (player_transform, class, player_team) in &player_ships {
-            if *player_team != Team::PLAYER {
+            if *player_team != my_team {
                 continue;
             }
             let player_pos = ship_xz_position(player_transform);

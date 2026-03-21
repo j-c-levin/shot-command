@@ -59,18 +59,13 @@ pub struct FleetBuilderState {
 }
 
 /// Controls how the fleet builder submit button behaves.
-#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub enum FleetBuilderMode {
     /// Connected to server, submit triggers network event.
+    #[default]
     Online,
     /// In lobby, submit just validates and stores locally.
     Lobby,
-}
-
-impl Default for FleetBuilderMode {
-    fn default() -> Self {
-        Self::Online
-    }
 }
 
 #[derive(Debug, Clone)]
@@ -1610,11 +1605,8 @@ pub fn update_status_text(
         Some(LobbyState::WaitingForOpponent) => {
             ("Fleet submitted. Waiting for opponent...".to_string(), TEXT_YELLOW)
         }
-        Some(LobbyState::OpponentSubmitted) => {
-            ("Opponent has submitted. Compose your fleet!".to_string(), TEXT_YELLOW)
-        }
-        Some(LobbyState::OpponentComposing) => {
-            ("Opponent is still composing their fleet.".to_string(), TEXT_YELLOW)
+        Some(LobbyState::SubmissionCount(n)) => {
+            (format!("{} player(s) submitted", n), TEXT_YELLOW)
         }
         Some(LobbyState::Countdown(secs)) => {
             (format!("Starting in {:.0}s...", secs), TEXT_GREEN)

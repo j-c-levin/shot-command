@@ -9,7 +9,7 @@ use bevy_replicon_renet::{
     renet::ConnectionConfig,
 };
 
-use crate::game::{GameState, Team};
+use crate::game::{GameConfig, GameState, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{GroundPlane, MapBounds};
 use crate::net::commands::{GameResult, GameStarted, LobbyStatus, TeamAssignment};
@@ -135,14 +135,24 @@ fn setup_renet_client(
 /// Observer that fires when the server sends a TeamAssignment event.
 fn on_team_assignment(
     trigger: On<TeamAssignment>,
+    mut commands: Commands,
     mut local_team: ResMut<LocalTeam>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let assignment = &*trigger;
     let team = assignment.team;
 
-    info!("Received team assignment: Team({})", team.0);
+    info!(
+        "Received team assignment: Team({}) slot {} ({}v{})",
+        team.0, assignment.slot, assignment.team_count, assignment.players_per_team
+    );
     local_team.0 = Some(team);
+
+    // Insert GameConfig so client systems can query team/player structure
+    commands.insert_resource(GameConfig {
+        team_count: assignment.team_count,
+        players_per_team: assignment.players_per_team,
+    });
 
     next_state.set(GameState::FleetComposition);
     info!("Transitioning to FleetComposition state");
@@ -203,8 +213,9 @@ fn client_setup_scene(
 }
 
 /// Stores the game outcome once the server announces it.
+/// `None` means a draw (all teams eliminated simultaneously).
 #[derive(Resource, Debug)]
-pub struct GameOutcome(pub Team);
+pub struct GameOutcome(pub Option<Team>);
 
 /// Observer that fires when the server sends a GameResult event.
 fn on_game_result(
@@ -213,7 +224,10 @@ fn on_game_result(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let result = &*trigger;
-    info!("Game result received: Team {} wins!", result.winning_team.0);
+    match result.winning_team {
+        Some(team) => info!("Game result received: Team {} wins!", team.0),
+        None => info!("Game result received: Draw!"),
+    }
     commands.insert_resource(GameOutcome(result.winning_team));
     next_state.set(GameState::GameOver);
 }
@@ -237,15 +251,19 @@ fn show_game_over_ui(
         return;
     };
 
-    let is_victory = local_team
-        .0
-        .map(|t| t == outcome.0)
-        .unwrap_or(false);
-
-    let (text, color) = if is_victory {
-        ("Victory!", Color::srgb(0.2, 1.0, 0.2))
-    } else {
-        ("Defeat", Color::srgb(1.0, 0.2, 0.2))
+    let (text, color) = match outcome.0 {
+        None => ("Draw!", Color::srgb(0.8, 0.8, 0.2)),
+        Some(winning_team) => {
+            let is_victory = local_team
+                .0
+                .map(|t| t == winning_team)
+                .unwrap_or(false);
+            if is_victory {
+                ("Victory!", Color::srgb(0.2, 1.0, 0.2))
+            } else {
+                ("Defeat", Color::srgb(1.0, 0.2, 0.2))
+            }
+        }
     };
 
     commands

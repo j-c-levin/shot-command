@@ -47,10 +47,17 @@ pub struct ServerBindAddress(pub String);
 #[derive(Resource, Debug, Clone)]
 pub struct ServerMapPath(pub Option<String>);
 
-/// Maps connected client entities to their assigned team.
+/// Identifies a player's team and slot within that team.
+#[derive(Clone, Debug)]
+pub struct PlayerSlot {
+    pub team: Team,
+    pub slot: u8,
+}
+
+/// Maps connected client entities to their assigned team and slot.
 #[derive(Resource, Debug, Default)]
 pub struct ClientTeams {
-    pub map: HashMap<Entity, Team>,
+    pub map: HashMap<Entity, PlayerSlot>,
 }
 
 /// A [`FilterBit`] for entity-level LOS visibility.
@@ -158,6 +165,7 @@ fn setup_renet_server(
     mut commands: Commands,
     channels: Res<RepliconChannels>,
     bind_address: Res<ServerBindAddress>,
+    config: Res<crate::game::GameConfig>,
 ) {
     let addr: SocketAddr = bind_address
         .0
@@ -179,7 +187,7 @@ fn setup_renet_server(
 
     let server_config = NetcodeServerConfig {
         current_time,
-        max_clients: 2,
+        max_clients: config.max_players(),
         protocol_id: PROTOCOL_ID,
         public_addresses: vec![addr],
         authentication: ServerAuthentication::Unsecure,
@@ -203,64 +211,108 @@ fn on_client_connected(
     mut commands: Commands,
     mut client_teams: ResMut<ClientTeams>,
     lobby: Res<crate::fleet::lobby::LobbyTracker>,
+    config: Res<crate::game::GameConfig>,
 ) {
     let client_entity = trigger.entity;
-    let team_id = client_teams.map.len() as u8;
+    let max = config.max_players();
+    let current = client_teams.map.len();
+
+    if current >= max {
+        warn!(
+            "Server full ({}/{}), rejecting client {:?}",
+            current, max, client_entity
+        );
+        return;
+    }
+
+    // TODO: Round-robin team assignment by connection order. When players switch
+    // teams in the Firebase lobby, this won't reflect their choice. The infra passes
+    // GAME_PLAYER_TEAMS env var with the mapping, but using it requires a client-identify
+    // protocol (clients send their lobby name on connect). For now, connection order
+    // matches lobby order in the common case (no team switching).
+    let team_id = (current / config.players_per_team as usize) as u8;
+    let slot = (current % config.players_per_team as usize) as u8;
     let team = Team(team_id);
 
-    client_teams.map.insert(client_entity, team);
+    client_teams
+        .map
+        .insert(client_entity, PlayerSlot { team, slot });
 
     info!(
-        "Client {:?} connected, assigned Team({}). Total clients: {}",
+        "Client {:?} assigned Team({}) slot {}. {}/{} players",
         client_entity,
         team_id,
-        client_teams.map.len()
+        slot,
+        current + 1,
+        max
     );
 
     // Send TeamAssignment immediately so client can transition to FleetComposition
     commands.server_trigger(ToClients {
         mode: SendMode::Direct(ClientId::Client(client_entity)),
-        message: TeamAssignment { team },
+        message: TeamAssignment {
+            team,
+            slot,
+            team_count: config.team_count,
+            players_per_team: config.players_per_team,
+        },
     });
 
-    // If the other team has already submitted, inform this client
-    let other_has_submitted = client_teams.map.iter().any(|(&other_entity, _)| {
-        other_entity != client_entity && lobby.submissions.contains_key(&other_entity)
-    });
-    if other_has_submitted {
+    // Inform new client about current submission count
+    let submission_count = lobby.submissions.len() as u32;
+    if submission_count > 0 {
         commands.server_trigger(ToClients {
             mode: SendMode::Direct(ClientId::Client(client_entity)),
             message: crate::net::commands::LobbyStatus {
-                state: crate::net::commands::LobbyState::OpponentSubmitted,
+                state: crate::net::commands::LobbyState::SubmissionCount(submission_count),
             },
         });
     }
 
     // Server stays in WaitingForPlayers — lobby systems handle the
-    // FleetComposition phase and transition to Playing when both fleets are submitted.
+    // FleetComposition phase and transition to Playing when all fleets are submitted.
 }
 
 /// Half-extent of the map bounds (used for MapBounds and asteroid placement).
 const MAP_HALF_EXTENT: f32 = 500.0;
 
-/// Spawn corners for each team's fleet.
-const TEAM0_CORNER: Vec2 = Vec2::new(-300.0, -300.0);
-const TEAM1_CORNER: Vec2 = Vec2::new(300.0, 300.0);
-
 /// Minimum distance from spawn corners for asteroid placement.
 const ASTEROID_EXCLUSION_RADIUS: f32 = 100.0;
 
-/// Check if a candidate position is within an exclusion zone around spawn corners.
-pub fn is_in_asteroid_exclusion_zone(candidate: Vec2) -> bool {
-    candidate.distance(TEAM0_CORNER) < ASTEROID_EXCLUSION_RADIUS
-        || candidate.distance(TEAM1_CORNER) < ASTEROID_EXCLUSION_RADIUS
+/// Distance from map center to spawn points.
+const SPAWN_DISTANCE: f32 = 300.0;
+
+/// Check if a candidate position is within an exclusion zone around any spawn position.
+pub fn is_in_asteroid_exclusion_zone(candidate: Vec2, spawn_positions: &[Vec2]) -> bool {
+    spawn_positions
+        .iter()
+        .any(|corner| candidate.distance(*corner) < ASTEROID_EXCLUSION_RADIUS)
 }
 
 /// Build a default `MapData` with random asteroids and a center control point.
 ///
-/// This encapsulates the original random asteroid generation logic so that it
-/// produces a `MapData` value identical in spirit to the old inline code.
-pub fn build_default_map_data() -> MapData {
+/// Generates `team_count` spawn points evenly around the map perimeter, then
+/// places random asteroids that avoid spawn exclusion zones.
+pub fn build_default_map_data(team_count: u8) -> MapData {
+    // Generate spawn points evenly around the map perimeter
+    let spawns: Vec<SpawnPoint> = (0..team_count)
+        .map(|i| {
+            let angle = std::f32::consts::TAU * (i as f32 / team_count as f32)
+                - std::f32::consts::FRAC_PI_4;
+            let x = angle.cos() * SPAWN_DISTANCE;
+            let y = angle.sin() * SPAWN_DISTANCE;
+            SpawnPoint {
+                team: i,
+                position: (x, y),
+            }
+        })
+        .collect();
+
+    let spawn_positions: Vec<Vec2> = spawns
+        .iter()
+        .map(|s| Vec2::new(s.position.0, s.position.1))
+        .collect();
+
     let mut rng = rand::rng();
     let asteroid_count = 12;
     let min_distance_from_edge = 50.0;
@@ -281,7 +333,7 @@ pub fn build_default_map_data() -> MapData {
                 ),
             );
             if candidate.length() > min_distance_from_center
-                && !is_in_asteroid_exclusion_zone(candidate)
+                && !is_in_asteroid_exclusion_zone(candidate, &spawn_positions)
             {
                 break candidate;
             }
@@ -297,10 +349,7 @@ pub fn build_default_map_data() -> MapData {
             half_x: MAP_HALF_EXTENT,
             half_y: MAP_HALF_EXTENT,
         },
-        spawns: vec![
-            SpawnPoint { team: 0, position: (TEAM0_CORNER.x, TEAM0_CORNER.y) },
-            SpawnPoint { team: 1, position: (TEAM1_CORNER.x, TEAM1_CORNER.y) },
-        ],
+        spawns,
         asteroids,
         control_points: vec![ControlPointDef {
             position: (0.0, 0.0),
@@ -346,6 +395,7 @@ fn server_setup_game(
     lobby: Res<crate::fleet::lobby::LobbyTracker>,
     client_teams: Res<ClientTeams>,
     map_path: Res<ServerMapPath>,
+    config: Res<crate::game::GameConfig>,
 ) {
     // Load or generate map data
     let map_data = if let Some(ref path_str) = map_path.0 {
@@ -357,73 +407,87 @@ fn server_setup_game(
             }
             Err(e) => {
                 error!("Server: failed to load map {:?}: {}. Using default.", path, e);
-                build_default_map_data()
+                build_default_map_data(config.team_count)
             }
         }
     } else {
-        build_default_map_data()
+        build_default_map_data(config.team_count)
     };
 
     // Spawn map entities (bounds, asteroids, control points)
     spawn_map_entities(&mut commands, &map_data);
 
-    // Extract spawn corners from map data, with fallback to hardcoded corners
-    let team0_corner = map_data.spawns.iter()
-        .find(|s| s.team == 0)
-        .map(|s| Vec2::new(s.position.0, s.position.1))
-        .unwrap_or(TEAM0_CORNER);
-    let team1_corner = map_data.spawns.iter()
-        .find(|s| s.team == 1)
-        .map(|s| Vec2::new(s.position.0, s.position.1))
-        .unwrap_or(TEAM1_CORNER);
-
-    let team_corners: [(Team, Vec2); 2] = [
-        (Team(0), team0_corner),
-        (Team(1), team1_corner),
-    ];
+    // Build team corners from map data
+    let team_corners: Vec<(Team, Vec2)> = (0..config.team_count)
+        .map(|i| {
+            let corner = map_data
+                .spawns
+                .iter()
+                .find(|s| s.team == i)
+                .map(|s| Vec2::new(s.position.0, s.position.1))
+                .unwrap_or_else(|| {
+                    // Fallback: generate position evenly around perimeter
+                    let angle = std::f32::consts::TAU * (i as f32 / config.team_count as f32)
+                        - std::f32::consts::FRAC_PI_4;
+                    Vec2::new(angle.cos() * SPAWN_DISTANCE, angle.sin() * SPAWN_DISTANCE)
+                });
+            (Team(i), corner)
+        })
+        .collect();
 
     // Build a mapping: client_entity -> (team, Vec<ShipSpec>)
     let mut client_specs: Vec<(Entity, Team, Vec<crate::fleet::ShipSpec>)> = Vec::new();
     for (&client_entity, specs) in &lobby.submissions {
-        if let Some(&team) = client_teams.map.get(&client_entity) {
-            client_specs.push((client_entity, team, specs.clone()));
+        if let Some(slot) = client_teams.map.get(&client_entity) {
+            client_specs.push((client_entity, slot.team, specs.clone()));
         }
     }
 
-    // Perpendicular direction for line formation offset:
-    // spawn diagonal is (-1,-1) to (1,1), perpendicular is (-1,1) normalized
-    let perp = Vec2::new(-1.0, 1.0).normalize();
     let ship_spacing = 30.0;
 
     // Track which teams have submissions so we can spawn defaults for missing teams
     let teams_with_specs: Vec<Team> = client_specs.iter().map(|(_, t, _)| *t).collect();
 
     // Track ship number per team across all players
-    let mut team_ship_counts: [usize; 2] = [0; 2];
+    let mut team_ship_counts: HashMap<u8, usize> = HashMap::new();
 
     for (client_entity, team, specs) in &client_specs {
-        let corner = team_corners.iter()
+        let corner = team_corners
+            .iter()
             .find(|(t, _)| t == team)
             .map(|(_, c)| *c)
-            .unwrap_or(TEAM0_CORNER);
+            .unwrap_or(Vec2::ZERO);
 
-        let start_idx = team_ship_counts[team.index()];
-        let total_team_ships: usize = client_specs.iter()
+        // Perpendicular direction (rotate corner-to-center direction 90 degrees)
+        let to_center = -corner.normalize_or_zero();
+        let perp = Vec2::new(-to_center.y, to_center.x);
+
+        let start_idx = *team_ship_counts.get(&team.0).unwrap_or(&0);
+        let total_team_ships: usize = client_specs
+            .iter()
             .filter(|(_, t, _)| t == team)
             .map(|(_, _, s)| s.len())
             .sum();
 
         for (i, spec) in specs.iter().enumerate() {
             let ship_idx = start_idx + i;
-            let offset = perp * (ship_idx as f32 - (total_team_ships as f32 - 1.0) / 2.0) * ship_spacing;
+            let offset =
+                perp * (ship_idx as f32 - (total_team_ships as f32 - 1.0) / 2.0) * ship_spacing;
             let pos = corner + offset;
-            let entity = spawn_server_ship(&mut commands, pos, *team, spec, (ship_idx + 1) as u8, *client_entity);
+            let entity = spawn_server_ship(
+                &mut commands,
+                pos,
+                *team,
+                spec,
+                (ship_idx + 1) as u8,
+                *client_entity,
+            );
             info!(
                 "Spawned {:?} for Team {} (player {:?}) at ({:.0}, {:.0}): {:?}",
                 spec.class, team.0, client_entity, pos.x, pos.y, entity
             );
         }
-        team_ship_counts[team.index()] += specs.len();
+        *team_ship_counts.entry(team.0).or_default() += specs.len();
     }
 
     // Fallback: default fleet for any team without submissions
@@ -431,13 +495,17 @@ fn server_setup_game(
         if teams_with_specs.contains(team) {
             continue;
         }
+        // Perpendicular direction for this team's corner
+        let to_center = -corner.normalize_or_zero();
+        let perp = Vec2::new(-to_center.y, to_center.x);
+
         let default_classes = [ShipClass::Battleship, ShipClass::Destroyer, ShipClass::Scout];
         for (i, class) in default_classes.iter().enumerate() {
             let offset =
                 perp * (i as f32 - (default_classes.len() as f32 - 1.0) / 2.0) * ship_spacing;
             let pos = *corner + offset;
-            let entity = spawn_server_ship_default(&mut commands, pos, *team, *class, Entity::PLACEHOLDER);
-            // Note: default ships get ShipNumber(0) via spawn_server_ship_default
+            let entity =
+                spawn_server_ship_default(&mut commands, pos, *team, *class, Entity::PLACEHOLDER);
             info!(
                 "Spawned default {:?} for Team {} at ({:.0}, {:.0}): {:?}",
                 class, team.0, pos.x, pos.y, entity
@@ -446,7 +514,8 @@ fn server_setup_game(
     }
 
     info!(
-        "Server: spawned fleets for 2 teams and {} asteroids, {} control points",
+        "Server: spawned fleets for {} teams and {} asteroids, {} control points",
+        config.team_count,
         map_data.asteroids.len(),
         map_data.control_points.len(),
     );
@@ -1250,10 +1319,10 @@ fn on_client_disconnected(
     mut client_teams: ResMut<ClientTeams>,
 ) {
     let client_entity = trigger.entity;
-    if let Some(team) = client_teams.map.remove(&client_entity) {
+    if let Some(slot) = client_teams.map.remove(&client_entity) {
         info!(
-            "Client {:?} (Team {}) disconnected. Ships will drift and brake.",
-            client_entity, team.0
+            "Client {:?} (Team {} slot {}) disconnected. Ships will drift and brake.",
+            client_entity, slot.team.0, slot.slot
         );
     } else {
         info!("Unknown client {:?} disconnected", client_entity);
@@ -1381,9 +1450,10 @@ fn server_update_visibility(
         .collect();
 
     for (client_entity, mut client_visibility) in &mut clients {
-        let Some(client_team) = client_teams.map.get(&client_entity) else {
+        let Some(client_slot) = client_teams.map.get(&client_entity) else {
             continue;
         };
+        let client_team = &client_slot.team;
 
         // Ship entity visibility (LOS-based for enemies, always for own team)
         for &(ship_entity, ship_pos, _vision_range, ship_team) in &all_ships {
@@ -1463,37 +1533,50 @@ fn server_update_visibility(
 mod tests {
     use super::*;
 
-    #[test]
-    fn asteroid_exclusion_near_team0_corner() {
-        // Right at team 0 corner (-300, -300)
-        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-300.0, -300.0)));
-        // Just inside the 100m radius
-        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-300.0, -210.0)));
+    fn two_team_spawns() -> Vec<Vec2> {
+        let data = build_default_map_data(2);
+        data.spawns
+            .iter()
+            .map(|s| Vec2::new(s.position.0, s.position.1))
+            .collect()
     }
 
     #[test]
-    fn asteroid_exclusion_near_team1_corner() {
-        // Right at team 1 corner (300, 300)
-        assert!(is_in_asteroid_exclusion_zone(Vec2::new(300.0, 300.0)));
+    fn asteroid_exclusion_near_spawn0() {
+        let spawns = two_team_spawns();
+        // Right at spawn 0
+        assert!(is_in_asteroid_exclusion_zone(spawns[0], &spawns));
         // Just inside the 100m radius
-        assert!(is_in_asteroid_exclusion_zone(Vec2::new(300.0, 210.0)));
+        let nearby = spawns[0] + Vec2::new(0.0, 90.0);
+        assert!(is_in_asteroid_exclusion_zone(nearby, &spawns));
     }
 
     #[test]
-    fn asteroid_exclusion_outside_both_zones() {
-        // Center of the map — far from both corners
-        assert!(!is_in_asteroid_exclusion_zone(Vec2::ZERO));
-        // Midway between corners
-        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(0.0, 200.0)));
+    fn asteroid_exclusion_near_spawn1() {
+        let spawns = two_team_spawns();
+        // Right at spawn 1
+        assert!(is_in_asteroid_exclusion_zone(spawns[1], &spawns));
+        // Just inside the 100m radius
+        let nearby = spawns[1] + Vec2::new(0.0, -90.0);
+        assert!(is_in_asteroid_exclusion_zone(nearby, &spawns));
+    }
+
+    #[test]
+    fn asteroid_exclusion_outside_all_zones() {
+        let spawns = two_team_spawns();
+        // Center of the map — far from all spawns
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::ZERO, &spawns));
+        // Midway between spawns
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(0.0, 200.0), &spawns));
     }
 
     #[test]
     fn asteroid_exclusion_boundary() {
-        // Exactly at 100m from team 0 corner should be excluded (< 100)
-        // Distance from (-300,-300) to (-200,-300) = 100, which is NOT < 100
-        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(-200.0, -300.0)));
+        let spawns = vec![Vec2::new(-300.0, -300.0), Vec2::new(300.0, 300.0)];
+        // Exactly at 100m from spawn should NOT be excluded (< 100, not <=)
+        assert!(!is_in_asteroid_exclusion_zone(Vec2::new(-200.0, -300.0), &spawns));
         // Just barely inside
-        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-201.0, -300.0)));
+        assert!(is_in_asteroid_exclusion_zone(Vec2::new(-201.0, -300.0), &spawns));
     }
 
     // rotate_offset tests
@@ -1533,30 +1616,50 @@ mod tests {
 
     #[test]
     fn default_map_has_correct_bounds() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         assert_eq!(map.bounds.half_x, MAP_HALF_EXTENT);
         assert_eq!(map.bounds.half_y, MAP_HALF_EXTENT);
     }
 
     #[test]
     fn default_map_has_two_spawn_points() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         assert_eq!(map.spawns.len(), 2);
         assert_eq!(map.spawns[0].team, 0);
         assert_eq!(map.spawns[1].team, 1);
-        assert_eq!(map.spawns[0].position, (TEAM0_CORNER.x, TEAM0_CORNER.y));
-        assert_eq!(map.spawns[1].position, (TEAM1_CORNER.x, TEAM1_CORNER.y));
+        // Both spawns at SPAWN_DISTANCE from center
+        for spawn in &map.spawns {
+            let dist = Vec2::new(spawn.position.0, spawn.position.1).length();
+            assert!(
+                (dist - SPAWN_DISTANCE).abs() < 1.0,
+                "spawn distance {} not ~{}", dist, SPAWN_DISTANCE
+            );
+        }
+    }
+
+    #[test]
+    fn default_map_four_team_spawns() {
+        let map = build_default_map_data(4);
+        assert_eq!(map.spawns.len(), 4);
+        for (i, spawn) in map.spawns.iter().enumerate() {
+            assert_eq!(spawn.team, i as u8);
+            let dist = Vec2::new(spawn.position.0, spawn.position.1).length();
+            assert!(
+                (dist - SPAWN_DISTANCE).abs() < 1.0,
+                "spawn {} distance {} not ~{}", i, dist, SPAWN_DISTANCE
+            );
+        }
     }
 
     #[test]
     fn default_map_has_12_asteroids() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         assert_eq!(map.asteroids.len(), 12);
     }
 
     #[test]
     fn default_map_asteroids_have_valid_radii() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         for a in &map.asteroids {
             assert!(a.radius >= 15.0 && a.radius <= 40.0,
                 "asteroid radius {} out of range", a.radius);
@@ -1565,7 +1668,7 @@ mod tests {
 
     #[test]
     fn default_map_asteroids_inside_bounds() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         for a in &map.asteroids {
             assert!(a.position.0.abs() < MAP_HALF_EXTENT,
                 "asteroid x {} out of bounds", a.position.0);
@@ -1576,17 +1679,21 @@ mod tests {
 
     #[test]
     fn default_map_asteroids_avoid_exclusion_zones() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
+        let spawn_positions: Vec<Vec2> = map.spawns
+            .iter()
+            .map(|s| Vec2::new(s.position.0, s.position.1))
+            .collect();
         for a in &map.asteroids {
             let pos = Vec2::new(a.position.0, a.position.1);
-            assert!(!is_in_asteroid_exclusion_zone(pos),
+            assert!(!is_in_asteroid_exclusion_zone(pos, &spawn_positions),
                 "asteroid at ({}, {}) in exclusion zone", a.position.0, a.position.1);
         }
     }
 
     #[test]
     fn default_map_has_one_control_point() {
-        let map = build_default_map_data();
+        let map = build_default_map_data(2);
         assert_eq!(map.control_points.len(), 1);
         assert_eq!(map.control_points[0].position, (0.0, 0.0));
         assert_eq!(map.control_points[0].radius, DEFAULT_ZONE_RADIUS);

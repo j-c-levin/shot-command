@@ -5,7 +5,9 @@ use bevy_replicon::prelude::*;
 use rand::prelude::IndexedRandom;
 use rand::Rng;
 
-use crate::game::{Destroyed, DestroyTimer, EngineOffline, GameState, Health, Team};
+use std::collections::HashMap;
+
+use crate::game::{Destroyed, DestroyTimer, EngineOffline, GameConfig, GameState, Health, Team};
 use crate::net::commands::GameResult;
 use crate::ship::{EngineHealth, RepairCooldown, Ship, ShipSecrets, ShipSecretsOwner};
 use crate::weapon::Mounts;
@@ -286,45 +288,64 @@ fn despawn_destroyed(
     }
 }
 
-/// Check if all ships of a team are destroyed. If so, the other team wins.
+/// Determine the winner, if any. Returns `Some(winning_team)` if exactly one
+/// team has alive ships among all `team_count` teams.
+pub fn determine_winner(alive_counts: &HashMap<u8, u32>, team_count: u8) -> Option<Team> {
+    let alive_teams: Vec<u8> = (0..team_count)
+        .filter(|t| alive_counts.get(t).copied().unwrap_or(0) > 0)
+        .collect();
+    if alive_teams.len() == 1 {
+        Some(Team(alive_teams[0]))
+    } else {
+        None
+    }
+}
+
+/// Check if all ships of one or more teams are destroyed. Last team standing wins.
 fn check_win_condition(
     mut commands: Commands,
     mut next_state: ResMut<NextState<GameState>>,
     ships: Query<(&Team, Option<&Destroyed>), With<Ship>>,
+    config: Res<GameConfig>,
 ) {
-    let mut alive_counts = [0u32; 2];
-    let mut teams_seen = [false; 2];
+    use std::collections::HashSet;
+
+    let mut alive: HashMap<u8, u32> = HashMap::new();
+    let mut seen: HashSet<u8> = HashSet::new();
 
     for (team, destroyed) in &ships {
-        let idx = team.index();
-        if idx < 2 {
-            teams_seen[idx] = true;
-            if destroyed.is_none() {
-                alive_counts[idx] += 1;
-            }
+        seen.insert(team.0);
+        if destroyed.is_none() {
+            *alive.entry(team.0).or_default() += 1;
         }
     }
 
-    // Only check once both teams have been spawned
-    if !teams_seen[0] || !teams_seen[1] {
+    // Wait until all teams have been spawned
+    if seen.len() < config.team_count as usize {
         return;
     }
 
-    let winner = if alive_counts[0] == 0 {
-        Some(Team(0).opponent())
-    } else if alive_counts[1] == 0 {
-        Some(Team(1).opponent())
-    } else {
-        None
-    };
-
-    if let Some(winning_team) = winner {
+    if let Some(winning_team) = determine_winner(&alive, config.team_count) {
         info!("Team {} wins! All enemy ships destroyed.", winning_team.0);
         commands.server_trigger(ToClients {
             mode: SendMode::Broadcast,
-            message: GameResult { winning_team },
+            message: GameResult { winning_team: Some(winning_team) },
         });
         next_state.set(GameState::GameOver);
+    } else {
+        // Check for simultaneous elimination (all teams dead)
+        let any_alive = (0..config.team_count)
+            .any(|t| alive.get(&t).copied().unwrap_or(0) > 0);
+        if !any_alive {
+            info!("Draw! All teams eliminated simultaneously.");
+            commands.server_trigger(ToClients {
+                mode: SendMode::Broadcast,
+                message: GameResult {
+                    winning_team: None,
+                },
+            });
+            next_state.set(GameState::GameOver);
+        }
     }
 }
 
@@ -767,5 +788,69 @@ mod tests {
         let engine_lost = 300 - engine.hp;
         let comp_lost = 150 - mounts.0[0].hp;
         assert_eq!(hull_lost + engine_lost + comp_lost, raw, "total damage must equal raw");
+    }
+
+    // ── determine_winner tests (N-team win condition) ────────────────
+
+    use std::collections::HashMap;
+
+    #[test]
+    fn two_teams_team1_eliminated() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 3);
+        alive.insert(1, 0);
+        assert_eq!(determine_winner(&alive, 2), Some(Team(0)));
+    }
+
+    #[test]
+    fn two_teams_team0_eliminated() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 0);
+        alive.insert(1, 2);
+        assert_eq!(determine_winner(&alive, 2), Some(Team(1)));
+    }
+
+    #[test]
+    fn two_teams_both_alive() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 1);
+        alive.insert(1, 1);
+        assert_eq!(determine_winner(&alive, 2), None);
+    }
+
+    #[test]
+    fn three_teams_one_eliminated_no_winner() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 2);
+        alive.insert(1, 0);
+        alive.insert(2, 1);
+        assert_eq!(determine_winner(&alive, 3), None);
+    }
+
+    #[test]
+    fn three_teams_two_eliminated() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 0);
+        alive.insert(1, 3);
+        alive.insert(2, 0);
+        assert_eq!(determine_winner(&alive, 3), Some(Team(1)));
+    }
+
+    #[test]
+    fn four_teams_last_standing() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 0);
+        alive.insert(1, 0);
+        alive.insert(2, 0);
+        alive.insert(3, 1);
+        assert_eq!(determine_winner(&alive, 4), Some(Team(3)));
+    }
+
+    #[test]
+    fn all_teams_eliminated_no_winner() {
+        let mut alive = HashMap::new();
+        alive.insert(0, 0);
+        alive.insert(1, 0);
+        assert_eq!(determine_winner(&alive, 2), None);
     }
 }

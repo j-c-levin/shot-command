@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use crate::camera::{
     camera_look_ground, compute_zoom, CameraLookAt, CameraSettings, GameCamera,
 };
-use crate::game::GameState;
+use crate::game::{GameState, Team};
 use crate::map::data::{
     load_map_data, save_map_data, AsteroidDef, ControlPointDef, MapData, SpawnPoint,
 };
@@ -22,8 +22,6 @@ const TEXT_GRAY: Color = Color::srgb(0.6, 0.6, 0.6);
 
 const ASTEROID_COLOR: Color = Color::srgb(0.3, 0.25, 0.2);
 const CONTROL_POINT_COLOR: Color = Color::srgba(1.0, 1.0, 0.2, 0.3);
-const SPAWN_TEAM0_COLOR: Color = Color::srgb(0.2, 0.4, 1.0);
-const SPAWN_TEAM1_COLOR: Color = Color::srgb(1.0, 0.3, 0.3);
 
 // ── Resources ────────────────────────────────────────────────────────────
 
@@ -34,14 +32,8 @@ pub struct EditorMapPath(pub String);
 #[derive(Resource, Debug, Default)]
 pub struct EditorFileName(pub Option<String>);
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct EditorMapData(pub MapData);
-
-impl Default for EditorMapData {
-    fn default() -> Self {
-        Self(MapData::default())
-    }
-}
 
 #[derive(Resource, Debug, Default)]
 pub struct EditorState {
@@ -333,11 +325,7 @@ fn spawn_editor_spawn_point(
     pos: Vec2,
     team: u8,
 ) -> Entity {
-    let color = if team == 0 {
-        SPAWN_TEAM0_COLOR
-    } else {
-        SPAWN_TEAM1_COLOR
-    };
+    let color = Team(team).color();
     let entity = commands
         .spawn((
             EditorSpawn(team),
@@ -433,25 +421,20 @@ fn handle_editor_ground_click(
             });
         }
         EditorTool::PlaceSpawn => {
-            let has_team0 = editor_data.0.spawns.iter().any(|s| s.team == 0);
-            let has_team1 = editor_data.0.spawns.iter().any(|s| s.team == 1);
-
-            let team = if !has_team0 {
-                0
-            } else if !has_team1 {
-                1
-            } else {
-                // Both exist — replace team 0 (oldest pattern)
-                // Despawn the old team 0 entity
-                for (entity, spawn) in &spawn_entities {
-                    if spawn.0 == 0 {
-                        commands.entity(entity).despawn();
-                        break;
+            // Find the first team (0-3) that doesn't have a spawn yet
+            let team = (0u8..4)
+                .find(|&t| !editor_data.0.spawns.iter().any(|s| s.team == t))
+                .unwrap_or_else(|| {
+                    // All 4 exist — replace team 0 (oldest pattern)
+                    for (entity, spawn) in &spawn_entities {
+                        if spawn.0 == 0 {
+                            commands.entity(entity).despawn();
+                            break;
+                        }
                     }
-                }
-                editor_data.0.spawns.retain(|s| s.team != 0);
-                0
-            };
+                    editor_data.0.spawns.retain(|s| s.team != 0);
+                    0
+                });
 
             spawn_editor_spawn_point(
                 &mut commands,
@@ -1612,11 +1595,7 @@ fn draw_editor_entity_gizmos(
 
     // Spawn point team indicators
     for (tf, spawn) in &spawns {
-        let color = if spawn.0 == 0 {
-            SPAWN_TEAM0_COLOR
-        } else {
-            SPAWN_TEAM1_COLOR
-        };
+        let color = Team(spawn.0).color();
         gizmos.circle(
             Isometry3d::new(
                 Vec3::new(tf.translation.x, 0.5, tf.translation.z),
