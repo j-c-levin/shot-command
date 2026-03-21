@@ -13,8 +13,8 @@ use crate::map::{Asteroid, AsteroidSize};
 use crate::net::commands::{
     CancelMissilesCommand, CancelSubmission, ClearTargetCommand, FacingLockCommand,
     FacingUnlockCommand, FireMissileCommand, FleetSubmission, GameResult, GameStarted,
-    JoinSquadCommand, LobbyStatus, MoveCommand, RadarToggleCommand, TargetByContactCommand,
-    TargetCommand, TeamAssignment,
+    JoinSquadCommand, LaunchCommand, LobbyStatus, MoveCommand, RadarToggleCommand,
+    TargetByContactCommand, TargetCommand, TeamAssignment,
 };
 use crate::radar::{
     ContactId, ContactKind, ContactLevel, ContactSourceShip, ContactTeam, RadarActiveSecret,
@@ -114,7 +114,8 @@ impl Plugin for SharedReplicationPlugin {
             .add_mapped_client_event::<JoinSquadCommand>(Channel::Ordered)
             .add_mapped_client_event::<RadarToggleCommand>(Channel::Ordered)
             .add_mapped_client_event::<FleetSubmission>(Channel::Ordered)
-            .add_mapped_client_event::<CancelSubmission>(Channel::Ordered);
+            .add_mapped_client_event::<CancelSubmission>(Channel::Ordered)
+            .add_mapped_client_event::<LaunchCommand>(Channel::Ordered);
 
         // ── Server→client triggers ─────────────────────────────────────
         app.add_server_event::<TeamAssignment>(Channel::Ordered);

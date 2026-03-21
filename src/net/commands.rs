@@ -150,6 +150,14 @@ pub struct LobbyStatus {
     pub state: LobbyState,
 }
 
+/// Client → server: creator requests game start.
+#[derive(Event, Debug, Clone, Serialize, Deserialize)]
+pub struct LaunchCommand;
+
+impl MapEntities for LaunchCommand {
+    fn map_entities<M: bevy::ecs::entity::EntityMapper>(&mut self, _mapper: &mut M) {}
+}
+
 /// Server → client: game is starting (countdown complete).
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct GameStarted;
