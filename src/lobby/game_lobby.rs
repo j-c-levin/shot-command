@@ -317,7 +317,6 @@ pub fn poll_game_detail(
                 }
 
                 // Update status message
-                let player_count = detail.players.len();
                 let tc = detail.team_count.unwrap_or(2) as usize;
                 let all_teams_have_ready = (0..tc).all(|t| {
                     detail
@@ -325,8 +324,11 @@ pub fn poll_game_detail(
                         .iter()
                         .any(|p| p.team == t as u8 && p.ready)
                 });
+                let all_teams_have_player = (0..tc).all(|t| {
+                    detail.players.iter().any(|p| p.team == t as u8)
+                });
                 state.status_message = match detail.status.as_str() {
-                    "waiting" if player_count < 2 => {
+                    "waiting" if !all_teams_have_player => {
                         "Waiting for more players...".to_string()
                     }
                     "waiting" if !all_teams_have_ready => {
@@ -568,15 +570,10 @@ pub fn rebuild_player_list(
         color.0 = TEXT_YELLOW;
     }
 
-    // Update launch button color — require every team to have at least one ready player
-    let total_players = state
-        .detail
-        .as_ref()
-        .map(|d| d.players.len())
-        .unwrap_or(0);
+    // Update launch button color — require every team to have at least one ready player.
+    // `teams_ready` is false if any team lacks a ready player.
     let can_launch = state.is_creator
         && teams_ready
-        && total_players >= 2
         && state
             .detail
             .as_ref()
@@ -615,7 +612,6 @@ pub fn handle_launch_button(
                     .map(|d| {
                         let tc = d.team_count.unwrap_or(2) as usize;
                         d.status == "waiting"
-                            && d.players.len() >= 2
                             && (0..tc).all(|t| {
                                 d.players
                                     .iter()

@@ -225,6 +225,11 @@ fn on_client_connected(
         return;
     }
 
+    // TODO: Round-robin team assignment by connection order. When players switch
+    // teams in the Firebase lobby, this won't reflect their choice. The infra passes
+    // GAME_PLAYER_TEAMS env var with the mapping, but using it requires a client-identify
+    // protocol (clients send their lobby name on connect). For now, connection order
+    // matches lobby order in the common case (no team switching).
     let team_id = (current / config.players_per_team as usize) as u8;
     let slot = (current % config.players_per_team as usize) as u8;
     let team = Team(team_id);

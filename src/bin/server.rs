@@ -59,11 +59,13 @@ fn resolve_game_config(cli_team_count: u8, cli_players_per_team: u8) -> GameConf
     let team_count = env::var("GAME_TEAM_COUNT")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(cli_team_count);
+        .unwrap_or(cli_team_count)
+        .clamp(1, 4);
     let players_per_team = env::var("GAME_PLAYERS_PER_TEAM")
         .ok()
         .and_then(|v| v.parse().ok())
-        .unwrap_or(cli_players_per_team);
+        .unwrap_or(cli_players_per_team)
+        .clamp(1, 3);
     GameConfig {
         team_count,
         players_per_team,

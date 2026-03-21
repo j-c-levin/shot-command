@@ -329,7 +329,7 @@ fn check_win_condition(
         info!("Team {} wins! All enemy ships destroyed.", winning_team.0);
         commands.server_trigger(ToClients {
             mode: SendMode::Broadcast,
-            message: GameResult { winning_team },
+            message: GameResult { winning_team: Some(winning_team) },
         });
         next_state.set(GameState::GameOver);
     } else {
@@ -341,7 +341,7 @@ fn check_win_condition(
             commands.server_trigger(ToClients {
                 mode: SendMode::Broadcast,
                 message: GameResult {
-                    winning_team: Team(0),
+                    winning_team: None,
                 },
             });
             next_state.set(GameState::GameOver);

@@ -172,6 +172,7 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
       { key: "LOBBY_API_URL", value: EDGEGAP_CONFIG.lobbyApiUrl, is_hidden: false },
       { key: "GAME_TEAM_COUNT", value: String(data.team_count || 2), is_hidden: false },
       { key: "GAME_PLAYERS_PER_TEAM", value: String(data.players_per_team || 1), is_hidden: false },
+      { key: "GAME_PLAYER_TEAMS", value: data.players.map((p: any) => `${p.name}:${p.team}`).join(","), is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
     webhook_on_ready: { url: EDGEGAP_CONFIG.webhookUrl },

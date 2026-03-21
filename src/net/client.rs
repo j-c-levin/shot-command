@@ -213,8 +213,9 @@ fn client_setup_scene(
 }
 
 /// Stores the game outcome once the server announces it.
+/// `None` means a draw (all teams eliminated simultaneously).
 #[derive(Resource, Debug)]
-pub struct GameOutcome(pub Team);
+pub struct GameOutcome(pub Option<Team>);
 
 /// Observer that fires when the server sends a GameResult event.
 fn on_game_result(
@@ -223,7 +224,10 @@ fn on_game_result(
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let result = &*trigger;
-    info!("Game result received: Team {} wins!", result.winning_team.0);
+    match result.winning_team {
+        Some(team) => info!("Game result received: Team {} wins!", team.0),
+        None => info!("Game result received: Draw!"),
+    }
     commands.insert_resource(GameOutcome(result.winning_team));
     next_state.set(GameState::GameOver);
 }
@@ -247,15 +251,19 @@ fn show_game_over_ui(
         return;
     };
 
-    let is_victory = local_team
-        .0
-        .map(|t| t == outcome.0)
-        .unwrap_or(false);
-
-    let (text, color) = if is_victory {
-        ("Victory!", Color::srgb(0.2, 1.0, 0.2))
-    } else {
-        ("Defeat", Color::srgb(1.0, 0.2, 0.2))
+    let (text, color) = match outcome.0 {
+        None => ("Draw!", Color::srgb(0.8, 0.8, 0.2)),
+        Some(winning_team) => {
+            let is_victory = local_team
+                .0
+                .map(|t| t == winning_team)
+                .unwrap_or(false);
+            if is_victory {
+                ("Victory!", Color::srgb(0.2, 1.0, 0.2))
+            } else {
+                ("Defeat", Color::srgb(1.0, 0.2, 0.2))
+            }
+        }
     };
 
     commands

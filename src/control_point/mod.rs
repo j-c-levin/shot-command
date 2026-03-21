@@ -4,7 +4,7 @@ use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::game::{Destroyed, GameState, Team};
+use crate::game::{Destroyed, GameConfig, GameState, Team};
 use crate::net::commands::GameResult;
 use crate::net::LocalTeam;
 use crate::ship::Ship;
@@ -303,7 +303,7 @@ fn check_score_victory(
             );
             commands.server_trigger(ToClients {
                 mode: SendMode::Broadcast,
-                message: GameResult { winning_team },
+                message: GameResult { winning_team: Some(winning_team) },
             });
             next_state.set(GameState::GameOver);
             return;
@@ -403,6 +403,7 @@ fn spawn_score_ui(mut commands: Commands) {
 
 fn update_score_display(
     local_team: Res<LocalTeam>,
+    config: Option<Res<GameConfig>>,
     points: Query<(&TeamScores, &ControlPointState), With<ControlPoint>>,
     mut query: Query<(&mut Text, &mut TextColor), With<ScoreDisplayText>>,
 ) {
@@ -448,12 +449,13 @@ fn update_score_display(
         };
     }
 
-    // Build score string from all teams found in scores
-    let mut all_teams: Vec<u8> = totals.keys().copied().collect();
-    all_teams.sort();
-    let score_parts: Vec<String> = all_teams
-        .iter()
-        .map(|t| format!("{}", totals[t] as u32))
+    // Build score string showing all teams (use GameConfig if available)
+    let team_count = match config {
+        Some(ref cfg) => cfg.team_count,
+        None => totals.keys().copied().max().map(|m| m + 1).unwrap_or(2),
+    };
+    let score_parts: Vec<String> = (0..team_count)
+        .map(|t| format!("{}", totals.get(&t).copied().unwrap_or(0.0) as u32))
         .collect();
     let scores_str = score_parts.join(" | ");
 

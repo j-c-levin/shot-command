@@ -108,10 +108,10 @@ pub struct TeamAssignment {
     pub players_per_team: u8,
 }
 
-/// Server → client: announces the game result (which team won).
+/// Server → client: announces the game result (which team won, or `None` for draw).
 #[derive(Event, Debug, Clone, Serialize, Deserialize)]
 pub struct GameResult {
-    pub winning_team: Team,
+    pub winning_team: Option<Team>,
 }
 
 /// Client → server: submit a fleet composition for validation.

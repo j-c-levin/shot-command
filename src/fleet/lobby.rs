@@ -48,6 +48,7 @@ fn handle_fleet_submission(
     trigger: On<FromClient<FleetSubmission>>,
     mut commands: Commands,
     mut lobby: ResMut<LobbyTracker>,
+    client_teams: Res<ClientTeams>,
     config: Res<GameConfig>,
 ) {
     let from = trigger.event();
@@ -98,6 +99,28 @@ fn handle_fleet_submission(
             state: LobbyState::SubmissionCount(count as u32),
         },
     });
+
+    // Auto-launch when all slots are filled (for direct-connect mode where
+    // there is no Firebase lobby and no UI to send LaunchCommand).
+    if lobby.submissions.len() >= config.max_players() && lobby.countdown.is_none() {
+        let mut teams_with_submissions: HashSet<u8> = HashSet::new();
+        for &sub_entity in lobby.submissions.keys() {
+            if let Some(slot) = client_teams.map.get(&sub_entity) {
+                teams_with_submissions.insert(slot.team.0);
+            }
+        }
+        if (0..config.team_count).all(|t| teams_with_submissions.contains(&t)) {
+            lobby.countdown = Some(3.0);
+            lobby.last_broadcast_secs = -1;
+            info!("All slots filled — auto-starting 3s countdown");
+            commands.server_trigger(ToClients {
+                mode: SendMode::Broadcast,
+                message: LobbyStatus {
+                    state: LobbyState::Countdown(3.0),
+                },
+            });
+        }
+    }
 }
 
 /// Observer: handle `CancelSubmission` from clients.
