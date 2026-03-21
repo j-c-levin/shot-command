@@ -14,14 +14,8 @@ use crate::weapon::missile::{
 
 /// Toggle for debug visualizations (seeker cones, PD ranges, etc).
 /// Press F3 to toggle at runtime.
-#[derive(Resource)]
+#[derive(Resource, Default)]
 pub struct DebugVisuals(pub bool);
-
-impl Default for DebugVisuals {
-    fn default() -> Self {
-        Self(false)
-    }
-}
 
 /// Marker for the seeker cone visual child.
 #[derive(Component)]

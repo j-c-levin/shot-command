@@ -174,7 +174,7 @@ pub fn handle_launch_command(
 
     // Check: every team 0..config.team_count has at least 1 submission
     let mut teams_with_submissions: HashSet<u8> = HashSet::new();
-    for (&sub_entity, _specs) in &lobby.submissions {
+    for &sub_entity in lobby.submissions.keys() {
         if let Some(slot) = client_teams.map.get(&sub_entity) {
             teams_with_submissions.insert(slot.team.0);
         }

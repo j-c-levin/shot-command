@@ -34,23 +34,12 @@ pub struct ControlPointDef {
     pub radius: f32,
 }
 
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
 pub struct MapData {
     pub bounds: BoundsDef,
     pub spawns: Vec<SpawnPoint>,
     pub asteroids: Vec<AsteroidDef>,
     pub control_points: Vec<ControlPointDef>,
-}
-
-impl Default for MapData {
-    fn default() -> Self {
-        Self {
-            bounds: BoundsDef::default(),
-            spawns: Vec::new(),
-            asteroids: Vec::new(),
-            control_points: Vec::new(),
-        }
-    }
 }
 
 pub fn save_map_data(map: &MapData, path: &Path) -> Result<(), String> {

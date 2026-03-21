@@ -32,14 +32,8 @@ pub struct EditorMapPath(pub String);
 #[derive(Resource, Debug, Default)]
 pub struct EditorFileName(pub Option<String>);
 
-#[derive(Resource, Debug, Clone)]
+#[derive(Resource, Debug, Clone, Default)]
 pub struct EditorMapData(pub MapData);
-
-impl Default for EditorMapData {
-    fn default() -> Self {
-        Self(MapData::default())
-    }
-}
 
 #[derive(Resource, Debug, Default)]
 pub struct EditorState {

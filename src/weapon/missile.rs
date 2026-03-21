@@ -20,7 +20,7 @@ pub struct ExplosionTimer(pub f32);
 // ── Constants ──────────────────────────────────────────────────────────
 
 /// Half-angle of the seeker cone (~30 degrees).
-pub const SEEKER_HALF_ANGLE: f32 = 0.5236;
+pub const SEEKER_HALF_ANGLE: f32 = std::f32::consts::FRAC_PI_6;
 
 /// Maximum range at which the seeker can acquire targets (meters).
 /// Prevents missiles from locking onto distant targets immediately after launch.
@@ -324,7 +324,7 @@ fn update_missile_flight(
         // Maintain constant speed
         let current_speed = vel.0.length();
         if current_speed > 0.001 {
-            vel.0 = vel.0 * (speed / current_speed);
+            vel.0 *= speed / current_speed;
         }
     }
 }

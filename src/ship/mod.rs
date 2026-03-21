@@ -237,20 +237,11 @@ pub struct Velocity {
     pub angular: f32,
 }
 
-#[derive(Component, Clone, Debug, Serialize, Deserialize)]
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct WaypointQueue {
     pub waypoints: VecDeque<Vec2>,
     /// True after final waypoint is popped — ship should auto-brake
     pub braking: bool,
-}
-
-impl Default for WaypointQueue {
-    fn default() -> Self {
-        Self {
-            waypoints: VecDeque::new(),
-            braking: false,
-        }
-    }
 }
 
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]

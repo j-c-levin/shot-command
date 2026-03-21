@@ -28,7 +28,7 @@ pub enum GameState {
     MainMenu,
     /// Client: in a game lobby — see players, build fleet, wait for launch
     GameLobby,
-    /// Server: waiting for both clients to connect
+    /// Server: waiting for all clients to connect
     WaitingForPlayers,
     /// Client: connecting to server, waiting for team assignment
     Connecting,
@@ -44,7 +44,7 @@ pub enum GameState {
 pub struct Team(pub u8);
 
 impl Team {
-    /// Array index for this team (for `[f32; 2]` score arrays, etc.).
+    /// Array index for this team (for score `HashMap`s, etc.).
     pub fn index(&self) -> usize {
         self.0 as usize
     }

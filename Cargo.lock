@@ -4015,7 +4015,7 @@ dependencies = [
 
 [[package]]
 name = "nebulous_shot_command"
-version = "0.1.0"
+version = "0.1.15"
 dependencies = [
  "bevy",
  "bevy_replicon",

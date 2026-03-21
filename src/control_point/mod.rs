@@ -23,18 +23,13 @@ pub struct ControlPoint;
 #[derive(Component, Clone, Debug, Serialize, Deserialize)]
 pub struct ControlPointRadius(pub f32);
 
-#[derive(Component, Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[derive(Component, Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 pub enum ControlPointState {
+    #[default]
     Neutral,
     Capturing { team: u8, progress: f32 },
     Captured { team: u8 },
     Decapturing { team: u8, progress: f32 },
-}
-
-impl Default for ControlPointState {
-    fn default() -> Self {
-        Self::Neutral
-    }
 }
 
 /// Scores per team. Lives as a component on the ControlPoint entity so it
@@ -64,7 +59,7 @@ pub fn find_plurality(team_counts: &HashMap<u8, u32>) -> (Option<u8>, u32) {
         .map(|(&team, &count)| (team, count))
         .filter(|(_, count)| *count > 0)
         .collect();
-    counts.sort_by(|a, b| b.1.cmp(&a.1));
+    counts.sort_by_key(|b| std::cmp::Reverse(b.1));
 
     match counts.as_slice() {
         [] => (None, 0),

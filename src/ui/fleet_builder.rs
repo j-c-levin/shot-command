@@ -59,18 +59,13 @@ pub struct FleetBuilderState {
 }
 
 /// Controls how the fleet builder submit button behaves.
-#[derive(Resource, Debug, Clone, PartialEq, Eq)]
+#[derive(Resource, Debug, Clone, Default, PartialEq, Eq)]
 pub enum FleetBuilderMode {
     /// Connected to server, submit triggers network event.
+    #[default]
     Online,
     /// In lobby, submit just validates and stores locally.
     Lobby,
-}
-
-impl Default for FleetBuilderMode {
-    fn default() -> Self {
-        Self::Online
-    }
 }
 
 #[derive(Debug, Clone)]

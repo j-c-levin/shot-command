@@ -295,7 +295,6 @@ pub fn on_ground_clicked(
             commands.entity(entity).remove::<Selected>();
         }
         *mode = InputMode::Normal;
-        return;
     }
 
     // Right-click move commands are now handled by handle_move_gesture system
