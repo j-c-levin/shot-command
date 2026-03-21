@@ -5,7 +5,7 @@ use bevy::prelude::*;
 use super::api;
 use super::{CurrentGameId, GameDetail, LobbyConfig, PlayerName};
 use crate::fleet::AutoFleet;
-use crate::game::{GameState, Team};
+use crate::game::{GameConfig, GameState, Team};
 use crate::net::client::ClientConnectAddress;
 use crate::ui::fleet_builder::{
     spawn_fleet_builder_content, FleetBuilderMode, FleetBuilderState, FleetUiRoot,
@@ -296,6 +296,14 @@ pub fn poll_game_detail(
                     if let Some(ref addr) = detail.server_address {
                         info!("Server ready at {}, transitioning to Connecting", addr);
                         commands.insert_resource(ClientConnectAddress(addr.clone()));
+
+                        // Pre-insert GameConfig from lobby detail so UI has it during connection
+                        let team_count = detail.team_count.unwrap_or(2);
+                        let players_per_team = detail.players_per_team.unwrap_or(1);
+                        commands.insert_resource(GameConfig {
+                            team_count,
+                            players_per_team,
+                        });
 
                         // Store current fleet as AutoFleet for auto-submit
                         if !fleet_state.ships.is_empty() {

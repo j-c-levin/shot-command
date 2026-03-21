@@ -245,7 +245,12 @@ fn on_client_connected(
     // Send TeamAssignment immediately so client can transition to FleetComposition
     commands.server_trigger(ToClients {
         mode: SendMode::Direct(ClientId::Client(client_entity)),
-        message: TeamAssignment { team, slot },
+        message: TeamAssignment {
+            team,
+            slot,
+            team_count: config.team_count,
+            players_per_team: config.players_per_team,
+        },
     });
 
     // Inform new client about current submission count

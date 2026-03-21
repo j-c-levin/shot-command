@@ -9,7 +9,7 @@ use bevy_replicon_renet::{
     renet::ConnectionConfig,
 };
 
-use crate::game::{GameState, Team};
+use crate::game::{GameConfig, GameState, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{GroundPlane, MapBounds};
 use crate::net::commands::{GameResult, GameStarted, LobbyStatus, TeamAssignment};
@@ -135,14 +135,24 @@ fn setup_renet_client(
 /// Observer that fires when the server sends a TeamAssignment event.
 fn on_team_assignment(
     trigger: On<TeamAssignment>,
+    mut commands: Commands,
     mut local_team: ResMut<LocalTeam>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let assignment = &*trigger;
     let team = assignment.team;
 
-    info!("Received team assignment: Team({})", team.0);
+    info!(
+        "Received team assignment: Team({}) slot {} ({}v{})",
+        team.0, assignment.slot, assignment.team_count, assignment.players_per_team
+    );
     local_team.0 = Some(team);
+
+    // Insert GameConfig so client systems can query team/player structure
+    commands.insert_resource(GameConfig {
+        team_count: assignment.team_count,
+        players_per_team: assignment.players_per_team,
+    });
 
     next_state.set(GameState::FleetComposition);
     info!("Transitioning to FleetComposition state");
