@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use bevy::prelude::*;
 use bevy_replicon::prelude::*;
 use serde::{Deserialize, Serialize};
@@ -39,7 +41,7 @@ impl Default for ControlPointState {
 /// replicates automatically via bevy_replicon.
 #[derive(Component, Clone, Debug, Default, Serialize, Deserialize)]
 pub struct TeamScores {
-    pub scores: [f32; 2],
+    pub scores: HashMap<u8, f32>,
 }
 
 // ── Pure functions ───────────────────────────────────────────────────────
@@ -53,28 +55,45 @@ pub fn capture_speed(net_advantage: u32) -> f32 {
     (net_advantage as f32).sqrt() / BASE_CAPTURE_TIME
 }
 
+/// Find the team with plurality (strictly more ships than any other team).
+/// Returns (plurality_team, net_advantage) where net_advantage is top - second.
+/// Returns (None, 0) if tied or empty.
+pub fn find_plurality(team_counts: &HashMap<u8, u32>) -> (Option<u8>, u32) {
+    let mut counts: Vec<(u8, u32)> = team_counts
+        .iter()
+        .map(|(&team, &count)| (team, count))
+        .filter(|(_, count)| *count > 0)
+        .collect();
+    counts.sort_by(|a, b| b.1.cmp(&a.1));
+
+    match counts.as_slice() {
+        [] => (None, 0),
+        [(team, count)] => (Some(*team), *count),
+        [(team1, count1), (_, count2), ..] => {
+            if count1 > count2 {
+                (Some(*team1), count1 - count2)
+            } else {
+                (None, 0)
+            }
+        }
+    }
+}
+
 /// Compute the next control point state given team ship counts and delta time.
 /// Returns (new_state, scoring_team) where scoring_team is Some(team_id) if a
 /// team should score this frame.
 pub fn compute_next_state(
     current: &ControlPointState,
-    team0_count: u32,
-    team1_count: u32,
+    team_counts: &HashMap<u8, u32>,
     dt: f32,
 ) -> (ControlPointState, Option<u8>) {
-    let (majority_team, net) = if team0_count > team1_count {
-        (Some(0u8), team0_count - team1_count)
-    } else if team1_count > team0_count {
-        (Some(1u8), team1_count - team0_count)
-    } else {
-        (None, 0)
-    };
-
+    let total_ships: u32 = team_counts.values().sum();
+    let (plurality_team, net) = find_plurality(team_counts);
     let speed = capture_speed(net);
 
     match current {
         ControlPointState::Neutral => {
-            if let Some(team) = majority_team {
+            if let Some(team) = plurality_team {
                 let progress = (speed * dt).min(1.0);
                 if progress >= 1.0 {
                     (ControlPointState::Captured { team }, None)
@@ -87,13 +106,19 @@ pub fn compute_next_state(
         }
 
         ControlPointState::Capturing { team, progress } => {
-            match majority_team {
+            match plurality_team {
                 Some(t) if t == *team => {
                     let new_progress = progress + speed * dt;
                     if new_progress >= 1.0 {
                         (ControlPointState::Captured { team: *team }, None)
                     } else {
-                        (ControlPointState::Capturing { team: *team, progress: new_progress }, None)
+                        (
+                            ControlPointState::Capturing {
+                                team: *team,
+                                progress: new_progress,
+                            },
+                            None,
+                        )
                     }
                 }
                 Some(_enemy) => {
@@ -101,45 +126,71 @@ pub fn compute_next_state(
                     if new_progress <= 0.0 {
                         (ControlPointState::Neutral, None)
                     } else {
-                        (ControlPointState::Capturing { team: *team, progress: new_progress }, None)
+                        (
+                            ControlPointState::Capturing {
+                                team: *team,
+                                progress: new_progress,
+                            },
+                            None,
+                        )
                     }
                 }
                 None => {
-                    if team0_count == 0 && team1_count == 0 {
+                    if total_ships == 0 {
                         let new_progress = progress - DECAY_RATE * dt;
                         if new_progress <= 0.0 {
                             (ControlPointState::Neutral, None)
                         } else {
-                            (ControlPointState::Capturing { team: *team, progress: new_progress }, None)
+                            (
+                                ControlPointState::Capturing {
+                                    team: *team,
+                                    progress: new_progress,
+                                },
+                                None,
+                            )
                         }
                     } else {
                         // Tied with ships present — freeze
-                        (ControlPointState::Capturing { team: *team, progress: *progress }, None)
+                        (
+                            ControlPointState::Capturing {
+                                team: *team,
+                                progress: *progress,
+                            },
+                            None,
+                        )
                     }
                 }
             }
         }
 
-        ControlPointState::Captured { team } => {
-            match majority_team {
-                Some(t) if t != *team => {
-                    let new_progress = 1.0 - speed * dt;
-                    (ControlPointState::Decapturing { team: *team, progress: new_progress.max(0.0) }, Some(*team))
-                }
-                _ => {
-                    (ControlPointState::Captured { team: *team }, Some(*team))
-                }
+        ControlPointState::Captured { team } => match plurality_team {
+            Some(t) if t != *team => {
+                let new_progress = 1.0 - speed * dt;
+                (
+                    ControlPointState::Decapturing {
+                        team: *team,
+                        progress: new_progress.max(0.0),
+                    },
+                    Some(*team),
+                )
             }
-        }
+            _ => (ControlPointState::Captured { team: *team }, Some(*team)),
+        },
 
         ControlPointState::Decapturing { team, progress } => {
-            match majority_team {
+            match plurality_team {
                 Some(t) if t != *team => {
                     let new_progress = progress - speed * dt;
                     if new_progress <= 0.0 {
                         (ControlPointState::Neutral, None)
                     } else {
-                        (ControlPointState::Decapturing { team: *team, progress: new_progress }, None)
+                        (
+                            ControlPointState::Decapturing {
+                                team: *team,
+                                progress: new_progress,
+                            },
+                            None,
+                        )
                     }
                 }
                 Some(t) if t == *team => {
@@ -147,20 +198,38 @@ pub fn compute_next_state(
                     if new_progress >= 1.0 {
                         (ControlPointState::Captured { team: *team }, None)
                     } else {
-                        (ControlPointState::Decapturing { team: *team, progress: new_progress }, None)
+                        (
+                            ControlPointState::Decapturing {
+                                team: *team,
+                                progress: new_progress,
+                            },
+                            None,
+                        )
                     }
                 }
                 _ => {
-                    if team0_count == 0 && team1_count == 0 {
+                    if total_ships == 0 {
                         let new_progress = progress - DECAY_RATE * dt;
                         if new_progress <= 0.0 {
                             (ControlPointState::Neutral, None)
                         } else {
-                            (ControlPointState::Decapturing { team: *team, progress: new_progress }, None)
+                            (
+                                ControlPointState::Decapturing {
+                                    team: *team,
+                                    progress: new_progress,
+                                },
+                                None,
+                            )
                         }
                     } else {
                         // Tied with ships present — freeze
-                        (ControlPointState::Decapturing { team: *team, progress: *progress }, None)
+                        (
+                            ControlPointState::Decapturing {
+                                team: *team,
+                                progress: *progress,
+                            },
+                            None,
+                        )
                     }
                 }
             }
@@ -187,7 +256,12 @@ fn update_control_points(
     time: Res<Time>,
     ships: Query<(&Transform, &Team), (With<Ship>, Without<Destroyed>)>,
     mut points: Query<
-        (&Transform, &ControlPointRadius, &mut ControlPointState, &mut TeamScores),
+        (
+            &Transform,
+            &ControlPointRadius,
+            &mut ControlPointState,
+            &mut TeamScores,
+        ),
         With<ControlPoint>,
     >,
 ) {
@@ -197,23 +271,17 @@ fn update_control_points(
         let center = Vec2::new(point_tf.translation.x, point_tf.translation.z);
         let r_sq = radius.0 * radius.0;
 
-        let mut team0_count = 0u32;
-        let mut team1_count = 0u32;
-
+        let mut team_counts: HashMap<u8, u32> = HashMap::new();
         for (ship_tf, team) in &ships {
             let ship_pos = Vec2::new(ship_tf.translation.x, ship_tf.translation.z);
             if ship_pos.distance_squared(center) <= r_sq {
-                match team.index() {
-                    0 => team0_count += 1,
-                    1 => team1_count += 1,
-                    _ => {}
-                }
+                *team_counts.entry(team.0).or_default() += 1;
             }
         }
 
-        let (new_state, scoring_team) = compute_next_state(&state, team0_count, team1_count, dt);
+        let (new_state, scoring_team) = compute_next_state(&state, &team_counts, dt);
         if let Some(team_id) = scoring_team {
-            scores.scores[team_id as usize] += SCORE_TICK_RATE * dt;
+            *scores.scores.entry(team_id).or_default() += SCORE_TICK_RATE * dt;
         }
         *state = new_state;
     }
@@ -224,16 +292,20 @@ fn check_score_victory(
     mut next_state: ResMut<NextState<GameState>>,
     points: Query<&TeamScores, With<ControlPoint>>,
 ) {
-    let mut totals = [0.0f32; 2];
+    let mut totals: HashMap<u8, f32> = HashMap::new();
     for scores in &points {
-        totals[0] += scores.scores[0];
-        totals[1] += scores.scores[1];
+        for (&team_id, &score) in &scores.scores {
+            *totals.entry(team_id).or_default() += score;
+        }
     }
 
-    for (team_idx, &score) in totals.iter().enumerate() {
+    for (&team_idx, &score) in &totals {
         if score >= SCORE_VICTORY_THRESHOLD {
-            let winning_team = Team(team_idx as u8);
-            info!("Team {} wins by score! ({:.0} points)", winning_team.0, score);
+            let winning_team = Team(team_idx);
+            info!(
+                "Team {} wins by score! ({:.0} points)",
+                winning_team.0, score
+            );
             commands.server_trigger(ToClients {
                 mode: SendMode::Broadcast,
                 message: GameResult { winning_team },
@@ -244,9 +316,7 @@ fn check_score_victory(
     }
 }
 
-// ── Team colors (matching materializer.rs) ───────────────────────────────
-const COLOR_FRIENDLY: Color = Color::srgb(0.2, 0.6, 1.0); // Blue
-const COLOR_ENEMY: Color = Color::srgb(1.0, 0.2, 0.2); // Red
+// ── Team colors ──────────────────────────────────────────────────────────
 const COLOR_NEUTRAL: Color = Color::srgb(0.5, 0.5, 0.5); // Gray
 
 // ── Client plugin ────────────────────────────────────────────────────────
@@ -264,12 +334,8 @@ impl Plugin for ControlPointClientPlugin {
     }
 }
 
-fn team_color(team: u8, local_team: &LocalTeam) -> Color {
-    if Team(team).is_friendly(local_team) {
-        COLOR_FRIENDLY
-    } else {
-        COLOR_ENEMY
-    }
+fn team_color(team: u8, _local_team: &LocalTeam) -> Color {
+    Team(team).color()
 }
 
 fn draw_control_point_gizmos(
@@ -349,44 +415,66 @@ fn update_score_display(
         return;
     };
 
-    let mut totals = [0.0f32; 2];
+    let mut totals: HashMap<u8, f32> = HashMap::new();
     let mut capture_info = String::new();
-    for (scores, state) in &points {
-        totals[0] += scores.scores[0];
-        totals[1] += scores.scores[1];
 
-        let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
+    let local_id = local_team.0.map(|t| t.0).unwrap_or(0);
+
+    for (scores, state) in &points {
+        for (&team_id, &score) in &scores.scores {
+            *totals.entry(team_id).or_default() += score;
+        }
+
         capture_info = match state {
             ControlPointState::Neutral => "NEUTRAL".to_string(),
             ControlPointState::Capturing { team, progress } => {
                 let pct = (progress * 100.0) as u32;
-                if *team as usize == local_id { format!("CAPTURING {pct}%") }
-                else { format!("ENEMY CAP {pct}%") }
+                if *team == local_id {
+                    format!("CAPTURING {pct}%")
+                } else {
+                    format!("ENEMY CAP {pct}%")
+                }
             }
             ControlPointState::Decapturing { team, progress } => {
                 let pct = (progress * 100.0) as u32;
-                if *team as usize == local_id { format!("LOSING {pct}%") }
-                else { format!("CONTESTING {pct}%") }
+                if *team == local_id {
+                    format!("LOSING {pct}%")
+                } else {
+                    format!("CONTESTING {pct}%")
+                }
             }
             ControlPointState::Captured { team } => {
-                if *team as usize == local_id { "HELD".to_string() }
-                else { "ENEMY HELD".to_string() }
+                if *team == local_id {
+                    "HELD".to_string()
+                } else {
+                    "ENEMY HELD".to_string()
+                }
             }
         };
     }
 
-    let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
-    let enemy_id = if local_id == 0 { 1 } else { 0 };
+    // Build score string from all teams found in scores
+    let mut all_teams: Vec<u8> = totals.keys().copied().collect();
+    all_teams.sort();
+    let score_parts: Vec<String> = all_teams
+        .iter()
+        .map(|t| format!("{}", totals[t] as u32))
+        .collect();
+    let scores_str = score_parts.join(" | ");
 
-    *text = Text::new(format!(
-        "{}  -  {}  -  {}",
-        totals[local_id] as u32, capture_info, totals[enemy_id] as u32
-    ));
+    *text = Text::new(format!("{scores_str} \u{2014} {capture_info}"));
 
-    // Color based on who's winning
-    text_color.0 = if totals[local_id] > totals[enemy_id] {
+    // Color based on local team leading
+    let my_score = totals.get(&local_id).copied().unwrap_or(0.0);
+    let max_enemy = totals
+        .iter()
+        .filter(|&(&t, _)| t != local_id)
+        .map(|(_, &s)| s)
+        .fold(0.0f32, f32::max);
+
+    text_color.0 = if my_score > max_enemy {
         Color::srgb(0.3, 1.0, 0.3)
-    } else if totals[enemy_id] > totals[local_id] {
+    } else if max_enemy > my_score {
         Color::srgb(1.0, 0.3, 0.3)
     } else {
         Color::WHITE
@@ -439,24 +527,24 @@ mod tests {
     #[test]
     fn team_scores_default_zero() {
         let scores = TeamScores::default();
-        assert_eq!(scores.scores[0], 0.0);
-        assert_eq!(scores.scores[1], 0.0);
+        assert_eq!(scores.scores.get(&0).copied().unwrap_or(0.0), 0.0);
+        assert_eq!(scores.scores.get(&1).copied().unwrap_or(0.0), 0.0);
     }
 
     // ── State machine tests ──────────────────────────────────────────────
 
     #[test]
     fn neutral_to_capturing_with_majority() {
-        let (state, _) = compute_next_state(
-            &ControlPointState::Neutral,
-            2, 0, 1.0,
-        );
+        let counts = HashMap::from([(0, 2u32), (1, 0)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
         match state {
             ControlPointState::Capturing { team, progress } => {
                 assert_eq!(team, 0);
-                // 2 ships vs 0 → net_advantage=2, speed = sqrt(2)/BASE_CAPTURE_TIME
                 let expected = (2.0_f32).sqrt() / BASE_CAPTURE_TIME;
-                assert!((progress - expected).abs() < 0.01, "progress={progress}, expected={expected}");
+                assert!(
+                    (progress - expected).abs() < 0.01,
+                    "progress={progress}, expected={expected}"
+                );
             }
             _ => panic!("Expected Capturing, got {:?}", state),
         }
@@ -464,54 +552,69 @@ mod tests {
 
     #[test]
     fn neutral_stays_neutral_when_tied() {
-        let (state, _) = compute_next_state(
-            &ControlPointState::Neutral,
-            1, 1, 1.0,
-        );
+        let counts = HashMap::from([(0, 1u32), (1, 1)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
         assert_eq!(state, ControlPointState::Neutral);
     }
 
     #[test]
     fn neutral_stays_neutral_when_empty() {
-        let (state, _) = compute_next_state(
-            &ControlPointState::Neutral,
-            0, 0, 1.0,
-        );
+        let counts = HashMap::new();
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
         assert_eq!(state, ControlPointState::Neutral);
     }
 
     #[test]
     fn neutral_to_captured_in_one_step_with_huge_dt() {
-        let (state, _) = compute_next_state(
-            &ControlPointState::Neutral,
-            9, 0, 100.0,
-        );
+        let counts = HashMap::from([(0, 9u32)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 100.0);
         assert_eq!(state, ControlPointState::Captured { team: 0 });
     }
 
     #[test]
     fn capturing_completes_at_full_progress() {
+        let counts = HashMap::from([(0, 1u32)]);
         let (state, _) = compute_next_state(
-            &ControlPointState::Capturing { team: 0, progress: 0.99 },
-            1, 0, 1.0,
+            &ControlPointState::Capturing {
+                team: 0,
+                progress: 0.99,
+            },
+            &counts,
+            1.0,
         );
         assert_eq!(state, ControlPointState::Captured { team: 0 });
     }
 
     #[test]
     fn capturing_freezes_when_tied() {
+        let counts = HashMap::from([(0, 1u32), (1, 1)]);
         let (state, _) = compute_next_state(
-            &ControlPointState::Capturing { team: 0, progress: 0.5 },
-            1, 1, 1.0,
+            &ControlPointState::Capturing {
+                team: 0,
+                progress: 0.5,
+            },
+            &counts,
+            1.0,
         );
-        assert_eq!(state, ControlPointState::Capturing { team: 0, progress: 0.5 });
+        assert_eq!(
+            state,
+            ControlPointState::Capturing {
+                team: 0,
+                progress: 0.5
+            }
+        );
     }
 
     #[test]
     fn capturing_decays_when_empty() {
+        let counts = HashMap::new();
         let (state, _) = compute_next_state(
-            &ControlPointState::Capturing { team: 0, progress: 0.5 },
-            0, 0, 1.0,
+            &ControlPointState::Capturing {
+                team: 0,
+                progress: 0.5,
+            },
+            &counts,
+            1.0,
         );
         match state {
             ControlPointState::Capturing { team, progress } => {
@@ -524,25 +627,31 @@ mod tests {
 
     #[test]
     fn capturing_reverts_to_neutral_when_enemy_drains() {
+        let counts = HashMap::from([(1, 1u32)]);
         let (state, _) = compute_next_state(
-            &ControlPointState::Capturing { team: 0, progress: 0.01 },
-            0, 1, 1.0,
+            &ControlPointState::Capturing {
+                team: 0,
+                progress: 0.01,
+            },
+            &counts,
+            1.0,
         );
         assert_eq!(state, ControlPointState::Neutral);
     }
 
     #[test]
     fn captured_to_decapturing_on_enemy_majority() {
-        let (state, scoring_team) = compute_next_state(
-            &ControlPointState::Captured { team: 0 },
-            0, 1, 1.0,
-        );
+        let counts = HashMap::from([(1, 1u32)]);
+        let (state, scoring_team) =
+            compute_next_state(&ControlPointState::Captured { team: 0 }, &counts, 1.0);
         match state {
             ControlPointState::Decapturing { team, progress } => {
                 assert_eq!(team, 0);
-                // 1 enemy ship → speed = 1/BASE_CAPTURE_TIME, progress = 1.0 - speed
                 let expected = 1.0 - (1.0 / BASE_CAPTURE_TIME);
-                assert!((progress - expected).abs() < 1e-6, "progress={progress}, expected={expected}");
+                assert!(
+                    (progress - expected).abs() < 1e-6,
+                    "progress={progress}, expected={expected}"
+                );
             }
             _ => panic!("Expected Decapturing, got {:?}", state),
         }
@@ -551,29 +660,32 @@ mod tests {
 
     #[test]
     fn captured_stays_captured_no_enemies() {
-        let (state, scoring_team) = compute_next_state(
-            &ControlPointState::Captured { team: 0 },
-            0, 0, 1.0,
-        );
+        let counts = HashMap::new();
+        let (state, scoring_team) =
+            compute_next_state(&ControlPointState::Captured { team: 0 }, &counts, 1.0);
         assert_eq!(state, ControlPointState::Captured { team: 0 });
         assert_eq!(scoring_team, Some(0));
     }
 
     #[test]
     fn captured_stays_captured_with_owner_present() {
-        let (state, scoring_team) = compute_next_state(
-            &ControlPointState::Captured { team: 0 },
-            2, 0, 1.0,
-        );
+        let counts = HashMap::from([(0, 2u32)]);
+        let (state, scoring_team) =
+            compute_next_state(&ControlPointState::Captured { team: 0 }, &counts, 1.0);
         assert_eq!(state, ControlPointState::Captured { team: 0 });
         assert_eq!(scoring_team, Some(0));
     }
 
     #[test]
     fn decapturing_to_neutral() {
+        let counts = HashMap::from([(1, 1u32)]);
         let (state, scoring) = compute_next_state(
-            &ControlPointState::Decapturing { team: 0, progress: 0.01 },
-            0, 1, 1.0,
+            &ControlPointState::Decapturing {
+                team: 0,
+                progress: 0.01,
+            },
+            &counts,
+            1.0,
         );
         assert_eq!(state, ControlPointState::Neutral);
         assert_eq!(scoring, None);
@@ -581,27 +693,48 @@ mod tests {
 
     #[test]
     fn decapturing_defended_back_to_captured() {
+        let counts = HashMap::from([(0, 1u32)]);
         let (state, _) = compute_next_state(
-            &ControlPointState::Decapturing { team: 0, progress: 0.99 },
-            1, 0, 1.0,
+            &ControlPointState::Decapturing {
+                team: 0,
+                progress: 0.99,
+            },
+            &counts,
+            1.0,
         );
         assert_eq!(state, ControlPointState::Captured { team: 0 });
     }
 
     #[test]
     fn decapturing_freezes_when_tied() {
+        let counts = HashMap::from([(0, 1u32), (1, 1)]);
         let (state, _) = compute_next_state(
-            &ControlPointState::Decapturing { team: 0, progress: 0.5 },
-            1, 1, 1.0,
+            &ControlPointState::Decapturing {
+                team: 0,
+                progress: 0.5,
+            },
+            &counts,
+            1.0,
         );
-        assert_eq!(state, ControlPointState::Decapturing { team: 0, progress: 0.5 });
+        assert_eq!(
+            state,
+            ControlPointState::Decapturing {
+                team: 0,
+                progress: 0.5
+            }
+        );
     }
 
     #[test]
     fn decapturing_decays_when_empty() {
+        let counts = HashMap::new();
         let (state, _) = compute_next_state(
-            &ControlPointState::Decapturing { team: 0, progress: 0.5 },
-            0, 0, 1.0,
+            &ControlPointState::Decapturing {
+                team: 0,
+                progress: 0.5,
+            },
+            &counts,
+            1.0,
         );
         match state {
             ControlPointState::Decapturing { team, progress } => {
@@ -614,16 +747,19 @@ mod tests {
 
     #[test]
     fn multi_frame_capture_accumulates() {
+        let counts = HashMap::from([(0, 1u32)]);
         let mut state = ControlPointState::Neutral;
         for _ in 0..4 {
-            let (new_state, _) = compute_next_state(&state, 1, 0, 0.25);
+            let (new_state, _) = compute_next_state(&state, &counts, 0.25);
             state = new_state;
         }
         match state {
             ControlPointState::Capturing { progress, .. } => {
-                // 1 ship, 4 frames × 0.25s = 1.0s total → progress = 1.0/BASE_CAPTURE_TIME
                 let expected = 1.0 / BASE_CAPTURE_TIME;
-                assert!((progress - expected).abs() < 1e-5, "progress={progress}, expected={expected}");
+                assert!(
+                    (progress - expected).abs() < 1e-5,
+                    "progress={progress}, expected={expected}"
+                );
             }
             _ => panic!("Expected Capturing, got {:?}", state),
         }
@@ -631,14 +767,75 @@ mod tests {
 
     #[test]
     fn team1_can_capture() {
-        let (state, _) = compute_next_state(
-            &ControlPointState::Neutral,
-            0, 3, 1.0,
-        );
+        let counts = HashMap::from([(1, 3u32)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
         match state {
             ControlPointState::Capturing { team, .. } => assert_eq!(team, 1),
             _ => panic!("Expected Capturing for team 1, got {:?}", state),
         }
+    }
+
+    // ── 3-team plurality tests ───────────────────────────────────────────
+
+    #[test]
+    fn three_teams_plurality_captures() {
+        // Team 0 has 3 ships, team 1 has 1, team 2 has 1 → team 0 plurality with net 2
+        let counts = HashMap::from([(0, 3u32), (1, 1), (2, 1)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
+        match state {
+            ControlPointState::Capturing { team, progress } => {
+                assert_eq!(team, 0);
+                // net = 3 - 1 = 2, speed = sqrt(2) / BASE_CAPTURE_TIME
+                let expected = (2.0_f32).sqrt() / BASE_CAPTURE_TIME;
+                assert!(
+                    (progress - expected).abs() < 0.01,
+                    "progress={progress}, expected={expected}"
+                );
+            }
+            _ => panic!("Expected Capturing, got {:?}", state),
+        }
+    }
+
+    #[test]
+    fn three_teams_top_two_tied_freezes() {
+        // Teams 0 and 1 tied at 2, team 2 has 1 → no plurality → freeze
+        let counts = HashMap::from([(0, 2u32), (1, 2), (2, 1)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
+        assert_eq!(state, ControlPointState::Neutral);
+    }
+
+    #[test]
+    fn three_teams_all_equal_freezes() {
+        // All three teams have 1 ship each → no plurality → freeze
+        let counts = HashMap::from([(0, 1u32), (1, 1), (2, 1)]);
+        let (state, _) = compute_next_state(&ControlPointState::Neutral, &counts, 1.0);
+        assert_eq!(state, ControlPointState::Neutral);
+    }
+
+    // ── find_plurality tests ─────────────────────────────────────────────
+
+    #[test]
+    fn find_plurality_empty() {
+        let counts = HashMap::new();
+        assert_eq!(find_plurality(&counts), (None, 0));
+    }
+
+    #[test]
+    fn find_plurality_single_team() {
+        let counts = HashMap::from([(2, 3u32)]);
+        assert_eq!(find_plurality(&counts), (Some(2), 3));
+    }
+
+    #[test]
+    fn find_plurality_clear_winner() {
+        let counts = HashMap::from([(0, 5u32), (1, 2)]);
+        assert_eq!(find_plurality(&counts), (Some(0), 3));
+    }
+
+    #[test]
+    fn find_plurality_tied() {
+        let counts = HashMap::from([(0, 3u32), (1, 3)]);
+        assert_eq!(find_plurality(&counts), (None, 0));
     }
 
     // ── World-level tests ────────────────────────────────────────────────
@@ -648,13 +845,15 @@ mod tests {
     #[test]
     fn ship_inside_radius_counted() {
         let mut world = World::new();
-        let point = world.spawn((
-            ControlPoint,
-            ControlPointState::Neutral,
-            ControlPointRadius(100.0),
-            TeamScores::default(),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-        )).id();
+        let point = world
+            .spawn((
+                ControlPoint,
+                ControlPointState::Neutral,
+                ControlPointRadius(100.0),
+                TeamScores::default(),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
         world.spawn((
             Ship,
             ShipClass::Scout,
@@ -672,13 +871,15 @@ mod tests {
     #[test]
     fn ship_outside_radius_not_counted() {
         let mut world = World::new();
-        let point = world.spawn((
-            ControlPoint,
-            ControlPointState::Neutral,
-            ControlPointRadius(100.0),
-            TeamScores::default(),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-        )).id();
+        let point = world
+            .spawn((
+                ControlPoint,
+                ControlPointState::Neutral,
+                ControlPointRadius(100.0),
+                TeamScores::default(),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
         world.spawn((
             Ship,
             ShipClass::Scout,
@@ -696,13 +897,15 @@ mod tests {
     #[test]
     fn ship_on_boundary_counted() {
         let mut world = World::new();
-        let point = world.spawn((
-            ControlPoint,
-            ControlPointState::Neutral,
-            ControlPointRadius(100.0),
-            TeamScores::default(),
-            Transform::from_xyz(0.0, 0.0, 0.0),
-        )).id();
+        let point = world
+            .spawn((
+                ControlPoint,
+                ControlPointState::Neutral,
+                ControlPointRadius(100.0),
+                TeamScores::default(),
+                Transform::from_xyz(0.0, 0.0, 0.0),
+            ))
+            .id();
         world.spawn((
             Ship,
             ShipClass::Scout,
@@ -721,23 +924,28 @@ mod tests {
     fn score_accumulation_over_time() {
         let mut scores = TeamScores::default();
         let dt = 1.0 / 60.0;
-        for _ in 0..300 { // 5 seconds at 60Hz
-            scores.scores[0] += SCORE_TICK_RATE * dt;
+        for _ in 0..300 {
+            // 5 seconds at 60Hz
+            *scores.scores.entry(0).or_default() += SCORE_TICK_RATE * dt;
         }
-        assert!((scores.scores[0] - 5.0).abs() < 0.1);
+        assert!((scores.scores[&0] - 5.0).abs() < 0.1);
     }
 
     #[test]
     fn score_victory_threshold_reached() {
-        let scores = TeamScores { scores: [30.0, 10.0] };
-        assert!(scores.scores[0] >= SCORE_VICTORY_THRESHOLD);
-        assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
+        let scores = TeamScores {
+            scores: HashMap::from([(0, 30.0), (1, 10.0)]),
+        };
+        assert!(scores.scores[&0] >= SCORE_VICTORY_THRESHOLD);
+        assert!(scores.scores[&1] < SCORE_VICTORY_THRESHOLD);
     }
 
     #[test]
     fn score_victory_threshold_not_reached() {
-        let scores = TeamScores { scores: [29.9, 29.9] };
-        assert!(scores.scores[0] < SCORE_VICTORY_THRESHOLD);
-        assert!(scores.scores[1] < SCORE_VICTORY_THRESHOLD);
+        let scores = TeamScores {
+            scores: HashMap::from([(0, 29.9), (1, 29.9)]),
+        };
+        assert!(scores.scores[&0] < SCORE_VICTORY_THRESHOLD);
+        assert!(scores.scores[&1] < SCORE_VICTORY_THRESHOLD);
     }
 }
