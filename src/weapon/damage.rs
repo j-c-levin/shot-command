@@ -311,9 +311,9 @@ fn check_win_condition(
     }
 
     let winner = if alive_counts[0] == 0 {
-        Some(Team(0).opponent())
+        Some(Team(1))
     } else if alive_counts[1] == 0 {
-        Some(Team(1).opponent())
+        Some(Team(0))
     } else {
         None
     };

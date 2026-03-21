@@ -44,14 +44,6 @@ pub enum GameState {
 pub struct Team(pub u8);
 
 impl Team {
-    pub const PLAYER: Self = Self(0);
-    pub const ENEMY: Self = Self(1);
-
-    /// The opposing team (assumes 2-team game).
-    pub fn opponent(&self) -> Self {
-        Team(1 - self.0)
-    }
-
     /// Array index for this team (for `[f32; 2]` score arrays, etc.).
     pub fn index(&self) -> usize {
         self.0 as usize
@@ -60,6 +52,37 @@ impl Team {
     /// Whether this team matches the local player's team.
     pub fn is_friendly(&self, local: &crate::net::LocalTeam) -> bool {
         local.0.map(|lt| lt == *self).unwrap_or(false)
+    }
+
+    /// Display color for this team (up to 4 teams).
+    pub fn color(&self) -> Color {
+        match self.0 {
+            0 => Color::srgb(0.2, 0.6, 1.0),  // Blue
+            1 => Color::srgb(1.0, 0.2, 0.2),  // Red
+            2 => Color::srgb(0.2, 1.0, 0.3),  // Green
+            3 => Color::srgb(1.0, 0.8, 0.1),  // Yellow
+            _ => Color::srgb(0.5, 0.5, 0.5),  // Gray fallback
+        }
+    }
+}
+
+/// Configuration for the current game's team/player structure.
+/// Inserted by server at startup; replicated to clients.
+#[derive(Resource, Clone, Debug, Serialize, Deserialize)]
+pub struct GameConfig {
+    pub team_count: u8,
+    pub players_per_team: u8,
+}
+
+impl Default for GameConfig {
+    fn default() -> Self {
+        Self { team_count: 2, players_per_team: 1 }
+    }
+}
+
+impl GameConfig {
+    pub fn max_players(&self) -> usize {
+        self.team_count as usize * self.players_per_team as usize
     }
 }
 
@@ -113,14 +136,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn team_constants_are_distinct() {
-        assert_ne!(Team::PLAYER, Team::ENEMY);
+    fn game_config_default() {
+        let config = GameConfig::default();
+        assert_eq!(config.team_count, 2);
+        assert_eq!(config.players_per_team, 1);
     }
 
     #[test]
-    fn team_equality() {
-        assert_eq!(Team(0), Team::PLAYER);
-        assert_eq!(Team(1), Team::ENEMY);
+    fn game_config_max_players() {
+        let config = GameConfig { team_count: 3, players_per_team: 2 };
+        assert_eq!(config.max_players(), 6);
+    }
+
+    #[test]
+    fn team_color_distinct() {
+        let colors: Vec<Color> = (0..4).map(|i| Team(i).color()).collect();
+        for i in 0..colors.len() {
+            for j in (i + 1)..colors.len() {
+                assert_ne!(colors[i], colors[j], "Team {} and {} should have different colors", i, j);
+            }
+        }
     }
 
     #[test]
@@ -176,12 +211,6 @@ mod tests {
     fn health_saturates_at_zero() {
         let h = Health { hp: 0u16 };
         assert_eq!(h.hp.saturating_sub(1), 0);
-    }
-
-    #[test]
-    fn team_opponent() {
-        assert_eq!(Team(0).opponent(), Team(1));
-        assert_eq!(Team(1).opponent(), Team(0));
     }
 
     #[test]

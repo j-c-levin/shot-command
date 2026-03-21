@@ -376,7 +376,7 @@ fn update_score_display(
     }
 
     let local_id = local_team.0.map(|t| t.index()).unwrap_or(0);
-    let enemy_id = local_team.0.map(|t| t.opponent().index()).unwrap_or(1);
+    let enemy_id = if local_id == 0 { 1 } else { 0 };
 
     *text = Text::new(format!(
         "{}  -  {}  -  {}",
