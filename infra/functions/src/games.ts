@@ -16,12 +16,14 @@ const EDGEGAP_CONFIG = {
 
 export const createGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
-  const { creator, map } = req.body;
+  const { creator, map, team_count = 2, players_per_team = 1 } = req.body;
   if (!creator) { res.status(400).send("creator required"); return; }
 
   const doc = await db.collection("games").add({
     creator,
     status: "waiting",
+    team_count: Number(team_count),
+    players_per_team: Number(players_per_team),
     players: [{ name: creator, team: 0, ready: false }],
     server_address: null,
     edgegap_request_id: null,
@@ -44,6 +46,9 @@ export const listGames = onRequest({ region: REGION }, async (req, res) => {
     player_count: doc.data().players?.length || 0,
     map: doc.data().map,
     status: doc.data().status,
+    team_count: doc.data().team_count || 2,
+    players_per_team: doc.data().players_per_team || 1,
+    max_players: (doc.data().team_count || 2) * (doc.data().players_per_team || 1),
     created_at: doc.data().created_at?.toDate?.()?.toISOString() || null,
   }));
   res.json(games);
@@ -65,6 +70,8 @@ export const getGame = onRequest({ region: REGION }, async (req, res) => {
     players: data.players || [],
     server_address: data.server_address,
     map: data.map,
+    team_count: data.team_count || 2,
+    players_per_team: data.players_per_team || 1,
   });
 });
 
@@ -80,9 +87,16 @@ export const joinGame = onRequest({ region: REGION }, async (req, res) => {
     if (!doc.exists) throw new Error("game not found");
     const data = doc.data()!;
     if (data.status !== "waiting") throw new Error("game not accepting players");
-    if (data.players.length >= 2) throw new Error("game full");
+
+    const maxPerTeam = data.players_per_team || 1;
+    const numTeams = data.team_count || 2;
+    const teamCounts = new Array(numTeams).fill(0);
+    data.players.forEach((p: any) => { if (p.team < numTeams) teamCounts[p.team]++; });
+    const openTeam = teamCounts.findIndex((c: number) => c < maxPerTeam);
+    if (openTeam === -1) throw new Error("game full");
+
     tx.update(gameRef, {
-      players: [...data.players, { name, team: 1, ready: false }],
+      players: [...data.players, { name, team: openTeam, ready: false }],
     });
   });
   res.json({ ok: true });
@@ -121,13 +135,15 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
     res.status(403).send("only creator can launch");
     return;
   }
-  if (data.players.length < 2) {
-    res.status(400).send("need 2 players to launch");
-    return;
+  const numTeams = data.team_count || 2;
+  const readyTeams = new Set<number>();
+  data.players.forEach((p: any) => { if (p.ready) readyTeams.add(p.team); });
+  const missingTeams = [];
+  for (let i = 0; i < numTeams; i++) {
+    if (!readyTeams.has(i)) missingTeams.push(i);
   }
-  const allReady = data.players.every((p: { ready?: boolean }) => p.ready === true);
-  if (!allReady) {
-    res.status(400).send("not all players are ready");
+  if (missingTeams.length > 0) {
+    res.status(400).send(`Teams without ready players: ${missingTeams.join(", ")}`);
     return;
   }
 
@@ -154,6 +170,8 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
     environment_variables: [
       { key: "GAME_ID", value: gameId, is_hidden: false },
       { key: "LOBBY_API_URL", value: EDGEGAP_CONFIG.lobbyApiUrl, is_hidden: false },
+      { key: "GAME_TEAM_COUNT", value: String(data.team_count || 2), is_hidden: false },
+      { key: "GAME_PLAYERS_PER_TEAM", value: String(data.players_per_team || 1), is_hidden: false },
       ...(data.map ? [{ key: "GAME_MAP", value: data.map, is_hidden: false }] : []),
     ],
     webhook_on_ready: { url: EDGEGAP_CONFIG.webhookUrl },
@@ -180,6 +198,39 @@ export const launchGame = onRequest({ region: REGION }, async (req, res) => {
     edgegap_request_id: deployData.request_id,
   });
   res.json({ ok: true, request_id: deployData.request_id });
+});
+
+export const switchTeam = onRequest({ region: REGION }, async (req, res) => {
+  if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
+  const { game_id, name, target_team } = req.body;
+  if (!game_id || !name || target_team === undefined) {
+    res.status(400).send("game_id, name, and target_team required"); return;
+  }
+
+  const gameRef = db.collection("games").doc(game_id);
+  await db.runTransaction(async (tx) => {
+    const doc = await tx.get(gameRef);
+    if (!doc.exists) throw new Error("game not found");
+    const data = doc.data()!;
+    if (data.status !== "waiting") throw new Error("game not accepting changes");
+
+    const maxPerTeam = data.players_per_team || 1;
+    const numTeams = data.team_count || 2;
+
+    if (target_team < 0 || target_team >= numTeams) throw new Error("invalid team");
+
+    // Count players on target team (excluding the switcher)
+    const targetCount = data.players.filter(
+      (p: any) => p.team === target_team && p.name !== name
+    ).length;
+    if (targetCount >= maxPerTeam) throw new Error("target team is full");
+
+    const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
+      p.name === name ? { ...p, team: target_team } : p
+    );
+    tx.update(gameRef, { players });
+  });
+  res.json({ ok: true });
 });
 
 export const deleteGame = onRequest({ region: REGION }, async (req, res) => {

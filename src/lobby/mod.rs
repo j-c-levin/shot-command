@@ -93,6 +93,12 @@ pub struct GameInfo {
     pub player_count: usize,
     pub map: Option<String>,
     pub status: String,
+    #[serde(default)]
+    pub team_count: Option<u8>,
+    #[serde(default)]
+    pub players_per_team: Option<u8>,
+    #[serde(default)]
+    pub max_players: Option<usize>,
 }
 
 /// Full detail of a specific game.
@@ -104,6 +110,10 @@ pub struct GameDetail {
     pub players: Vec<PlayerInfo>,
     pub server_address: Option<String>,
     pub map: Option<String>,
+    #[serde(default)]
+    pub team_count: Option<u8>,
+    #[serde(default)]
+    pub players_per_team: Option<u8>,
 }
 
 /// A player in a game lobby.

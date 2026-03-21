@@ -766,6 +766,8 @@ pub fn handle_map_picker_option(
                 &lobby_config.api_base_url,
                 &player_name.0,
                 state.selected_map.as_deref(),
+                None,
+                None,
             );
             async_state.pending_create = Some(rx);
         }
