@@ -41,11 +41,7 @@ pub fn materialize_ships(
     for (entity, class, team) in &query {
         let is_own_team = team.is_friendly(&local_team);
 
-        let color = if is_own_team {
-            Color::srgb(0.2, 0.6, 1.0)
-        } else {
-            Color::srgb(1.0, 0.2, 0.2)
-        };
+        let color = team.color();
 
         let (ship_mesh, mesh_transform) = class.create_mesh(&mut meshes);
 
