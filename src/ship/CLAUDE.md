@@ -1,35 +1,40 @@
 # ship/
 
-Ship entities, physics-based movement, and visual indicators.
+Ship entities, physics-based movement, and squad formations.
 
 ## Files
 
-- `mod.rs` — Ship marker, ShipClass enum (Battleship/Destroyer/Scout), ShipProfile (acceleration, thruster_factor, turn_rate, turn_acceleration, top_speed, vision_range, collision_radius), Velocity (linear Vec2 + angular f32), WaypointQueue (VecDeque + braking flag), FacingTarget/FacingLocked, Selected/SelectionIndicator markers, WaypointMarker/FacingIndicator components
+- `mod.rs` — Ship marker, ShipClass (Battleship/Destroyer/Scout), ShipProfile (incl. hp, engine_hp, rcs, collision_radius), Velocity, WaypointQueue, FacingTarget/FacingLocked, TargetDesignation, ShipNumber(u8), SquadMember/SquadSpeedLimit, ShipSecrets/ShipSecretsOwner, EngineHealth, RepairCooldown
+
+## Physics model
+
+- Velocity persists (momentum/drift). Steering controller computes desired velocity, then thrusts to correct.
+- Worst-case deceleration (thruster_factor) used for braking. Ships brake to stop when queue is empty.
+- Space drag: ~26% velocity/second bleed.
+- Ship-asteroid collision: pushed to edge + velocity zeroed.
+
+## Physics chain (Update)
+
+1. update_facing_targets → 2. turn_ships → 3. apply_thrust (gated on EngineHealth) → 4. apply_velocity → 5. ship-asteroid collision → 6. check_waypoint_arrival → 7. clamp_to_bounds
+
+## Key patterns
+
+- **Facing**: Unlocked ships auto-face waypoint. Locked ships maintain player-set facing.
+- **Waypoints**: Right-click = clear + single. Shift+right-click = append.
+- **Squads**: SquadMember { leader, offset }. SquadSpeedLimit caps all stats to min across squad. Leader move propagates with rotated offsets. Cycle prevention (10 hops). Orphan cleanup on leader destroyed.
+- **Engine offline**: EngineHealth at 0 → apply_thrust skipped → drift. After offline timer + floor restore, 10% capacity.
 
 ## Pure functions
 
-- `thrust_multiplier(angle, thruster_factor)` — cosine interpolation from 1.0 (facing target) to thruster_factor (facing away)
-- `angle_between_directions(a, b)` — unsigned angle 0..PI between unit vectors
+- `thrust_multiplier(angle, thruster_factor)` — cosine interpolation
 - `braking_distance(speed, deceleration)` — v²/(2a)
 - `shortest_angle_delta(from, to)` — signed shortest angle -PI..PI
-- `ship_xz_position(transform)` — extract XZ as Vec2
-- `ship_facing_direction(transform)` — forward direction as Vec2 in XZ
-- `ship_heading(transform)` — heading angle in radians
+- `rotate_offset(offset, angle)` — formation rotation for facing commands
 
-## Systems (chained, Update)
+## Ship stats
 
-1. `update_facing_targets` — unlocked ships: FacingTarget auto-set toward next waypoint. Locked: skip. No waypoints: remove FacingTarget.
-2. `turn_ships` — angular velocity ramps at turn_acceleration, capped at turn_rate. Decelerates to stop at target angle. No target: decelerate angular to zero.
-3. `apply_thrust` — braking mode: decelerate using facing-dependent thrust. Has waypoints: accelerate toward next, brake at last. No waypoints: drift.
-4. `apply_velocity` — position += linear * dt
-5. `check_waypoint_arrival` — pop waypoint within threshold, set braking on last
-6. `clamp_ships_to_bounds` — kill velocity component at boundary
-
-## Visual indicator systems (Update, parallel)
-
-- `update_waypoint_markers` — despawn/respawn blue spheres at each player waypoint
-- `update_facing_indicators` — despawn/respawn yellow capsule showing locked facing direction
-
-## Spawning
-
-- `spawn_ship(commands, meshes, materials, position, team, color, class)` — cuboid for battleship, cone for destroyer, sphere for scout. Enemies get EnemyVisibility + Health + hidden start.
+| Class | Hull HP | Engine HP | RCS |
+|---|---|---|---|
+| Battleship | 1200 | 300 | highest |
+| Destroyer | 600 | 180 | medium |
+| Scout | 300 | 120 | lowest |
