@@ -13,7 +13,7 @@ use nebulous_shot_command::lobby::{LobbyConfig, LobbyPlugin, PlayerName};
 use nebulous_shot_command::net::client::{ClientConnectAddress, ClientNetPlugin};
 use nebulous_shot_command::net::commands::FleetSubmission;
 use nebulous_shot_command::net::SharedReplicationPlugin;
-use nebulous_shot_command::net::LocalTeam;
+use nebulous_shot_command::net::{LocalTeam, LocalPlayer};
 use nebulous_shot_command::radar::RadarClientPlugin;
 use nebulous_shot_command::ship::{ShipClass, ShipVisualsPlugin};
 use nebulous_shot_command::ui::{FleetStatusPlugin, FleetUiPlugin};
@@ -160,6 +160,7 @@ fn main() {
         let unique_name = format!("{}_{:04x}", cli.name, rand::random::<u16>());
         app.insert_resource(PlayerName(unique_name));
         app.init_resource::<LocalTeam>();
+        app.init_resource::<LocalPlayer>();
 
         // Always register auto_submit_fleet (fires only when AutoFleet resource exists)
         app.add_systems(

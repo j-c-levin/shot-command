@@ -13,7 +13,7 @@ use crate::game::{GameConfig, GameState, Team};
 use crate::input::on_ground_clicked;
 use crate::map::{GroundPlane, MapBounds};
 use crate::net::commands::{GameResult, GameStarted, LobbyStatus, TeamAssignment};
-use crate::net::{LocalTeam, PROTOCOL_ID};
+use crate::net::{LocalPlayer, LocalTeam, PROTOCOL_ID};
 
 /// Resource containing the server address to connect to.
 #[derive(Resource, Debug, Clone)]
@@ -137,16 +137,18 @@ fn on_team_assignment(
     trigger: On<TeamAssignment>,
     mut commands: Commands,
     mut local_team: ResMut<LocalTeam>,
+    mut local_player: ResMut<LocalPlayer>,
     mut next_state: ResMut<NextState<GameState>>,
 ) {
     let assignment = &*trigger;
     let team = assignment.team;
 
     info!(
-        "Received team assignment: Team({}) slot {} ({}v{})",
-        team.0, assignment.slot, assignment.team_count, assignment.players_per_team
+        "Received team assignment: Team({}) slot {} ({}v{}) player={:?}",
+        team.0, assignment.slot, assignment.team_count, assignment.players_per_team, assignment.player
     );
     local_team.0 = Some(team);
+    local_player.0 = Some(assignment.player);
 
     // Insert GameConfig so client systems can query team/player structure
     commands.insert_resource(GameConfig {

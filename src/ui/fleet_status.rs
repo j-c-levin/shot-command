@@ -1,8 +1,8 @@
 use bevy::picking::prelude::Pickable;
 use bevy::prelude::*;
 
-use crate::game::{Destroyed, GameState, Health, Team};
-use crate::net::LocalTeam;
+use crate::game::{Destroyed, GameState, Health, Player, Team};
+use crate::net::{LocalPlayer, LocalTeam};
 use crate::ship::{EngineHealth, Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner};
 use crate::weapon::{Mounts, WeaponCategory, WeaponType};
 
@@ -89,7 +89,8 @@ fn despawn_fleet_sidebar(
 fn rebuild_ship_cards(
     mut commands: Commands,
     local_team: Res<LocalTeam>,
-    ships: Query<(Entity, &Team, &ShipClass, &Health, &Mounts), With<Ship>>,
+    local_player: Res<LocalPlayer>,
+    ships: Query<(Entity, &Team, &Player, &ShipClass, &Health, &Mounts), With<Ship>>,
     secrets: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     mut sidebar_q: Query<(Entity, &mut SidebarShipCount), With<FleetSidebar>>,
     existing_cards: Query<Entity, With<ShipCard>>,
@@ -105,12 +106,15 @@ fn rebuild_ship_cards(
         .map(|(owner, num)| (owner.0, num.0))
         .collect();
 
-    // Collect friendly ships sorted by ShipNumber
+    // Collect only THIS player's ships (not allied ships on the same team)
     let mut friendly_ships: Vec<_> = ships
         .iter()
-        .filter(|(_, team, _, _, _)| **team == my_team)
+        .filter(|(_, team, player, _, _, _)| {
+            **team == my_team
+                && local_player.0.is_some_and(|lp| player.0 == lp)
+        })
         .collect();
-    friendly_ships.sort_by_key(|(entity, _, _, _, _)| {
+    friendly_ships.sort_by_key(|(entity, _, _, _, _, _)| {
         ship_numbers.get(entity).copied().unwrap_or(255)
     });
 
@@ -127,7 +131,7 @@ fn rebuild_ship_cards(
 
     // Spawn new cards as children of sidebar
     commands.entity(sidebar_entity).with_children(|parent| {
-        for (ship_entity, _, class, health, mounts) in &friendly_ships {
+        for (ship_entity, _, _, class, health, mounts) in &friendly_ships {
             let number = ship_numbers.get(ship_entity).copied().unwrap_or(0);
             spawn_ship_card(parent, *ship_entity, class, number, health, mounts);
         }

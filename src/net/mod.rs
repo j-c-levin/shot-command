@@ -20,3 +20,8 @@ pub const PROTOCOL_ID: u64 = 0x4E45_4255_4C41_0001; // "NEBULA" + version
 /// `None` on server (or before assignment), `Some(team)` on client after assignment.
 #[derive(Resource, Debug, Default, Clone)]
 pub struct LocalTeam(pub Option<Team>);
+
+/// Identifies which player entity this client owns.
+/// Used to distinguish "my ships" from allied ships on the same team.
+#[derive(Resource, Debug, Default, Clone)]
+pub struct LocalPlayer(pub Option<Entity>);

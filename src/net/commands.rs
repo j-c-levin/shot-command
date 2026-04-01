@@ -99,13 +99,15 @@ pub struct RadarToggleCommand {
 }
 
 /// Server → client: tells the client which team it controls, their slot index,
-/// and the game configuration (team count + players per team).
-#[derive(Event, Debug, Clone, Serialize, Deserialize)]
+/// the game configuration, and their player entity (for ownership checks).
+#[derive(Event, Debug, Clone, Serialize, Deserialize, MapEntities)]
 pub struct TeamAssignment {
     pub team: Team,
     pub slot: u8,
     pub team_count: u8,
     pub players_per_team: u8,
+    #[entities]
+    pub player: Entity,
 }
 
 /// Server → client: announces the game result (which team won, or `None` for draw).

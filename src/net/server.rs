@@ -255,6 +255,7 @@ fn on_client_connected(
             slot,
             team_count: config.team_count,
             players_per_team: config.players_per_team,
+            player: client_entity,
         },
     });
 

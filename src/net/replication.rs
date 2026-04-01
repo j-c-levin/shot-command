@@ -118,7 +118,7 @@ impl Plugin for SharedReplicationPlugin {
             .add_mapped_client_event::<LaunchCommand>(Channel::Ordered);
 
         // ── Server→client triggers ─────────────────────────────────────
-        app.add_server_event::<TeamAssignment>(Channel::Ordered);
+        app.add_mapped_server_event::<TeamAssignment>(Channel::Ordered);
         app.add_server_event::<GameResult>(Channel::Ordered);
         app.add_server_event::<LobbyStatus>(Channel::Ordered);
         app.add_server_event::<GameStarted>(Channel::Ordered);

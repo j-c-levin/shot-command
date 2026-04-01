@@ -4,14 +4,14 @@ use bevy::prelude::*;
 use bevy_replicon::shared::message::client_event::ClientTriggerExt;
 
 use crate::camera::{GameCamera, LeftDragState};
-use crate::game::Team;
+use crate::game::{Player, Team};
 use crate::map::GroundPlane;
 use crate::net::commands::{
     CancelMissilesCommand, ClearTargetCommand, FacingLockCommand, FacingUnlockCommand,
     FireMissileCommand, JoinSquadCommand, MoveCommand, RadarToggleCommand,
     TargetByContactCommand, TargetCommand,
 };
-use crate::net::LocalTeam;
+use crate::net::{LocalPlayer, LocalTeam};
 use crate::radar::{ContactKind, ContactLevel, ContactSourceShip, ContactTeam, RadarContact};
 use crate::ship::{
     FacingLocked, Selected, Ship, ShipClass, ShipNumber, ShipSecrets, ShipSecretsOwner,
@@ -357,9 +357,17 @@ fn handle_keyboard(
             }
         }
         if !has_target {
+            // Only enter target mode if a selected ship has a cannon
+            let has_cannon = mounts_query.iter().any(|mounts| {
+                mounts.0.iter().any(|m| {
+                    m.weapon
+                        .as_ref()
+                        .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Cannon)
+                })
+            });
             if *mode == InputMode::Target {
                 *mode = InputMode::Normal;
-            } else {
+            } else if has_cannon {
                 *mode = InputMode::Target;
             }
         } else {
@@ -368,21 +376,17 @@ fn handle_keyboard(
     }
 
     if keys.just_pressed(KeyCode::KeyM) {
-        let has_vls = mounts_query.iter().any(|mounts| {
+        let has_missile = mounts_query.iter().any(|mounts| {
             mounts.0.iter().any(|m| {
                 m.weapon
                     .as_ref()
                     .is_some_and(|w| w.weapon_type.category() == WeaponCategory::Missile)
             })
         });
-        if has_vls {
-            if *mode == InputMode::Missile {
-                *mode = InputMode::Normal;
-            } else {
-                *mode = InputMode::Missile;
-            }
-        } else {
+        if *mode == InputMode::Missile {
             *mode = InputMode::Normal;
+        } else if has_missile {
+            *mode = InputMode::Missile;
         }
     }
 
@@ -500,7 +504,7 @@ fn cursor_to_ground(
 }
 
 /// Minimum screen-space drag distance (pixels) to activate facing.
-const DRAG_THRESHOLD_PX: f32 = 15.0;
+const DRAG_THRESHOLD_PX: f32 = 50.0;
 
 /// System that detects right-click press/release for move+facing gestures.
 /// On press: record destination and screen position.
@@ -732,8 +736,9 @@ fn handle_number_keys(
     keys: Res<ButtonInput<KeyCode>>,
     mut commands: Commands,
     local_team: Res<LocalTeam>,
+    local_player: Res<LocalPlayer>,
     mut mode: ResMut<InputMode>,
-    ship_query: Query<(Entity, &Team, &Transform), With<Ship>>,
+    ship_query: Query<(Entity, &Team, &Player, &Transform), With<Ship>>,
     selected_query: Query<Entity, With<Selected>>,
     secrets_query: Query<(&ShipSecretsOwner, &ShipNumber), With<ShipSecrets>>,
     enemy_numbers: Res<EnemyNumbers>,
@@ -787,7 +792,7 @@ fn handle_number_keys(
             let enemy = enemy_numbers.assignments.iter().find(|&(_, &n)| n == number).map(|(&e, _)| e);
             if let Some(enemy_entity) = enemy {
                 // Get position and target entity — either from a ship or a radar contact
-                let fire_info = if let Ok((_, _, transform)) = ship_query.get(enemy_entity) {
+                let fire_info = if let Ok((_, _, _, transform)) = ship_query.get(enemy_entity) {
                     let pos = Vec2::new(transform.translation.x, transform.translation.z);
                     Some((pos, Some(enemy_entity)))
                 } else if let Ok((transform, source)) = contact_transform_query.get(enemy_entity) {
@@ -812,14 +817,18 @@ fn handle_number_keys(
             return;
         }
 
-        // Find the ship on our team with this number via ShipSecrets
+        // Find THIS PLAYER's ship with this number via ShipSecrets
         // (ShipNumber lives only on ShipSecrets, not on Ship entities).
         let target_ship = secrets_query
             .iter()
             .find(|(_, sn)| sn.0 == number)
             .and_then(|(owner, _)| {
-                let (entity, team, _) = ship_query.get(owner.0).ok()?;
-                if *team == my_team { Some(entity) } else { None }
+                let (entity, team, player, _) = ship_query.get(owner.0).ok()?;
+                if *team == my_team && local_player.0.is_some_and(|lp| player.0 == lp) {
+                    Some(entity)
+                } else {
+                    None
+                }
             });
 
         let Some(target_ship) = target_ship else {
