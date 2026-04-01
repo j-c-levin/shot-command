@@ -92,7 +92,13 @@ pub fn join_game(api_base: &str, game_id: &str, name: &str) -> Receiver<Result<(
                 if r.status().is_success() {
                     Ok(())
                 } else {
-                    Err(format!("join failed: {}", r.status()))
+                    let status = r.status();
+                    let body = r.text().unwrap_or_default();
+                    Err(if body.is_empty() {
+                        format!("join failed: {status}")
+                    } else {
+                        body
+                    })
                 }
             });
         let _ = tx.send(result);

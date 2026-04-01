@@ -1,8 +1,17 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*"]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
 
 permissions:
   contents: write
@@ -11,23 +20,70 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  # Tiny job just to extract the version — everything else runs in parallel
-  version:
-    name: Extract version
+  tag:
+    name: Tag release
     runs-on: ubuntu-latest
     outputs:
-      version: ${{ steps.version.outputs.version }}
+      version: ${{ steps.bump.outputs.version }}
     steps:
-      - name: Extract version from tag
-        id: version
-        run: echo "version=${GITHUB_REF#refs/tags/v}" >> $GITHUB_OUTPUT
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Bump version and tag
+        id: bump
+        env:
+          BUMP_TYPE: ${{ inputs.bump }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Get latest version tag
+          LATEST=$(git tag -l 'v*' --sort=-v:refname | head -1)
+          if [ -z "$LATEST" ]; then
+            LATEST="v0.0.0"
+          fi
+
+          # Parse and bump
+          VERSION=${LATEST#v}
+          IFS='.' read -r MAJOR MINOR PATCH <<< "$VERSION"
+          case "$BUMP_TYPE" in
+            major) MAJOR=$((MAJOR + 1)); MINOR=0; PATCH=0 ;;
+            minor) MINOR=$((MINOR + 1)); PATCH=0 ;;
+            patch) PATCH=$((PATCH + 1)) ;;
+          esac
+
+          NEW_VERSION="${MAJOR}.${MINOR}.${PATCH}"
+          echo "version=${NEW_VERSION}" >> $GITHUB_OUTPUT
+          echo "Releasing: ${LATEST} -> v${NEW_VERSION}"
+
+          # Update Cargo.toml version
+          python3 -c "
+          import re
+          with open('Cargo.toml', 'r') as f: content = f.read()
+          content = re.sub(
+            r'(^\[package\].*?^version = \")([^\"]+)(\")',
+            r'\g<1>${NEW_VERSION}\3',
+            content, count=1, flags=re.MULTILINE|re.DOTALL
+          )
+          with open('Cargo.toml', 'w') as f: f.write(content)
+          "
+
+          git add Cargo.toml
+          git commit -m "release: v${NEW_VERSION}"
+          git tag "v${NEW_VERSION}"
+          git push origin main
+          git push origin "v${NEW_VERSION}"
 
   infrastructure:
     name: Infrastructure
-    needs: version
+    needs: tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
 
       - uses: actions/setup-node@v4
         with:
@@ -49,7 +105,7 @@ jobs:
           GOOGLE_APPLICATION_CREDENTIALS: /tmp/gcp-key.json
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
           EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
-          EDGEGAP_APP_VERSION: ${{ needs.version.outputs.version }}
+          EDGEGAP_APP_VERSION: ${{ needs.tag.outputs.version }}
 
       - name: Install sync script dependencies
         run: cd scripts && npm ci
@@ -62,17 +118,19 @@ jobs:
 
   server:
     name: Server Docker
-    needs: version
+    needs: tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
 
       - name: Build and push Docker image
         env:
           EDGEGAP_DOCKER_PASSWORD: ${{ secrets.EDGEGAP_DOCKER_PASSWORD }}
           EDGEGAP_DOCKER_USERNAME: ${{ secrets.EDGEGAP_DOCKER_USERNAME }}
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           echo "$EDGEGAP_DOCKER_PASSWORD" | \
             docker login registry.edgegap.com -u "$EDGEGAP_DOCKER_USERNAME" --password-stdin
@@ -84,7 +142,6 @@ jobs:
           EDGEGAP_API_TOKEN: ${{ secrets.EDGEGAP_API_TOKEN }}
           EDGEGAP_APP_NAME: ${{ secrets.EDGEGAP_APP_NAME }}
         run: |
-          # Get all versions and delete them (we'll create the new one next)
           curl -s -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
             "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/versions" | \
             python3 -c "
@@ -107,7 +164,7 @@ jobs:
           EDGEGAP_IMAGE_NAME: ${{ secrets.EDGEGAP_IMAGE_NAME }}
           EDGEGAP_DOCKER_USERNAME: ${{ secrets.EDGEGAP_DOCKER_USERNAME }}
           EDGEGAP_DOCKER_PASSWORD: ${{ secrets.EDGEGAP_DOCKER_PASSWORD }}
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           PAYLOAD="{
             \"name\": \"${VERSION}\",
@@ -126,7 +183,6 @@ jobs:
               }
             ]
           }"
-          # Try create, if 409 (exists) then patch/update
           HTTP_CODE=$(curl -s -o /tmp/edgegap_response.json -w "%{http_code}" -X POST \
             "https://api.edgegap.com/v1/app/${EDGEGAP_APP_NAME}/version" \
             -H "Authorization: token ${EDGEGAP_API_TOKEN}" \
@@ -149,10 +205,12 @@ jobs:
 
   client-macos-arm:
     name: Client (macOS ARM)
-    needs: version
+    needs: tag
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: aarch64-apple-darwin
@@ -167,21 +225,24 @@ jobs:
         run: cargo build --release --no-default-features --features release --bin client --target aarch64-apple-darwin
       - name: Package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           mkdir -p dist
           cp target/aarch64-apple-darwin/release/client dist/nebulous-client
           cd dist && zip "nebulous-client-v${VERSION}-macos-arm64.zip" nebulous-client
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.tag.outputs.version }}
           files: dist/*.zip
 
   client-windows:
     name: Client (Windows)
-    needs: version
+    needs: tag
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
       - uses: dtolnay/rust-toolchain@nightly
         with:
           targets: x86_64-pc-windows-msvc
@@ -192,21 +253,24 @@ jobs:
       - name: Package
         shell: bash
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           mkdir -p dist
           cp target/x86_64-pc-windows-msvc/release/client.exe dist/nebulous-client.exe
           cd dist && 7z a "nebulous-client-v${VERSION}-windows-x86_64.zip" nebulous-client.exe
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.tag.outputs.version }}
           files: dist/*.zip
 
   client-linux:
     name: Client (Linux)
-    needs: version
+    needs: tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: v${{ needs.tag.outputs.version }}
       - name: Install Linux deps
         run: sudo apt-get update && sudo apt-get install -y libasound2-dev libudev-dev libwayland-dev libxkbcommon-dev
 
@@ -227,11 +291,12 @@ jobs:
         run: cargo build --release --no-default-features --features release --bin client --target x86_64-unknown-linux-gnu
       - name: Package
         env:
-          VERSION: ${{ needs.version.outputs.version }}
+          VERSION: ${{ needs.tag.outputs.version }}
         run: |
           mkdir -p dist
           cp target/x86_64-unknown-linux-gnu/release/client dist/nebulous-client
           cd dist && zip "nebulous-client-v${VERSION}-linux-x86_64.zip" nebulous-client
       - uses: softprops/action-gh-release@v2
         with:
+          tag_name: v${{ needs.tag.outputs.version }}
           files: dist/*.zip

@@ -82,24 +82,35 @@ export const joinGame = onRequest({ region: REGION }, async (req, res) => {
   if (!gameId || !name) { res.status(400).send("game ID and name required"); return; }
 
   const gameRef = db.collection("games").doc(gameId);
-  await db.runTransaction(async (tx) => {
-    const doc = await tx.get(gameRef);
-    if (!doc.exists) throw new Error("game not found");
-    const data = doc.data()!;
-    if (data.status !== "waiting") throw new Error("game not accepting players");
+  try {
+    await db.runTransaction(async (tx) => {
+      const doc = await tx.get(gameRef);
+      if (!doc.exists) throw new Error("game not found");
+      const data = doc.data()!;
+      if (data.status !== "waiting") throw new Error("game not accepting players");
 
-    const maxPerTeam = data.players_per_team || 1;
-    const numTeams = data.team_count || 2;
-    const teamCounts = new Array(numTeams).fill(0);
-    data.players.forEach((p: any) => { if (p.team < numTeams) teamCounts[p.team]++; });
-    const openTeam = teamCounts.findIndex((c: number) => c < maxPerTeam);
-    if (openTeam === -1) throw new Error("game full");
+      const maxPerTeam = data.players_per_team || 1;
+      const numTeams = data.team_count || 2;
+      const teamCounts = new Array(numTeams).fill(0);
+      data.players.forEach((p: any) => { if (p.team < numTeams) teamCounts[p.team]++; });
+      const openTeam = teamCounts.findIndex((c: number) => c < maxPerTeam);
+      if (openTeam === -1) throw new Error("game full");
 
-    tx.update(gameRef, {
-      players: [...data.players, { name, team: openTeam, ready: false }],
+      // Check for duplicate player name
+      if (data.players.some((p: any) => p.name === name)) throw new Error("already joined");
+
+      tx.update(gameRef, {
+        players: [...data.players, { name, team: openTeam, ready: false }],
+      });
     });
-  });
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (err: any) {
+    const msg = err.message || "unknown error";
+    if (msg === "game not found") { res.status(404).send(msg); return; }
+    if (msg === "game full" || msg === "already joined") { res.status(409).send(msg); return; }
+    if (msg === "game not accepting players") { res.status(409).send(msg); return; }
+    res.status(500).send(msg);
+  }
 });
 
 export const readyUp = onRequest({ region: REGION }, async (req, res) => {
@@ -108,16 +119,22 @@ export const readyUp = onRequest({ region: REGION }, async (req, res) => {
   if (!game_id || !name) { res.status(400).send("game_id and name required"); return; }
 
   const gameRef = db.collection("games").doc(game_id);
-  await db.runTransaction(async (tx) => {
-    const doc = await tx.get(gameRef);
-    if (!doc.exists) throw new Error("game not found");
-    const data = doc.data()!;
-    const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
-      p.name === name ? { ...p, ready: ready !== false } : p
-    );
-    tx.update(gameRef, { players });
-  });
-  res.json({ ok: true });
+  try {
+    await db.runTransaction(async (tx) => {
+      const doc = await tx.get(gameRef);
+      if (!doc.exists) throw new Error("game not found");
+      const data = doc.data()!;
+      const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
+        p.name === name ? { ...p, ready: ready !== false } : p
+      );
+      tx.update(gameRef, { players });
+    });
+    res.json({ ok: true });
+  } catch (err: any) {
+    const msg = err.message || "unknown error";
+    if (msg === "game not found") { res.status(404).send(msg); return; }
+    res.status(500).send(msg);
+  }
 });
 
 export const launchGame = onRequest({ region: REGION }, async (req, res) => {
@@ -209,29 +226,38 @@ export const switchTeam = onRequest({ region: REGION }, async (req, res) => {
   }
 
   const gameRef = db.collection("games").doc(game_id);
-  await db.runTransaction(async (tx) => {
-    const doc = await tx.get(gameRef);
-    if (!doc.exists) throw new Error("game not found");
-    const data = doc.data()!;
-    if (data.status !== "waiting") throw new Error("game not accepting changes");
+  try {
+    await db.runTransaction(async (tx) => {
+      const doc = await tx.get(gameRef);
+      if (!doc.exists) throw new Error("game not found");
+      const data = doc.data()!;
+      if (data.status !== "waiting") throw new Error("game not accepting changes");
 
-    const maxPerTeam = data.players_per_team || 1;
-    const numTeams = data.team_count || 2;
+      const maxPerTeam = data.players_per_team || 1;
+      const numTeams = data.team_count || 2;
 
-    if (target_team < 0 || target_team >= numTeams) throw new Error("invalid team");
+      if (target_team < 0 || target_team >= numTeams) throw new Error("invalid team");
 
-    // Count players on target team (excluding the switcher)
-    const targetCount = data.players.filter(
-      (p: any) => p.team === target_team && p.name !== name
-    ).length;
-    if (targetCount >= maxPerTeam) throw new Error("target team is full");
+      // Count players on target team (excluding the switcher)
+      const targetCount = data.players.filter(
+        (p: any) => p.team === target_team && p.name !== name
+      ).length;
+      if (targetCount >= maxPerTeam) throw new Error("target team is full");
 
-    const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
-      p.name === name ? { ...p, team: target_team } : p
-    );
-    tx.update(gameRef, { players });
-  });
-  res.json({ ok: true });
+      const players = data.players.map((p: { name: string; team: number; ready?: boolean }) =>
+        p.name === name ? { ...p, team: target_team } : p
+      );
+      tx.update(gameRef, { players });
+    });
+    res.json({ ok: true });
+  } catch (err: any) {
+    const msg = err.message || "unknown error";
+    if (msg === "game not found") { res.status(404).send(msg); return; }
+    if (msg === "target team is full" || msg === "invalid team" || msg === "game not accepting changes") {
+      res.status(409).send(msg); return;
+    }
+    res.status(500).send(msg);
+  }
 });
 
 export const deleteGame = onRequest({ region: REGION }, async (req, res) => {
