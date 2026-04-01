@@ -2,6 +2,28 @@ use std::sync::mpsc::{Receiver, channel};
 
 use super::{GameDetail, GameInfo};
 
+/// Check the server API version. Returns the version string.
+pub fn check_version(api_base: &str) -> Receiver<Result<String, String>> {
+    let (tx, rx) = channel();
+    let url = format!("{api_base}/version");
+    std::thread::spawn(move || {
+        let client = reqwest::blocking::Client::new();
+        let result = client
+            .get(&url)
+            .send()
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.json::<serde_json::Value>().map_err(|e| e.to_string()))
+            .and_then(|v| {
+                v.get("version")
+                    .and_then(|s| s.as_str())
+                    .map(|s| s.to_string())
+                    .ok_or_else(|| "missing version in response".to_string())
+            });
+        let _ = tx.send(result);
+    });
+    rx
+}
+
 /// List all open games from the lobby API.
 pub fn list_games(api_base: &str) -> Receiver<Result<Vec<GameInfo>, String>> {
     let (tx, rx) = channel();

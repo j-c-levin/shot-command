@@ -54,6 +54,7 @@ pub struct MainMenuState {
     pub maps: Vec<String>,
     pub poll_timer: Timer,
     pub error: Option<String>,
+    pub version_warning: Option<String>,
     pub create_dialog_open: bool,
     pub selected_map: Option<String>,
     /// Tracks whether the game list has changed and UI needs rebuild.
@@ -66,6 +67,7 @@ pub struct MainMenuAsync {
     pub pending_maps: Option<Receiver<Result<Vec<String>, String>>>,
     pub pending_create: Option<Receiver<Result<String, String>>>,
     pub pending_join: Option<(String, Receiver<Result<(), String>>)>,
+    pub pending_version: Option<Receiver<Result<String, String>>>,
 }
 
 // ── Marker Components ───────────────────────────────────────────────────
@@ -103,6 +105,9 @@ pub struct CreateConfirmButton;
 #[derive(Component)]
 pub struct ErrorText;
 
+#[derive(Component)]
+pub struct VersionWarningText;
+
 /// +/- buttons for team count in the create game dialog.
 #[derive(Component)]
 pub struct TeamCountMinus;
@@ -131,12 +136,14 @@ pub fn spawn_main_menu(mut commands: Commands, lobby_config: Res<LobbyConfig>) {
     // Fire initial API calls
     let pending_list = api::list_games(&lobby_config.api_base_url);
     let pending_maps = api::fetch_maps(&lobby_config.api_base_url);
+    let pending_version = api::check_version(&lobby_config.api_base_url);
 
     commands.insert_resource(MainMenuState {
         games: Vec::new(),
         maps: Vec::new(),
         poll_timer: Timer::from_seconds(POLL_INTERVAL_SECS, TimerMode::Repeating),
         error: None,
+        version_warning: None,
         create_dialog_open: false,
         selected_map: None,
         games_changed: true,
@@ -150,6 +157,7 @@ pub fn spawn_main_menu(mut commands: Commands, lobby_config: Res<LobbyConfig>) {
             pending_maps: Some(pending_maps),
             pending_create: None,
             pending_join: None,
+            pending_version: Some(pending_version),
         });
     });
 
@@ -278,6 +286,21 @@ pub fn spawn_main_menu(mut commands: Commands, lobby_config: Res<LobbyConfig>) {
                     ));
             });
 
+            // ── Version warning ──
+            root.spawn((
+                VersionWarningText,
+                Text::new(""),
+                TextFont {
+                    font_size: 16.0,
+                    ..default()
+                },
+                TextColor(TEXT_YELLOW),
+                Node {
+                    padding: UiRect::horizontal(Val::Px(20.0)),
+                    ..default()
+                },
+            ));
+
             // ── Error text ──
             root.spawn((
                 ErrorText,
@@ -374,6 +397,39 @@ pub fn poll_maps(
             Err(std::sync::mpsc::TryRecvError::Empty) => {}
             Err(std::sync::mpsc::TryRecvError::Disconnected) => {
                 async_state.pending_maps = None;
+            }
+        }
+    }
+}
+
+pub fn poll_version_check(
+    mut state: ResMut<MainMenuState>,
+    mut async_state: NonSendMut<MainMenuAsync>,
+) {
+    if let Some(ref rx) = async_state.pending_version {
+        match rx.try_recv() {
+            Ok(Ok(server_version)) => {
+                let client_version = env!("CARGO_PKG_VERSION");
+                if server_version != client_version {
+                    warn!(
+                        "Version mismatch! Client: {client_version}, Server: {server_version}"
+                    );
+                    state.version_warning = Some(format!(
+                        "Version mismatch: client v{client_version} / server v{server_version}. \
+                         Features may not work correctly."
+                    ));
+                } else {
+                    info!("Version check OK: v{client_version}");
+                }
+                async_state.pending_version = None;
+            }
+            Ok(Err(e)) => {
+                warn!("Version check failed: {e}");
+                async_state.pending_version = None;
+            }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
+            Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                async_state.pending_version = None;
             }
         }
     }
@@ -579,17 +635,29 @@ pub fn rebuild_game_list(
 
 pub fn update_error_text(
     state: Res<MainMenuState>,
-    mut query: Query<(&mut Text, &mut TextColor), With<ErrorText>>,
+    mut errors: Query<(&mut Text, &mut TextColor), (With<ErrorText>, Without<VersionWarningText>)>,
+    mut warnings: Query<&mut Text, (With<VersionWarningText>, Without<ErrorText>)>,
 ) {
     if !state.is_changed() {
         return;
     }
 
-    for (mut text, mut color) in &mut query {
+    for (mut text, mut color) in &mut errors {
         match &state.error {
             Some(e) => {
                 *text = Text::new(e.clone());
                 color.0 = TEXT_RED;
+            }
+            None => {
+                *text = Text::new("");
+            }
+        }
+    }
+
+    for mut text in &mut warnings {
+        match &state.version_warning {
+            Some(w) => {
+                *text = Text::new(w.clone());
             }
             None => {
                 *text = Text::new("");

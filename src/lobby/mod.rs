@@ -21,6 +21,7 @@ impl Plugin for LobbyPlugin {
                 (
                     main_menu::poll_game_list,
                     main_menu::poll_maps,
+                    main_menu::poll_version_check,
                     main_menu::poll_pending_create,
                     main_menu::rebuild_game_list,
                     main_menu::update_error_text,

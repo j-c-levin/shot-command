@@ -14,6 +14,11 @@ const EDGEGAP_CONFIG = {
   lobbyApiUrl: process.env.LOBBY_API_URL || `https://${REGION}-nebulous-shot-command.cloudfunctions.net`,
 };
 
+export const version = onRequest({ region: REGION }, async (req, res) => {
+  if (req.method !== "GET") { res.status(405).send("Method not allowed"); return; }
+  res.json({ version: EDGEGAP_CONFIG.appVersion });
+});
+
 export const createGame = onRequest({ region: REGION }, async (req, res) => {
   if (req.method !== "POST") { res.status(405).send("Method not allowed"); return; }
   const { creator, map, team_count = 2, players_per_team = 1 } = req.body;
